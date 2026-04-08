@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Local / editor
+.env
+.env.*
+*.local
+
+# Claude Code local permissions (machine-specific)
+**/.claude/settings.local.json
+
+# Backups & scratch (not app source)
+Archive.zip
+Untitled
+**/Untitled

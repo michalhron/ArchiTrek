@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ArchiMate Path Navigator</title>
+<link rel="stylesheet" href="./ui/styles.css"/>
+</head>
+<body>
+<div class="loading-bar" id="loading-bar" aria-hidden="true"><div class="inner"></div></div>
+  <div class="picker-overlay" id="picker-overlay" aria-hidden="true"></div>
+  <div class="picker-overlay" id="path-options-overlay" aria-hidden="true"></div>
+
+
+<!-- ── Header ────────────────────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-brand">
+    <h1>ArchiMate Path Navigator</h1>
+    <span class="header-sub">ArchiMate 3.1</span>
+  </div>
+  <div class="header-actions">
+    <div class="toolbar">
+      <div class="header-layout-cluster">
+        <div class="toggle-group layout-chrome-group" title="Where to show the control panel">
+          <button type="button" class="toggle-btn" id="btn-layout-sidebar" onclick="setChromeLayout('sidebar')"
+            title="Controls in a column on the left (resizable)">Sidebar</button>
+          <button type="button" class="toggle-btn active" id="btn-layout-top" onclick="setChromeLayout('top')"
+            title="Controls in a bar along the top of the main area">Top bar</button>
+        </div>
+        <button type="button" class="header-results-layout-btn" id="btn-results-layout" onclick="toggleResultsLayout()"
+          title="Put path tabs and explanations to the right of the diagram">Details beside</button>
+        <button type="button" class="header-drawer-toggle" id="btn-top-drawer" onclick="togglePanelCollapsed()" hidden
+          aria-expanded="false" aria-controls="selector-panel-wrap"
+          title="Open options and waypoints (slides down from the header)">Options</button>
+      </div>
+      <button type="button" class="toggle-btn panel-collapse-btn" id="btn-panel-collapse" onclick="togglePanelCollapsed()"
+        aria-expanded="true" aria-controls="selector-panel-wrap" title="Hide control panel">⟨</button>
+      <button class="toggle-btn header-help-btn" onclick="showHelp()" title="Help">?</button>
+    </div>
+    <nav class="header-links" aria-label="Feedback and support">
+      <button type="button" class="header-link" id="header-feedback-btn" onclick="openFeedbackModal()"
+        title="Send feedback with a summary of your current settings">Feedback</button>
+      <span class="header-links-sep" aria-hidden="true">·</span>
+      <a class="header-link" href="https://buymeacoffee.com/michalhron" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
+    </nav>
+  </div>
+</header>
+<div id="top-drawer-backdrop" class="top-drawer-backdrop" aria-hidden="true" hidden></div>
+<!-- ── App Layout ─────────────────────────────────────────────────────────── -->
+<!-- Help modal -->
+<div id="help-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;padding:20px;overflow-y:auto">
+  <div style="background:#fff;border-radius:8px;max-width:480px;margin:40px auto;padding:24px;font-size:13px;line-height:1.6">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <strong style="font-size:16px;color:#1e3a5f">How to use this tool</strong>
+      <button onclick="document.getElementById('help-modal').style.display='none'" style="border:none;background:none;font-size:20px;cursor:pointer;color:#999">×</button>
+    </div>
+    <p><strong>Finding a path:</strong> Select two or more elements (points) using the layer + element pickers, then click Find Path. The tool searches the ArchiMate 3.1 Appendix B relationship tables for valid routes.</p>
+    <br/>
+    <p><strong>Ordered vs Connect set:</strong><br/>
+    <em>Ordered</em> respects your Start → Via → End order (use this when direction/order matters).<br/>
+    <em>Connect set</em> treats your selections as an unordered set and automatically chooses an order that minimises total path cost, then displays the resulting single chain.</p>
+    <br/>
+    <p><strong>Direct vs Derived:</strong><br/>
+    <em>Direct</em> relationships appear in uppercase in Appendix B — they are explicitly defined between two element types.<br/>
+    <em>Derived</em> relationships appear in lowercase — they are valid by §5.7 derivation rules (e.g. if A realises B and B realises C, A derivedly realises C). Enabling derived reveals many more cross-layer paths.</p>
+    <br/>
+    <p><strong>Compact vs Swimlanes:</strong><br/>
+    <em>Compact</em> shows all elements in a single row from left to right.<br/>
+    <em>Swimlanes</em> places each element in its ArchiMate layer band (Technology, Application, Business…) so cross-layer paths are immediately visible.</p>
+    <br/>
+    <p><strong>Adding points:</strong> Use + Add intermediate element to add more points to connect. In Ordered mode this forces the route through that point; in Connect set mode it’s simply another point to include.</p>
+    <br/>
+    <p><strong>No path found?</strong> Try: enabling + Derived, or adding a point in an intermediate layer.</p>
+    <br/>
+    <p><strong>Learn an element:</strong> After a path is shown, click any element shape in the diagram or a name chip in the explanation to open the spec-style definition. You can also jump from there to the spec excerpts below.</p>
+  </div>
+</div>
+
+<!-- Feedback (in-page form; copy report to send by email) -->
+<div id="feedback-modal" class="feedback-modal" style="display:none" aria-hidden="true">
+  <div class="feedback-modal-backdrop" data-feedback-close="1" aria-hidden="true"></div>
+  <div class="feedback-modal-card" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title" tabindex="-1">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="feedback-modal-title">Feedback</h2>
+      <button type="button" class="feedback-modal-close" data-feedback-close="1" title="Close" aria-label="Close">×</button>
+    </div>
+    <form id="feedback-form" class="feedback-form">
+      <p class="feedback-modal-lead">Describe what went wrong, what you expected, or an idea for improvement.</p>
+      <label class="feedback-label" for="feedback-message-field">Message</label>
+      <textarea id="feedback-message-field" class="feedback-textarea" rows="5"
+        placeholder="What happened?"></textarea>
+      <label class="feedback-label" for="feedback-reply-email">Your email <span class="feedback-optional">(optional, if you want a reply)</span></label>
+      <input type="email" id="feedback-reply-email" class="feedback-input" autocomplete="email" placeholder="you@example.com"/>
+      <details class="feedback-context-details">
+        <summary>Technical details <span class="feedback-summary-note">(included when you copy)</span></summary>
+        <textarea id="feedback-context-field" class="feedback-context-readonly" readonly rows="10" aria-label="Technical details"></textarea>
+      </details>
+      <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
+      <div class="feedback-modal-actions">
+        <button type="button" class="feedback-btn feedback-btn-secondary" data-feedback-close="1">Cancel</button>
+        <button type="submit" class="feedback-btn feedback-btn-primary">Copy report</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="app-layout layout-top panel-collapsed" id="app-layout" style="--panel-width: 280px; --panel-top-height: 200px;">
+
+  <!-- Control panel (sidebar or top, depending on layout class) -->
+  <div class="selector-panel-wrap" id="selector-panel-wrap">
+  <aside class="selector-panel">
+
+    <div class="selector-panel-body">
+      <div class="selector-panel-right">
+        <button type="button" class="topbar-collapse-btn" id="btn-topbar-collapse" onclick="togglePanelCollapsed()"
+          aria-expanded="true" aria-controls="selector-panel-wrap" title="Hide control bar (more space for content)">▲</button>
+
+        <div class="sidebar-controls-collapsible path-options-collapsible">
+          <button type="button" class="element-trigger path-options-trigger" id="path-options-trigger"
+            title="Open options">
+            <span class="left">
+              <span class="name" id="path-options-trigger-label">Options</span>
+            </span>
+            <span class="chev" aria-hidden="true">▾</span>
+          </button>
+          <div id="path-options-body-host" class="path-options-body-host">
+          <div class="sidebar-controls-body" id="sidebar-controls-body">
+            <div class="control-options-stack">
+              <div class="control-block">
+                <div class="control-label">Direct vs derived</div>
+                <div class="toggle-group sidebar-toggle-group">
+                  <button class="toggle-btn" id="btn-direct" onclick="setDerived(false)"
+                    title="Direct only: only show relationships explicitly defined in Appendix B (uppercase in the tables). Fewer paths but highest spec confidence.">Direct</button>
+                  <button class="toggle-btn active" id="btn-derived" onclick="setDerived(true)"
+                    title="+ Derived: also include relationships valid by the §5.7 derivation rules (lowercase in the tables). More paths, including cross-layer routes.">+ Derived</button>
+                </div>
+              </div>
+              <div class="control-block control-block-viewpoint">
+                <div class="control-label">Viewpoint</div>
+                <select class="viewpoint-select" id="viewpoint-select" onchange="onViewpointChange()">
+                  <option value="">All elements</option>
+                  <optgroup label="Composition">
+                    <option value="organization">Organization</option>
+                    <option value="applicationStructure">Application Structure</option>
+                    <option value="informationStructure">Information Structure</option>
+                    <option value="technology">Technology</option>
+                    <option value="layered">Layered</option>
+                    <option value="physical">Physical</option>
+                  </optgroup>
+                  <optgroup label="Support">
+                    <option value="product">Product</option>
+                    <option value="applicationUsage">Application Usage</option>
+                    <option value="technologyUsage">Technology Usage</option>
+                  </optgroup>
+                  <optgroup label="Cooperation">
+                    <option value="businessProcessCooperation">Business Process Cooperation</option>
+                    <option value="applicationCooperation">Application Cooperation</option>
+                  </optgroup>
+                  <optgroup label="Realization">
+                    <option value="serviceRealization">Service Realization</option>
+                    <option value="implementationAndDeployment">Implementation and Deployment</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div class="control-block">
+                <div class="control-label">Path mode</div>
+                <div class="path-mode-hint-wrap">
+                  <div class="path-mode-toggle-row">
+                    <div class="toggle-group sidebar-toggle-group">
+                      <button class="toggle-btn" id="btn-ordered" onclick="setSelectionMode('ordered')"
+                        title="Ordered: you define Start → Via → End (the tool respects the order).">Ordered</button>
+                      <button class="toggle-btn active" id="btn-set" onclick="setSelectionMode('set')"
+                        title="Connect set: you pick an unordered set of points; the tool finds the best order to connect them as a single chain.">Connect set</button>
+                    </div>
+                    <button type="button" class="path-mode-info-btn" id="path-mode-info-btn"
+                      popovertarget="path-mode-popover"
+                      aria-label="How the current path mode works"
+                      title="">ℹ</button>
+                  </div>
+                  <div id="path-mode-popover" popover="auto" class="path-mode-popover"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
+
+        <div class="selector-panel-footer">
+          <div class="waypoint-add-col">
+            <button type="button" class="add-waypoint-btn" id="add-waypoint-btn" onclick="addWaypoint()">
+              + Add element
+            </button>
+          </div>
+          <div class="selector-panel-footer-actions">
+            <button class="find-path-btn" id="find-path-btn" onclick="findPath()" disabled>
+              Find Path
+            </button>
+            <button type="button" class="clear-all-btn" id="clear-all-btn" onclick="clearAllElements()">
+              Clear All
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="selector-panel-main">
+        <div class="panel-label">Waypoints</div>
+        <div class="waypoint-chain-row">
+          <div class="waypoint-chain" id="waypoint-chain"></div>
+        </div>
+        <div class="quick-examples-show-row" id="quick-examples-show-row" hidden>
+          <button type="button" class="text-link-btn" onclick="showQuickExamplesPanel()">Show quick examples</button>
+        </div>
+        <div id="quick-examples-block">
+          <div class="panel-label panel-label-with-action quick-examples-heading">
+            <span class="quick-examples-title">Quick examples</span>
+            <button type="button" class="text-link-btn" id="quick-examples-hide-btn" onclick="hideQuickExamplesPanel()" hidden>Hide</button>
+          </div>
+          <div class="quick-examples-list">
+            <button class="add-waypoint-btn example-btn" onclick="loadExample([{layer:'Technology',element:'Device'},{layer:'Business',element:'Business Process'}])">Device → Business Process</button>
+            <button class="add-waypoint-btn example-btn" onclick="loadExample([{layer:'Business',element:'Business Role'},{layer:'Business',element:'Business Service'}])">Business Role → Business Service</button>
+            <button class="add-waypoint-btn example-btn" onclick="loadExample([{layer:'Application',element:'Application Component'},{layer:'Business',element:'Business Service'}])">App Component → Business Service</button>
+            <button class="add-waypoint-btn example-btn" onclick="loadExample([{layer:'Technology',element:'Device'},{layer:'Application',element:'Application Service'},{layer:'Business',element:'Business Process'}])">Device → App Service → Business Process</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+  </div>
+
+  <div class="panel-resize-handle panel-resize-handle--vertical" id="panel-resize-v" role="separator"
+    aria-orientation="vertical" aria-label="Resize control panel width" tabindex="0"></div>
+  <div class="panel-resize-handle panel-resize-handle--horizontal" id="panel-resize-h" role="separator"
+    aria-orientation="horizontal" aria-label="Resize control panel height" tabindex="0"></div>
+
+  <!-- CENTER: Results -->
+  <section class="results-panel" id="results-panel">
+
+    <div class="diagram-stack" id="diagram-stack">
+    <!-- Diagram -->
+
+    <div class="diagram-area" id="diagram-area">
+      
+      <div class="diagram-toolbar">
+        <div class="diagram-toolbar-row">
+          <div class="diagram-view-controls">
+            <button type="button" class="diagram-view-btn active" id="btn-compact" onclick="setMode('compact')">Compact</button>
+            <button type="button" class="diagram-view-btn" id="btn-swimlane" onclick="setMode('swimlane')">Swimlanes</button>
+          </div>
+          <div class="diagram-zoom-controls" role="group" aria-label="Diagram zoom and pan">
+            <button type="button" class="diagram-zoom-btn" id="diagram-zoom-out" onclick="diagramZoomStep(-1)"
+              title="Zoom out" aria-label="Zoom out">−</button>
+            <button type="button" class="diagram-zoom-btn" id="diagram-zoom-in" onclick="diagramZoomStep(1)"
+              title="Zoom in" aria-label="Zoom in">+</button>
+            <button type="button" class="diagram-zoom-btn diagram-zoom-reset" id="diagram-zoom-reset" onclick="diagramZoomReset()"
+              title="Reset pan and zoom" aria-label="Reset pan and zoom">↺</button>
+          </div>
+          <div id="diagram-tools" class="diagram-tools" hidden>
+            <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-vertical" onclick="toggleVertical()"
+              title="Stack vertically within layers">Vertical</button>
+            <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-badges" onclick="toggleBadges()"
+              title="Hide hop numbers on arrows">Hide #</button>
+            <button type="button" class="diagram-icon-btn" onclick="downloadDiagram()" title="Download SVG" aria-label="Download SVG">⬇</button>
+            <button type="button" class="diagram-icon-btn" onclick="toggleFullScreen()" title="Full screen" aria-label="Full screen">⛶</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagram-empty" id="diagram-empty">
+        <span class="icon">⟶</span>
+        Select at least 2 elements, then click Find Path
+      </div>
+      <div class="diagram-pan-viewport" id="diagram-pan-viewport" title="Drag to pan · wheel to zoom">
+        <div class="diagram-pan-surface" id="diagram-pan-surface">
+          <div id="path-diagram"></div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="panel-resize-handle panel-resize-handle--horizontal results-split-handle" id="results-split-resize"
+      role="separator" aria-orientation="horizontal" aria-label="Resize diagram and path details" tabindex="0"></div>
+
+    <!-- Path tabs + explanations (single pane below the graph) -->
+    <div class="results-lower" id="results-lower">
+      <div class="path-tabs" id="path-tabs" style="display:none"></div>
+      <div class="explanation-panel" id="explanation-panel">
+        <div id="explanation-content" style="color:var(--text-3);font-size:13px;padding:20px 0">
+          Path explanation will appear here after finding a path.
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <button type="button" class="panel-reveal-btn" id="panel-reveal-btn" hidden
+    aria-label="Show control panel" title="Show control panel">»</button>
+
+</div>
+
+<!-- Element definition (educational; diagram chips + path explanation) -->
+<div class="mm-modal el-info-modal" id="element-info-modal" aria-hidden="true">
+  <div class="mm-modal-backdrop" data-el-close="1"></div>
+  <div class="mm-modal-card el-info-card" role="dialog" aria-modal="true" aria-labelledby="element-info-title">
+    <div class="mm-modal-head">
+      <div class="mm-modal-title" id="element-info-title">ArchiMate element</div>
+      <button class="mm-modal-close" type="button" title="Close" data-el-close="1">×</button>
+    </div>
+    <div class="element-info-hero" id="element-info-hero" hidden></div>
+    <div class="mm-modal-sub" id="element-info-sub"></div>
+    <div id="element-info-body" class="element-info-body"></div>
+    <div class="element-info-actions" id="element-info-actions"></div>
+  </div>
+</div>
+
+<!-- Metamodel overlay (opened via “Show on metamodel”) -->
+<div class="mm-modal" id="mm-modal" aria-hidden="true">
+  <div class="mm-modal-backdrop" data-mm-close="1"></div>
+  <div class="mm-modal-card" role="dialog" aria-modal="true" aria-label="Core metamodel">
+    <div class="mm-modal-head">
+      <div class="mm-modal-title">Core Metamodel <span class="ref">§4.2</span></div>
+      <button class="mm-modal-close" type="button" title="Close" data-mm-close="1">×</button>
+    </div>
+    <div class="mm-modal-sub">Highlights follow your hop direction (from → to). Element names appear under each §4.2 box; see the note below when both “assigned to” and “serves” apply.</div>
+    <div class="metamodel-status" id="metamodel-status">Click “Show on metamodel” in a step to inspect it here.</div>
+    <div id="metamodel-diagram"></div>
+    <div id="mm-role-contents"></div>
+  </div>
+</div>
+
+<!-- ── JavaScript ─────────────────────────────────────────────────────────── -->
+
+<script src="./data/relationships.js"></script>
+<script src="./data/elements.js"></script>
+<script src="./data/matrix.js"></script>
+<script src="./data/viewpoints.js"></script>
+<script src="./logic/graph.js"></script>
+<script src="./logic/pathfinder.js"></script>
+<script src="./ui/renderer.js"></script>
+<script src="./ui/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+// === logic/graph.js ===
+/**
+ * logic/graph.js
+ * ArchiMate Path Navigator — Graph Builder
+ *
+ * Converts the flat MATRIX edge list into an adjacency list suitable for BFS.
+ * Supports viewpoint filtering and direct/derived edge toggling.
+ *
+ * EXPORTS:
+ *   buildGraph(options) → adjacency list (Map)
+ *   getElementLayer(element) → layer name string
+ *   ELEMENTS            → full element registry with layer metadata
+ *   LAYERS              → ordered layer definitions for swimlane rendering
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ELEMENT REGISTRY
+// Maps every ArchiMate element name to its layer and aspect metadata.
+// Used for: layer tile selector, swimlane rendering, viewpoint filtering.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * metamodelRole — position of each element in the ArchiMate core metamodel diagram
+ * (Figure 4 in §4.2 of the spec, uploaded as IMG_1081).
+ *
+ * Values:
+ *   "external-active"   — External Active Structure Element (Interface)
+ *   "internal-active"   — Internal Active Structure Element (Actor/Component/Node)
+ *   "external-behavior" — External Behavior Element (Service)
+ *   "internal-behavior" — Internal Behavior Element (Process/Function/Interaction)
+ *   "event"             — Event
+ *   "passive"           — Passive Structure Element
+ *   "motivation"        — Motivation element (outside the core metamodel box)
+ *   "strategy"          — Strategy element (outside the core metamodel box)
+ *   "composite"         — Composite / grouping element
+ *   "implementation"    — Implementation & Migration element
+ *
+ * Used by ui/metamodelDiagram.js to highlight the correct boxes and arrows
+ * when explaining valid or invalid connections.
+ */
+
+const ELEMENTS = {
+
+  // ── Motivation — palette matches spec legend: chamfered boxes #CCCCFF; Value/Meaning #E6FFE6
+  "Stakeholder":      { layer: "Motivation", aspect: "Active Structure",  color: "#CCCCFF", metamodelRole: "motivation" },
+  "Driver":           { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Assessment":       { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Goal":             { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Outcome":          { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Principle":        { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Requirement":      { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Constraint":       { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
+  "Meaning":          { layer: "Motivation", aspect: "Passive Structure", color: "#E6FFE6", metamodelRole: "motivation" },
+  "Value":            { layer: "Motivation", aspect: "Passive Structure", color: "#E6FFE6", metamodelRole: "motivation" },
+
+  // ── Strategy ───────────────────────────────────────────────────────────────
+  "Resource":         { layer: "Strategy",   aspect: "Active Structure",  color: "#f5ede0", metamodelRole: "strategy" },
+  "Capability":       { layer: "Strategy",   aspect: "Behavior",          color: "#f5ede0", metamodelRole: "strategy" },
+  "Value Stream":     { layer: "Strategy",   aspect: "Behavior",          color: "#f5ede0", metamodelRole: "strategy" },
+  "Course of Action": { layer: "Strategy",   aspect: "Behavior",          color: "#f5ede0", metamodelRole: "strategy" },
+
+  // ── Business ───────────────────────────────────────────────────────────────
+  "Business Actor":         { layer: "Business", aspect: "Active Structure",  color: "#fffbe6", metamodelRole: "internal-active" },
+  "Business Role":          { layer: "Business", aspect: "Active Structure",  color: "#fffbe6", metamodelRole: "internal-active" },
+  "Business Collaboration": { layer: "Business", aspect: "Active Structure",  color: "#fffbe6", metamodelRole: "internal-active" },
+  "Business Interface":     { layer: "Business", aspect: "Active Structure",  color: "#fffbe6", metamodelRole: "external-active" },
+  "Business Process":       { layer: "Business", aspect: "Behavior",          color: "#fffbe6", metamodelRole: "internal-behavior" },
+  "Business Function":      { layer: "Business", aspect: "Behavior",          color: "#fffbe6", metamodelRole: "internal-behavior" },
+  "Business Interaction":   { layer: "Business", aspect: "Behavior",          color: "#fffbe6", metamodelRole: "internal-behavior" },
+  "Business Event":         { layer: "Business", aspect: "Behavior",          color: "#fffbe6", metamodelRole: "event" },
+  "Business Service":       { layer: "Business", aspect: "Behavior",          color: "#fffbe6", metamodelRole: "external-behavior" },
+  "Business Object":        { layer: "Business", aspect: "Passive Structure", color: "#fffbe6", metamodelRole: "passive" },
+  "Contract":               { layer: "Business", aspect: "Passive Structure", color: "#fffbe6", metamodelRole: "passive" },
+  "Representation":         { layer: "Business", aspect: "Passive Structure", color: "#fffbe6", metamodelRole: "passive" },
+  "Product":                { layer: "Business", aspect: "Composite",         color: "#fffbe6", metamodelRole: "composite" },
+
+  // ── Application ────────────────────────────────────────────────────────────
+  "Application Component":     { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "internal-active" },
+  "Application Collaboration": { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "internal-active" },
+  "Application Interface":     { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "external-active" },
+  "Application Function":      { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
+  "Application Process":       { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
+  "Application Interaction":   { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
+  "Application Event":         { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "event" },
+  "Application Service":       { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "external-behavior" },
+  "Data Object":               { layer: "Application", aspect: "Passive Structure", color: "#e8f4e8", metamodelRole: "passive" },
+
+  // ── Technology ─────────────────────────────────────────────────────────────
+  "Node":                      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "Device":                    { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "System Software":           { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "Technology Collaboration":  { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "Technology Interface":      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "external-active" },
+  "Path":                      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "Communication Network":     { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
+  "Technology Function":       { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
+  "Technology Process":        { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
+  "Technology Interaction":    { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
+  "Technology Event":          { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "event" },
+  "Technology Service":        { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "external-behavior" },
+  "Technology Object":         { layer: "Technology", aspect: "Passive Structure", color: "#e6f0fa", metamodelRole: "passive" },
+  "Artifact":                  { layer: "Technology", aspect: "Passive Structure", color: "#e6f0fa", metamodelRole: "passive" },
+
+  // ── Physical ───────────────────────────────────────────────────────────────
+  "Equipment":           { layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
+  "Facility":            { layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
+  "Distribution Network":{ layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
+  "Material":            { layer: "Physical", aspect: "Passive Structure", color: "#f0ece0", metamodelRole: "passive" },
+
+  // ── Composite ──────────────────────────────────────────────────────────────
+  "Location":             { layer: "Composite",      aspect: "Composite", color: "#e0e8f0", metamodelRole: "composite" },
+  "Grouping":             { layer: "Composite",      aspect: "Composite", color: "#f0f0f0", metamodelRole: "composite" },
+
+  // ── Implementation & Migration ─────────────────────────────────────────────
+  "Work Package":         { layer: "Implementation", aspect: "Behavior",          color: "#f0e6e6", metamodelRole: "implementation" },
+  "Deliverable":          { layer: "Implementation", aspect: "Passive Structure",  color: "#f0e6e6", metamodelRole: "implementation" },
+  "Implementation Event": { layer: "Implementation", aspect: "Behavior",          color: "#f0e6e6", metamodelRole: "implementation" },
+  "Plateau":              { layer: "Implementation", aspect: "Composite",          color: "#f0e6e6", metamodelRole: "implementation" },
+  "Gap":                  { layer: "Implementation", aspect: "Composite",          color: "#f0e6e6", metamodelRole: "implementation" },
+
+};
+
+/**
+ * Ordered layer definitions used for swimlane rendering.
+ * Top-to-bottom order follows the standard ArchiMate stack.
+ */
+const LAYERS = [
+  { id: "Motivation",     label: "Motivation",                 color: "#dcdcff", borderColor: "#6b6bb8" },
+  { id: "Strategy",       label: "Strategy",                   color: "#e8d4b8", borderColor: "#c07820" },
+  { id: "Business",       label: "Business",                   color: "#f5e87a", borderColor: "#c0a000" },
+  { id: "Application",    label: "Application",                color: "#a8d4a8", borderColor: "#208020" },
+  { id: "Technology",     label: "Technology",                 color: "#a0c4e8", borderColor: "#1060b0" },
+  { id: "Physical",       label: "Physical",                   color: "#d4c8a0", borderColor: "#806020" },
+  { id: "Composite",      label: "Composite",                  color: "#d0dce8", borderColor: "#406080" },
+  { id: "Implementation", label: "Implementation & Migration", color: "#e8b8b8", borderColor: "#a02020" },
+];
+
+/**
+ * Return the layer id for a given element name.
+ * Falls back to "Unknown" if the element isn't registered.
+ */
+function getElementLayer(elementName) {
+  return ELEMENTS[elementName]?.layer ?? "Unknown";
+}
+
+/**
+ * Return the metamodel role for a given element name.
+ * Used by ui/metamodelDiagram.js to highlight the correct box and arrows.
+ * Falls back to "composite" if the element isn't registered.
+ */
+function getMetamodelRole(elementName) {
+  return ELEMENTS[elementName]?.metamodelRole ?? "composite";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRAPH BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build an adjacency list (Map) from the MATRIX edge list.
+ *
+ * @param {object} options
+ * @param {Set<string>|null} options.allowedElements
+ *   If non-null, only elements in this set are included as nodes and targets.
+ *   Used for viewpoint filtering. null = all elements allowed.
+ * @param {boolean} options.includeDerived
+ *   If true, derived (lowercase) edges are included in the graph.
+ *   If false, only direct (uppercase) edges are traversable.
+ *
+ * @returns {Map<string, EdgeList>}
+ *   Map from element name → array of outgoing edges:
+ *   [{ to, codes, isDirect }, ...]
+ *
+ *   Each edge carries:
+ *     to       — target element name
+ *     codes    — array of relationship code strings (e.g. ["I","V"])
+ *     isDirect — true if these are direct (uppercase) relationships
+ *
+ *   A single matrix entry may yield TWO edges if it has both direct and derived
+ *   relationships — the caller can choose which to prefer.
+ */
+function buildGraph({ allowedElements = null, includeDerived = true } = {}) {
+  const graph = new Map();
+
+  /** Ensure a node exists in the graph */
+  const ensureNode = (name) => {
+    if (!graph.has(name)) graph.set(name, []);
+  };
+
+  // Register ALL known elements as nodes, even those with no matrix edges
+  // (e.g. Location, Grouping — only connected via Association which is excluded
+  //  from pathfinding, but they still need to exist as valid selectable endpoints)
+  for (const name of Object.keys(ELEMENTS)) {
+    if (!allowedElements || allowedElements.has(name)) {
+      ensureNode(name);
+    }
+  }
+
+  for (const entry of MATRIX) {
+    const { from, to, direct, derived } = entry;
+
+    // Viewpoint filter: skip if either endpoint is outside allowed set
+    if (allowedElements && (!allowedElements.has(from) || !allowedElements.has(to))) {
+      continue;
+    }
+
+    ensureNode(from);
+    ensureNode(to);
+
+    // Add direct edge
+    if (direct.length > 0) {
+      graph.get(from).push({ to, codes: direct, isDirect: true });
+    }
+
+    // Add derived edge (only if toggle is on)
+    if (includeDerived && derived.length > 0) {
+      graph.get(from).push({ to, codes: derived, isDirect: false });
+    }
+  }
+
+  return graph;
+}
+
+/**
+ * Convenience: get all element names known to the graph (from ELEMENTS registry).
+ * Optionally filtered to a set of allowed names.
+ */
+function getAllElements(allowedElements = null) {
+  const names = Object.keys(ELEMENTS);
+  return allowedElements
+    ? names.filter(n => allowedElements.has(n))
+    : names;
+}
+
+/**
+ * Convenience: group elements by layer for the layer-tile picker.
+ * Returns { layerId: [elementName, ...], ... }
+ */
+function getElementsByLayer(allowedElements = null) {
+  const result = {};
+  for (const layer of LAYERS) result[layer.id] = [];
+  for (const [name, meta] of Object.entries(ELEMENTS)) {
+    if (allowedElements && !allowedElements.has(name)) continue;
+    if (result[meta.layer]) result[meta.layer].push(name);
+  }
+  return result;
+}
+
+/**
+ * Summarize Appendix B matrix connectivity for one element (educational / UI).
+ * Counts unique partner element types and relationship-code usage on matrix rows.
+ * Association (O) is not encoded in MATRIX — callers should mention §5.2.4 separately.
+ *
+ * @param {string} elementName
+ * @returns {{
+ *   outgoing: {
+ *     directPartnerCount: number,
+ *     derivedPartnerCount: number,
+ *     derivedOnlyPartnerCount: number,
+ *     layersDirect: Record<string, number>,
+ *     codesDirect: Record<string, number>,
+ *     codesDerived: Record<string, number>,
+ *     neighborRanks: Array<{ partner: string, layer: string, aspect: string, directCount: number, derivedCount: number, codesDirect: string[], codesDerived: string[] }>,
+ *   },
+ *   incoming: {
+ *     directPartnerCount: number,
+ *     derivedPartnerCount: number,
+ *     derivedOnlyPartnerCount: number,
+ *     layersDirect: Record<string, number>,
+ *     codesDirect: Record<string, number>,
+ *     codesDerived: Record<string, number>,
+ *     neighborRanks: Array<{ partner: string, layer: string, aspect: string, directCount: number, derivedCount: number, codesDirect: string[], codesDerived: string[] }>,
+ *   },
+ * }}
+ */
+function rankMatrixNeighborRows(el, mode) {
+  const rows = [];
+  for (const row of MATRIX) {
+    let partner = null;
+    if (mode === "out") {
+      if (row.from !== el) continue;
+      partner = row.to;
+    } else {
+      if (row.to !== el) continue;
+      partner = row.from;
+    }
+    const direct = row.direct || [];
+    const derived = row.derived || [];
+    if (direct.length === 0) continue;
+    const meta = ELEMENTS[partner] || {};
+    rows.push({
+      partner,
+      layer: meta.layer || "Unknown",
+      aspect: meta.aspect || "Unknown",
+      directCount: direct.length,
+      derivedCount: derived.length,
+      codesDirect: [...direct].map((c) => String(c).toUpperCase()).sort(),
+      codesDerived: [...derived].map((c) => String(c).toUpperCase()).sort(),
+    });
+  }
+  rows.sort((a, b) =>
+    b.directCount - a.directCount ||
+    b.derivedCount - a.derivedCount ||
+    a.partner.localeCompare(b.partner)
+  );
+  return rows;
+}
+
+function getMatrixConnectivitySummary(elementName) {
+  const el = String(elementName || "").trim();
+
+  const outD = new Set();
+  const outDer = new Set();
+  const outDerOnly = new Set();
+  const codesOutD = Object.create(null);
+  const codesOutDer = Object.create(null);
+
+  const inD = new Set();
+  const inDer = new Set();
+  const inDerOnly = new Set();
+  const codesInD = Object.create(null);
+  const codesInDer = Object.create(null);
+
+  const bump = (obj, code) => {
+    const u = String(code).toUpperCase();
+    obj[u] = (obj[u] || 0) + 1;
+  };
+
+  for (const row of MATRIX) {
+    const { from, to, direct = [], derived = [] } = row;
+    const hasD = direct.length > 0;
+    const hasDer = derived.length > 0;
+
+    if (from === el) {
+      if (hasD) {
+        outD.add(to);
+        for (const c of direct) bump(codesOutD, c);
+      }
+      if (hasDer) {
+        outDer.add(to);
+        if (!hasD) outDerOnly.add(to);
+        for (const c of derived) bump(codesOutDer, c);
+      }
+    }
+    if (to === el) {
+      if (hasD) {
+        inD.add(from);
+        for (const c of direct) bump(codesInD, c);
+      }
+      if (hasDer) {
+        inDer.add(from);
+        if (!hasD) inDerOnly.add(from);
+        for (const c of derived) bump(codesInDer, c);
+      }
+    }
+  }
+
+  const layerCounts = (set) => {
+    const o = Object.create(null);
+    for (const n of set) {
+      const L = ELEMENTS[n]?.layer || "Unknown";
+      o[L] = (o[L] || 0) + 1;
+    }
+    return o;
+  };
+
+  return {
+    outgoing: {
+      directPartnerCount: outD.size,
+      derivedPartnerCount: outDer.size,
+      derivedOnlyPartnerCount: outDerOnly.size,
+      layersDirect: layerCounts(outD),
+      codesDirect: codesOutD,
+      codesDerived: codesOutDer,
+      neighborRanks: rankMatrixNeighborRows(el, "out").slice(0, 12),
+    },
+    incoming: {
+      directPartnerCount: inD.size,
+      derivedPartnerCount: inDer.size,
+      derivedOnlyPartnerCount: inDerOnly.size,
+      layersDirect: layerCounts(inD),
+      codesDirect: codesInD,
+      codesDerived: codesInDer,
+      neighborRanks: rankMatrixNeighborRows(el, "in").slice(0, 12),
+    },
+  };
+}

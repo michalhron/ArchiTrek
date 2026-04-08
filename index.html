@@ -2,8 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<!-- Subdirectory deploy: without this, /ArchiTrek (no trailing slash) resolves ./ui/app.js to /ui/app.js (404). -->
+<script>
+(function () {
+  var p = location.pathname;
+  if (!p.endsWith("/")) {
+    var seg = p.split("/").pop() || "";
+    if (seg.indexOf(".") !== -1) p = p.replace(/\/[^/]*$/, "/");
+    else p += "/";
+  }
+  var b = document.createElement("base");
+  b.href = location.origin + (p === "/" ? "/" : p);
+  var cs = document.querySelector("meta[charset]");
+  if (cs) document.head.insertBefore(b, cs.nextSibling);
+  else document.head.insertBefore(b, document.head.firstChild);
+})();
+</script>
+<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>ArchiMate Path Navigator</title>
+<title>ArchiTrek</title>
+<link rel="icon" href="./assets/favicon.svg" type="image/svg+xml"/>
 <link rel="stylesheet" href="./ui/styles.css"/>
 </head>
 <body>
@@ -15,33 +33,34 @@
 <!-- ── Header ────────────────────────────────────────────────────────────── -->
 <header class="app-header">
   <div class="header-brand">
-    <h1>ArchiMate Path Navigator</h1>
+    <button type="button" class="header-show-controls-btn" id="btn-header-show-controls"
+      aria-controls="selector-panel-wrap" aria-expanded="false"
+      title="Show path options and waypoints">
+      <svg class="header-show-controls-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <!-- Sliders / “adjust path” — not a gear (settings) or pencil (edit) -->
+        <path d="M4 7.5h16M4 12h16M4 16.5h16" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
+        <circle cx="9" cy="7.5" r="2.65" fill="currentColor"/>
+        <circle cx="15" cy="12" r="2.65" fill="currentColor"/>
+        <circle cx="11" cy="16.5" r="2.65" fill="currentColor"/>
+      </svg>
+    </button>
+    <a class="header-logo-link" href="./" title="ArchiTrek" aria-label="ArchiTrek — UNOFFICIAL STUDY ENGINE">
+      <img class="header-logo-img" src="./assets/logo.svg" alt="" width="200" height="40" decoding="async"/>
+    </a>
     <span class="header-sub">ArchiMate 3.1</span>
   </div>
   <div class="header-actions">
     <div class="toolbar">
-      <div class="header-layout-cluster">
-        <div class="toggle-group layout-chrome-group" title="Where to show the control panel">
-          <button type="button" class="toggle-btn" id="btn-layout-sidebar" onclick="setChromeLayout('sidebar')"
-            title="Controls in a column on the left (resizable)">Sidebar</button>
-          <button type="button" class="toggle-btn active" id="btn-layout-top" onclick="setChromeLayout('top')"
-            title="Controls in a bar along the top of the main area">Top bar</button>
-        </div>
-        <button type="button" class="header-results-layout-btn" id="btn-results-layout" onclick="toggleResultsLayout()"
-          title="Put path tabs and explanations to the right of the diagram">Details beside</button>
-        <button type="button" class="header-drawer-toggle" id="btn-top-drawer" onclick="togglePanelCollapsed()" hidden
-          aria-expanded="false" aria-controls="selector-panel-wrap"
-          title="Open options and waypoints (slides down from the header)">Options</button>
-      </div>
+      <button type="button" class="header-drawer-toggle" id="btn-top-drawer" onclick="togglePanelCollapsed()" hidden
+        aria-expanded="false" aria-controls="selector-panel-wrap"
+        title="Open options and waypoints (slides down from the header)">Options</button>
       <button type="button" class="toggle-btn panel-collapse-btn" id="btn-panel-collapse" onclick="togglePanelCollapsed()"
         aria-expanded="true" aria-controls="selector-panel-wrap" title="Hide control panel">⟨</button>
       <button class="toggle-btn header-help-btn" onclick="showHelp()" title="Help">?</button>
     </div>
-    <nav class="header-links" aria-label="Feedback and support">
+    <nav class="header-links" aria-label="Feedback">
       <button type="button" class="header-link" id="header-feedback-btn" onclick="openFeedbackModal()"
         title="Send feedback with a summary of your current settings">Feedback</button>
-      <span class="header-links-sep" aria-hidden="true">·</span>
-      <a class="header-link" href="https://buymeacoffee.com/michalhron" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
     </nav>
   </div>
 </header>
@@ -70,13 +89,13 @@
     <br/>
     <p><strong>Adding points:</strong> Use + Add intermediate element to add more points to connect. In Ordered mode this forces the route through that point; in Connect set mode it’s simply another point to include.</p>
     <br/>
-    <p><strong>No path found?</strong> Try: enabling + Derived, or adding a point in an intermediate layer.</p>
+    <p><strong>No path found?</strong> Try: enabling + Derived, turning on <em>Allow Association Fallback</em> (§5.2.4 bridges, flagged in results), or adding a point in an intermediate layer.</p>
     <br/>
     <p><strong>Learn an element:</strong> After a path is shown, click any element shape in the diagram or a name chip in the explanation to open the spec-style definition. You can also jump from there to the spec excerpts below.</p>
   </div>
 </div>
 
-<!-- Feedback (in-page form; copy report to send by email) -->
+<!-- Feedback (Web3Forms send + copy fallback; key in config/feedback-config.js) -->
 <div id="feedback-modal" class="feedback-modal" style="display:none" aria-hidden="true">
   <div class="feedback-modal-backdrop" data-feedback-close="1" aria-hidden="true"></div>
   <div class="feedback-modal-card" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title" tabindex="-1">
@@ -92,18 +111,48 @@
       <label class="feedback-label" for="feedback-reply-email">Your email <span class="feedback-optional">(optional, if you want a reply)</span></label>
       <input type="email" id="feedback-reply-email" class="feedback-input" autocomplete="email" placeholder="you@example.com"/>
       <details class="feedback-context-details">
-        <summary>Technical details <span class="feedback-summary-note">(included when you copy)</span></summary>
+        <summary>Technical details <span class="feedback-summary-note">(included when you send)</span></summary>
         <textarea id="feedback-context-field" class="feedback-context-readonly" readonly rows="10" aria-label="Technical details"></textarea>
       </details>
       <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
       <div class="feedback-modal-actions">
         <button type="button" class="feedback-btn feedback-btn-secondary" data-feedback-close="1">Cancel</button>
-        <button type="submit" class="feedback-btn feedback-btn-primary">Copy report</button>
+        <button type="button" class="feedback-btn feedback-btn-secondary" id="feedback-copy-btn">Copy report</button>
+        <button type="submit" class="feedback-btn feedback-btn-primary" id="feedback-send-btn">Send feedback</button>
       </div>
     </form>
   </div>
 </div>
 
+<!-- First visit: intro + try examples + local-storage consent (same origin only) -->
+<div id="welcome-modal" class="feedback-modal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="welcome-modal-title">
+  <div class="feedback-modal-backdrop" aria-hidden="true"></div>
+  <div class="feedback-modal-card welcome-modal-card">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="welcome-modal-title">Welcome to ArchiTrek</h2>
+    </div>
+    <div class="welcome-modal-body">
+      <p class="feedback-modal-lead">ArchiTrek is an <strong>unofficial study tool</strong> for ArchiMate 3.1: choose two or more element types, and it searches the standard <strong>Appendix B</strong> relationship tables for valid routes. You get a diagram, hop-by-hop explanation, and links to dig into elements and the metamodel.</p>
+      <div class="welcome-try-section" role="region" aria-labelledby="welcome-try-heading">
+        <h3 class="welcome-try-heading" id="welcome-try-heading">Try an example</h3>
+        <p class="welcome-try-hint">Jump straight to a path, or skip and pick your own elements below.</p>
+        <div class="welcome-examples-list">
+          <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Technology","element":"Device"},{"layer":"Business","element":"Business Process"}]'>Device → Business Process</button>
+          <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Business","element":"Business Role"},{"layer":"Business","element":"Business Service"}]'>Business Role → Business Service</button>
+          <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Application","element":"Application Component"},{"layer":"Business","element":"Business Service"}]'>App Component → Business Service</button>
+          <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Technology","element":"Device"},{"layer":"Application","element":"Application Service"},{"layer":"Business","element":"Business Process"}]'>Device → App Service → Business Process</button>
+        </div>
+      </div>
+      <p class="welcome-storage-note">By continuing, you agree this browser may store your settings and last session (path choices, layout) locally on your device so the app can restore them when you return. Nothing is sent to a server unless you use Feedback. You can clear site data anytime.</p>
+      <div class="feedback-modal-actions welcome-modal-actions">
+        <button type="button" class="feedback-btn feedback-btn-primary" id="welcome-modal-ok">Continue without example</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app-viewport">
+<div class="explore-shell" id="explore-shell">
 <div class="app-layout layout-top panel-collapsed" id="app-layout" style="--panel-width: 280px; --panel-top-height: 200px;">
 
   <!-- Control panel (sidebar or top, depending on layout class) -->
@@ -134,6 +183,13 @@
                   <button class="toggle-btn active" id="btn-derived" onclick="setDerived(true)"
                     title="+ Derived: also include relationships valid by the §5.7 derivation rules (lowercase in the tables). More paths, including cross-layer routes.">+ Derived</button>
                 </div>
+              </div>
+              <div class="control-block">
+                <label class="search-field search-field--checkbox allow-association-fallback-label">
+                  <input type="checkbox" id="allow-association-fallback" onchange="onAssociationFallbackChange()"
+                    title="When off, only Appendix B (and derived) relationships are used. When on, §5.2.4 Association may bridge gaps; penalized hops are flagged in the explanation.">
+                  <span class="search-field-label">Allow Association Fallback</span>
+                </label>
               </div>
               <div class="control-block control-block-viewpoint">
                 <div class="control-label">Viewpoint</div>
@@ -180,8 +236,91 @@
                   <div id="path-mode-popover" popover="auto" class="path-mode-popover"></div>
                 </div>
               </div>
+              <div class="control-block control-block-search">
+                <div class="control-label">Path search</div>
+                <div class="search-options-rows">
+                  <label class="search-field">
+                    <span class="search-field-label">Max hops per segment</span>
+                    <select class="viewpoint-select" id="search-max-depth" onchange="onSearchOptionsChange()"
+                      title="Maximum relationship hops between two consecutive waypoints (segment depth).">
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                      <option value="6" selected>6</option>
+                      <option value="7">7</option>
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                      <option value="11">11</option>
+                      <option value="12">12</option>
+                    </select>
+                  </label>
+                  <label class="search-field">
+                    <span class="search-field-label">Alternatives per segment</span>
+                    <select class="viewpoint-select" id="search-max-paths" onchange="onSearchOptionsChange()"
+                      title="How many different routes to keep per segment (path tabs).">
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5" selected>5</option>
+                      <option value="6">6</option>
+                      <option value="7">7</option>
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                    </select>
+                  </label>
+                  <label class="search-field">
+                    <span class="search-field-label">Search effort</span>
+                    <select class="viewpoint-select" id="search-effort" onchange="onSearchOptionsChange()"
+                      title="How much of the graph to explore before giving up (larger = more thorough, may be slower on dense graphs).">
+                      <option value="fast">Fast (smaller budget)</option>
+                      <option value="balanced" selected>Balanced</option>
+                      <option value="thorough">Thorough (larger budget)</option>
+                    </select>
+                  </label>
+                  <label class="search-field">
+                    <span class="search-field-label">Explore by</span>
+                    <select class="viewpoint-select" id="search-strategy" onchange="onSearchOptionsChange()"
+                      title="Path search uses weighted uniform-cost (UCS): Appendix B hops cost 1; penalized Association costs 100 (1 to Value/Meaning). This control is kept for compatibility; explore order does not change UCS results.">
+                      <option value="bfs" selected>BFS (legacy label)</option>
+                      <option value="dfs">DFS (legacy label)</option>
+                    </select>
+                  </label>
+                  <p class="search-field-hint">Search uses weighted UCS (strict hops first; Association only when allowed and cheaper alternatives exist). Higher hop limits and thorough effort help on long routes.</p>
+                </div>
+              </div>
             </div>
           </div>
+          </div>
+        </div>
+
+        <div class="sidebar-controls-collapsible path-chrome-collapsible" id="path-chrome-collapsible">
+          <button type="button" class="element-trigger path-chrome-trigger" id="path-chrome-trigger"
+            aria-expanded="false" aria-controls="path-chrome-body-host"
+            title="Sidebar vs top bar and diagram details layout">
+            <span class="left">
+              <span class="name" id="path-chrome-trigger-label">Layout</span>
+            </span>
+            <span class="chev" aria-hidden="true">▾</span>
+          </button>
+          <div class="path-chrome-body-host" id="path-chrome-body-host" role="region"
+            aria-labelledby="path-chrome-trigger-label" hidden>
+            <div class="path-chrome-stack">
+              <div class="control-block control-block-panel-chrome">
+                <div class="control-label">Panel layout</div>
+                <div class="toggle-group sidebar-toggle-group">
+                  <button type="button" class="toggle-btn" id="btn-layout-sidebar" onclick="setChromeLayout('sidebar')"
+                    title="Controls in a column on the left (resizable)">Sidebar</button>
+                  <button type="button" class="toggle-btn active" id="btn-layout-top" onclick="setChromeLayout('top')"
+                    title="Controls in a bar along the top of the main area">Top bar</button>
+                </div>
+                <button type="button" class="panel-results-layout-btn" id="btn-results-layout" onclick="toggleResultsLayout()"
+                  title="Put path tabs and explanations to the right of the diagram">Details beside</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -243,10 +382,8 @@
       
       <div class="diagram-toolbar">
         <div class="diagram-toolbar-row">
-          <div class="diagram-view-controls">
-            <button type="button" class="diagram-view-btn active" id="btn-compact" onclick="setMode('compact')">Compact</button>
-            <button type="button" class="diagram-view-btn" id="btn-swimlane" onclick="setMode('swimlane')">Swimlanes</button>
-          </div>
+          <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-swimlanes" onclick="toggleSwimlanes()"
+            title="Show layer bands and swimlane connectors">Swimlanes</button>
           <div class="diagram-zoom-controls" role="group" aria-label="Diagram zoom and pan">
             <button type="button" class="diagram-zoom-btn" id="diagram-zoom-out" onclick="diagramZoomStep(-1)"
               title="Zoom out" aria-label="Zoom out">−</button>
@@ -256,8 +393,8 @@
               title="Reset pan and zoom" aria-label="Reset pan and zoom">↺</button>
           </div>
           <div id="diagram-tools" class="diagram-tools" hidden>
-            <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-vertical" onclick="toggleVertical()"
-              title="Stack vertically within layers">Vertical</button>
+            <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-vertical" onclick="cyclePathFlow()"
+              title="Cycle path layout: Horizontal, Vertical stack, or Compact (tight orthogonal lanes)">Horizontal</button>
             <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-badges" onclick="toggleBadges()"
               title="Hide hop numbers on arrows">Hide #</button>
             <button type="button" class="diagram-icon-btn" onclick="downloadDiagram()" title="Download SVG" aria-label="Download SVG">⬇</button>
@@ -297,6 +434,23 @@
     aria-label="Show control panel" title="Show control panel">»</button>
 
 </div>
+</div>
+
+<footer class="app-footer-bar" role="contentinfo" aria-label="Copyright and trademarks"
+  title="ArchiMate® is a registered trademark of The Open Group. ArchiTrek is an unofficial study aid and is not affiliated with or endorsed by The Open Group.">
+  <div class="app-footer-bar-inner">
+    <span class="app-footer-copy">© 2026 <a href="https://michalhron.com" class="app-footer-link" target="_blank" rel="noopener noreferrer">Michal Hron</a>, PhD</span>
+    <span class="app-footer-sep" aria-hidden="true">·</span>
+    <a class="app-footer-link" href="https://michalhron.com" target="_blank" rel="noopener noreferrer">Website</a>
+    <span class="app-footer-sep" aria-hidden="true">·</span>
+    <a class="app-footer-link" href="https://www.linkedin.com/in/mhron/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+    <span class="app-footer-sep" aria-hidden="true">·</span>
+    <a class="app-footer-link" href="https://revolut.me/michalhron" target="_blank" rel="noopener noreferrer">Buy me a coffee</a>
+    <span class="app-footer-sep" aria-hidden="true">·</span>
+    <span class="app-footer-tm">ArchiMate® is a registered trademark of The Open Group. ArchiTrek is unofficial; not affiliated or endorsed.</span>
+  </div>
+</footer>
+</div>
 
 <!-- Element definition (educational; diagram chips + path explanation) -->
 <div class="mm-modal el-info-modal" id="element-info-modal" aria-hidden="true">
@@ -330,6 +484,7 @@
 
 <!-- ── JavaScript ─────────────────────────────────────────────────────────── -->
 
+<script src="./config/feedback-config.js"></script>
 <script src="./data/relationships.js"></script>
 <script src="./data/elements.js"></script>
 <script src="./data/matrix.js"></script>

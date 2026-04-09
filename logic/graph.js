@@ -1,7 +1,7 @@
 // === logic/graph.js ===
 /**
  * logic/graph.js
- * ArchiMate Path Navigator — Graph Builder
+ * ArchiTrek — Graph Builder
  *
  * Converts the flat MATRIX edge list into an adjacency list suitable for BFS.
  * Supports viewpoint filtering and direct/derived edge toggling.
@@ -41,7 +41,7 @@
 
 const ELEMENTS = {
 
-  // ── Motivation — palette matches spec legend: chamfered boxes #CCCCFF; Value/Meaning #E6FFE6
+  // ── Motivation — chamfered / passive motivation elements use lavender #CCCCFF
   "Stakeholder":      { layer: "Motivation", aspect: "Active Structure",  color: "#CCCCFF", metamodelRole: "motivation" },
   "Driver":           { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
   "Assessment":       { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
@@ -50,8 +50,8 @@ const ELEMENTS = {
   "Principle":        { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
   "Requirement":      { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
   "Constraint":       { layer: "Motivation", aspect: "Motivation",        color: "#CCCCFF", metamodelRole: "motivation" },
-  "Meaning":          { layer: "Motivation", aspect: "Passive Structure", color: "#E6FFE6", metamodelRole: "motivation" },
-  "Value":            { layer: "Motivation", aspect: "Passive Structure", color: "#E6FFE6", metamodelRole: "motivation" },
+  "Meaning":          { layer: "Motivation", aspect: "Passive Structure", color: "#CCCCFF", metamodelRole: "motivation" },
+  "Value":            { layer: "Motivation", aspect: "Passive Structure", color: "#CCCCFF", metamodelRole: "motivation" },
 
   // ── Strategy ───────────────────────────────────────────────────────────────
   "Resource":         { layer: "Strategy",   aspect: "Active Structure",  color: "#f5ede0", metamodelRole: "strategy" },
@@ -121,8 +121,10 @@ const ELEMENTS = {
 };
 
 /**
- * Ordered layer definitions used for swimlane rendering.
- * Top-to-bottom order follows the standard ArchiMate stack.
+ * Canonical ArchiMate layer stack order (top → bottom in vertical diagrams): Motivation, Strategy,
+ * Business, Application, Technology, Physical, … Lane tints and horizontal swimlane rows use this.
+ * Vertical path diagrams stack nodes in extracted path order (first step at bottom, last at top;
+ * see ui/renderer.js orderCompactVerticalSteps).
  */
 const LAYERS = [
   { id: "Motivation",     label: "Motivation",                 color: "#dcdcff", borderColor: "#6b6bb8" },
@@ -153,6 +155,81 @@ function getMetamodelRole(elementName) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MUTUAL INFLUENCE — CANONICAL DIRECTION FOR PATHFINDING
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Appendix B often lists Influence (N) in both directions between the same motivation
+// elements. The matrix is correct for “what may be modeled”, but BFS pathfinding treats
+// each row as a traversable arc — so the graph effectively had two opposite edges for
+// the same relationship. Connect-set ordering could then pick Constraint → Meaning
+// (same hop cost as Meaning → Constraint) and the walk no longer reads as one
+// consistent directed chain.
+//
+// For mutual pairs with identical direct+derived codes where the only direct code is N,
+// we keep a single canonical arc: Motivation element order follows the ELEMENTS registry
+// (top → bottom in the stack), except Meaning ↔ Constraint where Meaning → Constraint
+// is kept (typical “upward” motivation link in layered views).
+//
+// Neighbor summaries and matrix.js are unchanged; only buildGraph() adjacency is filtered.
+
+/**
+ * @returns {Map<string, number>} Motivation element name → order index (ELEMENTS key order)
+ */
+function getMotivationOrderIndex() {
+  const order = Object.create(null);
+  let i = 0;
+  for (const name of Object.keys(ELEMENTS)) {
+    if (ELEMENTS[name]?.layer === "Motivation") order[name] = i++;
+  }
+  return order;
+}
+
+/**
+ * For a mutual Influence-only pair (from,to), return the one directed edge to keep [cf, ct].
+ */
+function canonicalMutualInfluenceEdge(from, to, motivationOrder) {
+  if (from === "Meaning" && to === "Constraint") return ["Meaning", "Constraint"];
+  if (from === "Constraint" && to === "Meaning") return ["Meaning", "Constraint"];
+  const oa = motivationOrder[from];
+  const ob = motivationOrder[to];
+  if (oa === undefined || ob === undefined) return null;
+  return oa < ob ? [from, to] : [to, from];
+}
+
+/**
+ * Set of "from|to" keys to omit from the pathfinding graph (reverse of canonical arc).
+ */
+function computeMutualInfluenceEdgeDrops() {
+  const drops = new Set();
+  const motivationOrder = getMotivationOrderIndex();
+  const sig = (r) => JSON.stringify({ d: r.direct || [], der: r.derived || [] });
+  const byKey = new Map();
+  for (const r of MATRIX) {
+    byKey.set(`${r.from}|${r.to}`, r);
+  }
+
+  for (const r of MATRIX) {
+    const { from, to, direct, derived } = r;
+    if (from === to) continue;
+    if (!direct || direct.length !== 1 || direct[0] !== "N") continue;
+    if ((derived || []).length > 0) continue;
+
+    const rev = byKey.get(`${to}|${from}`);
+    if (!rev) continue;
+    if (sig(rev) !== sig(r)) continue;
+    if (motivationOrder[from] === undefined || motivationOrder[to] === undefined) continue;
+
+    const canon = canonicalMutualInfluenceEdge(from, to, motivationOrder);
+    if (!canon) continue;
+    const [cf, ct] = canon;
+    if (from !== cf || to !== ct) drops.add(`${from}|${to}`);
+  }
+  return drops;
+}
+
+const MUTUAL_INFLUENCE_EDGE_DROPS = computeMutualInfluenceEdgeDrops();
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GRAPH BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -166,20 +243,26 @@ function getMetamodelRole(elementName) {
  * @param {boolean} options.includeDerived
  *   If true, derived (lowercase) edges are included in the graph.
  *   If false, only direct (uppercase) edges are traversable.
+ * @param {boolean} [options.includeAssociationBridges=true]
+ *   If true, add directed Association (O) arcs for every ordered pair of allowed nodes (§5.2.4 —
+ *   always permitted; not listed per-cell in Appendix B). Pathfinder applies a penalty so matrix
+ *   routes are preferred unless the user allows fallback.
  *
  * @returns {Map<string, EdgeList>}
  *   Map from element name → array of outgoing edges:
- *   [{ to, codes, isDirect }, ...]
+ *   [{ to, codes, isDirect, isDirected?, isAssociation? }, ...]
  *
  *   Each edge carries:
  *     to       — target element name
  *     codes    — array of relationship code strings (e.g. ["I","V"])
  *     isDirect — true if these are direct (uppercase) relationships
+ *     isDirected — false for §5.2.4 Association bridges only; true for Appendix B arcs (tail→head)
+ *     isAssociation — true for §5.2.4 universal Association edges only
  *
  *   A single matrix entry may yield TWO edges if it has both direct and derived
  *   relationships — the caller can choose which to prefer.
  */
-function buildGraph({ allowedElements = null, includeDerived = true } = {}) {
+function buildGraph({ allowedElements = null, includeDerived = false, includeAssociationBridges = true } = {}) {
   const graph = new Map();
 
   /** Ensure a node exists in the graph */
@@ -188,8 +271,7 @@ function buildGraph({ allowedElements = null, includeDerived = true } = {}) {
   };
 
   // Register ALL known elements as nodes, even those with no matrix edges
-  // (e.g. Location, Grouping — only connected via Association which is excluded
-  //  from pathfinding, but they still need to exist as valid selectable endpoints)
+  // (e.g. Location, Grouping — reachable via §5.2.4 Association when bridges are on)
   for (const name of Object.keys(ELEMENTS)) {
     if (!allowedElements || allowedElements.has(name)) {
       ensureNode(name);
@@ -197,6 +279,7 @@ function buildGraph({ allowedElements = null, includeDerived = true } = {}) {
   }
 
   for (const entry of MATRIX) {
+    // Appendix B: one directed arc per record — tail `from` → head `to` only.
     const { from, to, direct, derived } = entry;
 
     // Viewpoint filter: skip if either endpoint is outside allowed set
@@ -207,14 +290,33 @@ function buildGraph({ allowedElements = null, includeDerived = true } = {}) {
     ensureNode(from);
     ensureNode(to);
 
-    // Add direct edge
-    if (direct.length > 0) {
-      graph.get(from).push({ to, codes: direct, isDirect: true });
+    // Add direct edge (omit reverse of canonical mutual Influence — see MUTUAL_INFLUENCE_EDGE_DROPS)
+    if (direct.length > 0 && !MUTUAL_INFLUENCE_EDGE_DROPS.has(`${from}|${to}`)) {
+      graph.get(from).push({ to, codes: direct, isDirect: true, isDirected: true });
     }
 
     // Add derived edge (only if toggle is on)
     if (includeDerived && derived.length > 0) {
-      graph.get(from).push({ to, codes: derived, isDirect: false });
+      graph.get(from).push({ to, codes: derived, isDirect: false, isDirected: true });
+    }
+  }
+
+  // §5.2.4 Association is always allowed between any two elements; Appendix B does not repeat O per cell.
+  if (includeAssociationBridges) {
+    const nodes = [...graph.keys()];
+    for (let i = 0; i < nodes.length; i++) {
+      const from = nodes[i];
+      for (let j = 0; j < nodes.length; j++) {
+        if (i === j) continue;
+        const to = nodes[j];
+        graph.get(from).push({
+          to,
+          codes: ["O"],
+          isDirect: true,
+          isAssociation: true,
+          isDirected: false,
+        });
+      }
     }
   }
 

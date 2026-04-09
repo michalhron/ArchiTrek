@@ -2,8 +2,11 @@
 .DS_Store
 
 # Local / editor
+.cursor/
+
 .env
 .env.*
+!.env.deploy.example
 *.local
 
 # Claude Code local permissions (machine-specific)

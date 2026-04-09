@@ -1,0 +1,6 @@
+{$UMAMI_DOMAIN} {
+  encode zstd gzip
+
+  # Umami app (dashboard + script)
+  reverse_proxy umami:3000
+}

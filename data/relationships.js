@@ -83,5 +83,5 @@ const RELATIONSHIP_CATEGORIES = {
 /** Always permitted between two instances of the same element type (§5 rules). */
 const ALWAYS_PERMITTED_SAME_TYPE = ["S","C","G"];
 
-/** Association is always permitted but excluded from pathfinding (no architectural specificity). */
+/** Association is universal (§5.2.4); not listed per cell in Appendix B. Pathfinder adds O arcs with a penalty unless the user allows fallback. */
 const EXCLUDED_FROM_PATHFINDING = ["O"];

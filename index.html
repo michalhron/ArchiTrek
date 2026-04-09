@@ -28,6 +28,7 @@
 <div class="loading-bar" id="loading-bar" aria-hidden="true"><div class="inner"></div></div>
   <div class="picker-overlay" id="picker-overlay" aria-hidden="true"></div>
   <div class="picker-overlay" id="path-options-overlay" aria-hidden="true"></div>
+  <div class="picker-overlay" id="path-chrome-overlay" aria-hidden="true"></div>
 
 
 <!-- ── Header ────────────────────────────────────────────────────────────── -->
@@ -38,24 +39,31 @@
       title="Show path options and waypoints">
       <svg class="header-show-controls-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <!-- Sliders / “adjust path” — not a gear (settings) or pencil (edit) -->
-        <path d="M4 7.5h16M4 12h16M4 16.5h16" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
-        <circle cx="9" cy="7.5" r="2.65" fill="currentColor"/>
-        <circle cx="15" cy="12" r="2.65" fill="currentColor"/>
-        <circle cx="11" cy="16.5" r="2.65" fill="currentColor"/>
+        <path d="M4 7.5h16M4 12h16M4 16.5h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <circle cx="9" cy="7.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="15" cy="12" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="11" cy="16.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
       </svg>
+      <span class="header-show-controls-label">Edit path</span>
     </button>
-    <a class="header-logo-link" href="./" title="ArchiTrek" aria-label="ArchiTrek — UNOFFICIAL STUDY ENGINE">
+    <span class="header-brand-divider" aria-hidden="true"></span>
+    <a class="header-logo-link" href="./index.html" title="ArchiTrek" aria-label="ArchiMate 3.1 Study Engine">
       <img class="header-logo-img" src="./assets/logo.svg" alt="" width="200" height="40" decoding="async"/>
     </a>
-    <span class="header-sub">ArchiMate 3.1</span>
   </div>
+
   <div class="header-actions">
+    <div class="header-theme">
+      <label for="domain-context-top-select">Story Theme</label>
+      <select id="domain-context-top-select" onchange="onDomainContextChange(this.value)">
+        <option value="abstract" selected>Abstract</option>
+        <option value="death_star">Death Star</option>
+        <option value="rebel_alliance">Star Wars Rebels</option>
+        <option value="hospital">Hospital</option>
+        <option value="circus">Circus</option>
+      </select>
+    </div>
     <div class="toolbar">
-      <button type="button" class="header-drawer-toggle" id="btn-top-drawer" onclick="togglePanelCollapsed()" hidden
-        aria-expanded="false" aria-controls="selector-panel-wrap"
-        title="Open options and waypoints (slides down from the header)">Options</button>
-      <button type="button" class="toggle-btn panel-collapse-btn" id="btn-panel-collapse" onclick="togglePanelCollapsed()"
-        aria-expanded="true" aria-controls="selector-panel-wrap" title="Hide control panel">⟨</button>
       <button class="toggle-btn header-help-btn" onclick="showHelp()" title="Help">?</button>
     </div>
     <nav class="header-links" aria-label="Feedback">
@@ -67,31 +75,181 @@
 <div id="top-drawer-backdrop" class="top-drawer-backdrop" aria-hidden="true" hidden></div>
 <!-- ── App Layout ─────────────────────────────────────────────────────────── -->
 <!-- Help modal -->
-<div id="help-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;padding:20px;overflow-y:auto">
-  <div style="background:#fff;border-radius:8px;max-width:480px;margin:40px auto;padding:24px;font-size:13px;line-height:1.6">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <strong style="font-size:16px;color:#1e3a5f">How to use this tool</strong>
-      <button onclick="document.getElementById('help-modal').style.display='none'" style="border:none;background:none;font-size:20px;cursor:pointer;color:#999">×</button>
+<div id="help-modal" class="help-modal" aria-hidden="true">
+  <div class="help-modal-backdrop" aria-hidden="true" onclick="hideHelp()"></div>
+  <div class="help-modal-card" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" tabindex="-1">
+    <div class="help-modal-head">
+      <h2 class="help-modal-title" id="help-modal-title">How to use ArchiTrek</h2>
+      <button type="button" class="help-modal-close" onclick="hideHelp()" title="Close" aria-label="Close">×</button>
     </div>
-    <p><strong>Finding a path:</strong> Select two or more elements (points) using the layer + element pickers, then click Find Path. The tool searches the ArchiMate 3.1 Appendix B relationship tables for valid routes.</p>
-    <br/>
-    <p><strong>Ordered vs Connect set:</strong><br/>
-    <em>Ordered</em> respects your Start → Via → End order (use this when direction/order matters).<br/>
-    <em>Connect set</em> treats your selections as an unordered set and automatically chooses an order that minimises total path cost, then displays the resulting single chain.</p>
-    <br/>
-    <p><strong>Direct vs Derived:</strong><br/>
-    <em>Direct</em> relationships appear in uppercase in Appendix B — they are explicitly defined between two element types.<br/>
-    <em>Derived</em> relationships appear in lowercase — they are valid by §5.7 derivation rules (e.g. if A realises B and B realises C, A derivedly realises C). Enabling derived reveals many more cross-layer paths.</p>
-    <br/>
-    <p><strong>Compact vs Swimlanes:</strong><br/>
-    <em>Compact</em> shows all elements in a single row from left to right.<br/>
-    <em>Swimlanes</em> places each element in its ArchiMate layer band (Technology, Application, Business…) so cross-layer paths are immediately visible.</p>
-    <br/>
-    <p><strong>Adding points:</strong> Use + Add intermediate element to add more points to connect. In Ordered mode this forces the route through that point; in Connect set mode it’s simply another point to include.</p>
-    <br/>
-    <p><strong>No path found?</strong> Try: enabling + Derived, turning on <em>Allow Association Fallback</em> (§5.2.4 bridges, flagged in results), or adding a point in an intermediate layer.</p>
-    <br/>
-    <p><strong>Learn an element:</strong> After a path is shown, click any element shape in the diagram or a name chip in the explanation to open the spec-style definition. You can also jump from there to the spec excerpts below.</p>
+
+    <div class="help-modal-body">
+      <div class="help-card help-card--primary">
+        <div class="help-kicker">The problem</div>
+        <div class="help-card-title">How do these elements connect across layers?</div>
+        <p class="help-text">
+          ArchiMate relationships are defined in the spec, but it can be <strong>tedious</strong> to look up the tables
+          and verify which element types can connect. Even with modeling tools that help you draw links, it’s not always
+          obvious what <em>chain</em> of allowed relationships will get you from one element type to another.
+          ArchiTrek helps you find a valid <strong>relationship chain</strong> (a “route”) — often crossing Business /
+          Application / Technology layers.
+        </p>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">What the app does</div>
+        <div class="help-card-title">Pick points → Find Path → read the explanation</div>
+        <ul class="help-list">
+          <li><strong>Choose 2+ element types</strong> using the pickers.</li>
+          <li>Click <strong>Find Path</strong> to search Appendix B (plus optional derivation rules).</li>
+          <li>Review the diagram and the <strong>hop-by-hop</strong> explanation; click items to learn more.</li>
+        </ul>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">How it ranks routes</div>
+        <div class="help-card-title">Strongest Legal Chain (weighted syntax score)</div>
+        <p class="help-text">
+          ArchiTrek uses uniform-cost search to rank the <strong>Strongest Legal Chain</strong>: lower total syntax cost
+          (sum of hop weights), then ties break by <em>fewer hops</em>, then <em>fewer derived hops</em>.
+        </p>
+        <div class="help-pill-row" role="list" aria-label="Default hop weights">
+          <span class="help-pill help-pill--direct" role="listitem"><strong>Direct</strong> weight 1</span>
+          <span class="help-pill help-pill--derived" role="listitem"><strong>Derived</strong> weight 5</span>
+          <span class="help-pill help-pill--assoc" role="listitem"><strong>Association</strong> weight 100</span>
+        </div>
+        <p class="help-note">
+          These weights can be tuned in Advanced options; higher weight means “avoid this hop unless it’s worth it”.
+        </p>
+      </div>
+
+      <div class="help-grid-2">
+        <div class="help-card">
+          <div class="help-kicker">Selection logic</div>
+          <div class="help-card-title">Ordered vs Connect set</div>
+          <ul class="help-list">
+            <li><strong>Ordered</strong>: you decide Start → Via → End; the route must follow that sequence.</li>
+            <li><strong>Connect set</strong>: order doesn’t matter; the app reorders points to produce one strongest legal chain that connects everything.</li>
+          </ul>
+        </div>
+
+        <div class="help-card">
+          <div class="help-kicker">Relationship rules</div>
+          <div class="help-card-title">Direct, + Derived, Semantic rigor</div>
+          <ul class="help-list">
+            <li><strong>Direct</strong>: only uppercase Appendix B relationships (strictest).</li>
+            <li><strong>+ Derived</strong>: also allow §5.7 derivations (lowercase in tables) to unlock more routes.</li>
+            <li><strong>Semantic rigor</strong> (Academic / Pragmatic / Discovery): bundles grammar gates with whether §5.2.4 Association may be used as a last-resort bridge. Use <strong>Advanced options → Advanced Logic Overrides</strong> for manual control.</li>
+            <li><strong>Together:</strong> <strong>Direct vs +Derived</strong> decides which edges exist in the graph; <strong>Semantic rigor</strong> judges routes and Association on top. They are separate controls.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Context</div>
+        <div class="help-card-title">Story Theme</div>
+        <p class="help-text">
+          The <strong>Story Theme</strong> (top-right) changes scenario labels and narrative wording in explanations
+          (e.g. Abstract vs Hospital vs Death Star). It does <strong>not</strong> change <strong>Direct vs +Derived</strong>, <strong>Semantic rigor</strong>, or other pathfinding rules.
+        </p>
+      </div>
+
+      <div class="help-card help-card--hint">
+        <div class="help-card-title">If you get “No path found”</div>
+        <ul class="help-list">
+          <li>Enable <strong>+ Derived</strong>.</li>
+          <li>Choose a looser <strong>Semantic rigor</strong> (e.g. Discovery) or open <strong>Advanced options → Advanced Logic Overrides</strong> and allow Association fallback.</li>
+          <li>Add an intermediate element type that sits “between” layers.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Search Depth guide: Explicit (uppercase Appendix B) vs. Inferred (lowercase / §5.7) -->
+<div id="search-depth-guide-modal" class="feedback-modal rigor-guide-modal" style="display:none" aria-hidden="true">
+  <div class="feedback-modal-backdrop" aria-hidden="true" onclick="closeSearchDepthGuideModal()"></div>
+  <div class="feedback-modal-card rigor-guide-modal-card" role="dialog" aria-modal="true" aria-labelledby="search-depth-guide-modal-title" tabindex="-1">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="search-depth-guide-modal-title">Understanding Search Depth: Explicit vs. Inferred</h2>
+      <button type="button" class="feedback-modal-close" onclick="closeSearchDepthGuideModal()" title="Close" aria-label="Close">×</button>
+    </div>
+    <div class="rigor-guide-modal-body">
+      <p class="rigor-guide-lead">This setting determines which &quot;tier&quot; of the ArchiMate relationship matrix the engine uses.</p>
+      <p><strong>Direct Mode:</strong> The engine only considers <strong>Explicit</strong> relationships (shown as <strong>Uppercase</strong> letters in the Appendix B tables). These are the primary, first-degree connections defined as the core building blocks of the language.</p>
+      <p><strong>+Derived Mode:</strong> The engine is allowed to calculate <strong>Inferred</strong> relationships (shown as <strong>Lowercase</strong> letters in the Appendix B tables). It uses the Derivation Rules (§5.7) to prove that if A→B and B→C, then a valid logical link exists between A and C across multiple layers.</p>
+      <h3 class="rigor-guide-section-title rigor-guide-section-title--gates">💡 Why this is different from Semantic Rigor</h3>
+      <p>Think of this as the <strong>Source Material</strong>. It decides whether we use only the &quot;Direct&quot; (<strong>Uppercase</strong>) entries or if we are allowed to calculate the &quot;Derived&quot; (<strong>Lowercase</strong>) entries. <strong>Rigor is the Filter</strong>—it decides which of those results are architecturally &quot;Strong&quot; based on grammar.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Semantic rigor guide (Rosetta Stone for preset vs logic gates) -->
+<div id="rigor-guide-modal" class="feedback-modal rigor-guide-modal" style="display:none" aria-hidden="true">
+  <div class="feedback-modal-backdrop" aria-hidden="true" onclick="closeRigorGuideModal()"></div>
+  <div class="feedback-modal-card rigor-guide-modal-card" role="dialog" aria-modal="true" aria-labelledby="rigor-guide-modal-title" tabindex="-1">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="rigor-guide-modal-title">ArchiMate Semantic Rigor Guide</h2>
+      <button type="button" class="feedback-modal-close" onclick="closeRigorGuideModal()" title="Close" aria-label="Close">×</button>
+    </div>
+    <div class="rigor-guide-modal-body">
+      <h3 class="rigor-guide-section-title">Understanding Semantic Rigor Modes</h3>
+      <p class="rigor-guide-lead">This engine evaluates architectural paths based on strict ArchiMate 3.1 derivation rules (§5.7). The Rigor Mode determines how strictly the &quot;Grammar&quot; of the language is enforced.</p>
+      <div class="rigor-guide-table-wrap">
+        <table class="rigor-guide-table">
+          <thead>
+            <tr>
+              <th scope="col">Rigor Mode</th>
+              <th scope="col">Core-to-Core Filter</th>
+              <th scope="col">V-Shape Filter</th>
+              <th scope="col">Association Bridges</th>
+              <th scope="col">Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-rigor-preset="academic">
+              <td data-label="Rigor Mode">🎓 Academic</td>
+              <td data-label="Core-to-Core Filter">Strictly Blocked</td>
+              <td data-label="V-Shape Filter">Strictly Blocked</td>
+              <td data-label="Association Bridges">Disabled</td>
+              <td data-label="Purpose">Formal proofs and exam-level modeling accuracy.</td>
+            </tr>
+            <tr data-rigor-preset="pragmatic">
+              <td data-label="Rigor Mode">🛠️ Pragmatic</td>
+              <td data-label="Core-to-Core Filter">Strictly Blocked</td>
+              <td data-label="V-Shape Filter">Allowed (Flagged)</td>
+              <td data-label="Association Bridges">Enabled (High Penalty)</td>
+              <td data-label="Purpose">Real-world analysis where data may be fuzzy.</td>
+            </tr>
+            <tr data-rigor-preset="discovery">
+              <td data-label="Rigor Mode">🕵️ Discovery</td>
+              <td data-label="Core-to-Core Filter">Allowed (Flagged)</td>
+              <td data-label="V-Shape Filter">Allowed (Flagged)</td>
+              <td data-label="Association Bridges">Enabled (Low Penalty)</td>
+              <td data-label="Purpose">&quot;What-if&quot; exploration to find hidden impacts.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="rigor-guide-section-title rigor-guide-section-title--gates">Logic Gate Definitions</h3>
+      <ul class="logic-gate-definitions">
+        <li><strong>Core-to-Core Filter:</strong> Prevents linking two Physical/Technical elements by taking a shortcut through the Motivation layer (e.g., bridging two Servers because they share a &quot;Goal&quot;).</li>
+        <li><strong>V-Shape Filter:</strong> Prevents &quot;up-then-down&quot; dependency loops (e.g., App A serves Process B, and App C serves Process B). Mathematically they share a process; architecturally they aren&apos;t necessarily connected.</li>
+        <li><strong>Association Bridges:</strong> Uses the universal §5.2.4 Association to bridge gaps when no formal logical chain exists.</li>
+      </ul>
+      <p class="rigor-guide-note">Note: These settings determine the Semantic Strength Badge (Strong, Valid, or Informal) you see in the results.</p>
+
+      <div class="rigor-guide-strength-legend" role="group" aria-label="Semantic strength badge colors used in path results">
+        <span class="semantic-strength-badge semantic-strength-badge--strong rigor-guide-strength-legend__badge" aria-hidden="true">Strong</span>
+        <span class="semantic-strength-badge semantic-strength-badge--valid rigor-guide-strength-legend__badge" aria-hidden="true">Valid</span>
+        <span class="semantic-strength-badge semantic-strength-badge--informal rigor-guide-strength-legend__badge" aria-hidden="true">Informal</span>
+      </div>
+
+      <h3 class="rigor-guide-section-title rigor-guide-section-title--depth-contrast">💡 Why this is different from Search Depth (Explicit vs. Inferred)</h3>
+      <p><strong>Semantic rigor</strong> is the <strong>Filter</strong>—which routes count as architecturally &quot;Strong&quot; based on grammar and Association rules. <strong>Search Depth</strong> (the <strong>Direct</strong> / <strong>+ Derived</strong> toggle) selects the <strong>Source Material</strong>: only <strong>Explicit</strong> (<strong>Uppercase</strong>) Appendix B entries, or also <strong>Inferred</strong> (<strong>Lowercase</strong> / §5.7) entries.</p>
+      <p>You can have a short Explicit hop that is still flagged Informal if it breaks a grammar rule, or a longer Inferred chain that is Strong because it follows the rules.</p>
+    </div>
   </div>
 </div>
 
@@ -151,6 +309,22 @@
   </div>
 </div>
 
+<!-- First time on a story theme: theme-specific splash + glossary -->
+<div id="theme-splash-modal" class="feedback-modal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="theme-splash-title">
+  <div class="feedback-modal-backdrop" data-theme-splash-close="1" aria-hidden="true"></div>
+  <div class="feedback-modal-card theme-splash-card" role="document">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="theme-splash-title">Welcome</h2>
+      <button type="button" class="feedback-modal-close" data-theme-splash-close="1" title="Close" aria-label="Close">×</button>
+    </div>
+    <div class="theme-splash-body" id="theme-splash-body"></div>
+    <div class="feedback-modal-actions theme-splash-actions">
+      <button type="button" class="feedback-btn feedback-btn-primary" data-theme-splash-close="1">Continue</button>
+      <button type="button" class="feedback-btn feedback-btn-secondary" id="theme-splash-dismiss-forever">Don’t show this again</button>
+    </div>
+  </div>
+</div>
+
 <div class="app-viewport">
 <div class="explore-shell" id="explore-shell">
 <div class="app-layout layout-top panel-collapsed" id="app-layout" style="--panel-width: 280px; --panel-top-height: 200px;">
@@ -166,31 +340,15 @@
 
         <div class="sidebar-controls-collapsible path-options-collapsible">
           <button type="button" class="element-trigger path-options-trigger" id="path-options-trigger"
-            title="Open options">
+            title="Edit path">
             <span class="left">
-              <span class="name" id="path-options-trigger-label">Options</span>
+              <span class="name" id="path-options-trigger-label">Edit path</span>
             </span>
             <span class="chev" aria-hidden="true">▾</span>
           </button>
           <div id="path-options-body-host" class="path-options-body-host">
           <div class="sidebar-controls-body" id="sidebar-controls-body">
             <div class="control-options-stack">
-              <div class="control-block">
-                <div class="control-label">Direct vs derived</div>
-                <div class="toggle-group sidebar-toggle-group">
-                  <button class="toggle-btn" id="btn-direct" onclick="setDerived(false)"
-                    title="Direct only: only show relationships explicitly defined in Appendix B (uppercase in the tables). Fewer paths but highest spec confidence.">Direct</button>
-                  <button class="toggle-btn active" id="btn-derived" onclick="setDerived(true)"
-                    title="+ Derived: also include relationships valid by the §5.7 derivation rules (lowercase in the tables). More paths, including cross-layer routes.">+ Derived</button>
-                </div>
-              </div>
-              <div class="control-block">
-                <label class="search-field search-field--checkbox allow-association-fallback-label">
-                  <input type="checkbox" id="allow-association-fallback" onchange="onAssociationFallbackChange()"
-                    title="When off, only Appendix B (and derived) relationships are used. When on, §5.2.4 Association may bridge gaps; penalized hops are flagged in the explanation.">
-                  <span class="search-field-label">Allow Association Fallback</span>
-                </label>
-              </div>
               <div class="control-block control-block-viewpoint">
                 <div class="control-label">Viewpoint</div>
                 <select class="viewpoint-select" id="viewpoint-select" onchange="onViewpointChange()">
@@ -218,79 +376,256 @@
                   </optgroup>
                 </select>
               </div>
-              <div class="control-block">
-                <div class="control-label">Path mode</div>
-                <div class="path-mode-hint-wrap">
-                  <div class="path-mode-toggle-row">
-                    <div class="toggle-group sidebar-toggle-group">
-                      <button class="toggle-btn" id="btn-ordered" onclick="setSelectionMode('ordered')"
-                        title="Ordered: you define Start → Via → End (the tool respects the order).">Ordered</button>
-                      <button class="toggle-btn active" id="btn-set" onclick="setSelectionMode('set')"
-                        title="Connect set: you pick an unordered set of points; the tool finds the best order to connect them as a single chain.">Connect set</button>
-                    </div>
-                    <button type="button" class="path-mode-info-btn" id="path-mode-info-btn"
-                      popovertarget="path-mode-popover"
-                      aria-label="How the current path mode works"
-                      title="">ℹ</button>
-                  </div>
-                  <div id="path-mode-popover" popover="auto" class="path-mode-popover"></div>
+              <div class="control-block control-block-viewpoint">
+                <div class="control-label">Domain context</div>
+                <select class="viewpoint-select" id="domain-context-select" onchange="onDomainContextChange(this.value)">
+                  <option value="abstract" selected>Abstract (Default)</option>
+                  <option value="death_star">Death Star</option>
+                  <option value="rebel_alliance">Star Wars Rebels</option>
+                  <option value="hospital">Hospital</option>
+                  <option value="circus">Circus</option>
+                </select>
+              </div>
+              <div class="control-block control-block-search-depth">
+                <div class="search-depth-primary-head">
+                  <div class="control-label">Direct vs derived</div>
+                  <button type="button" class="path-mode-info-btn" onclick="openSearchDepthGuideModal()"
+                    aria-label="Understanding Search Depth: Explicit vs. Inferred (Appendix B uppercase vs lowercase)"
+                    title="Search Depth: Explicit (uppercase Appendix B) vs. Inferred (lowercase / §5.7)">ℹ</button>
+                </div>
+                <div class="toggle-group sidebar-toggle-group">
+                  <button class="toggle-btn" id="btn-direct" onclick="setDerived(false)"
+                    title="Direct only: only show relationships explicitly defined in Appendix B (uppercase in the tables). Fewer paths but highest spec confidence.">Direct</button>
+                  <button class="toggle-btn active" id="btn-derived" onclick="setDerived(true)"
+                    title="+ Derived: also include relationships valid by the §5.7 derivation rules (lowercase in the tables). More paths, including cross-layer routes.">+ Derived</button>
                 </div>
               </div>
-              <div class="control-block control-block-search">
-                <div class="control-label">Path search</div>
-                <div class="search-options-rows">
-                  <label class="search-field">
-                    <span class="search-field-label">Max hops per segment</span>
-                    <select class="viewpoint-select" id="search-max-depth" onchange="onSearchOptionsChange()"
-                      title="Maximum relationship hops between two consecutive waypoints (segment depth).">
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="4">4</option>
-                      <option value="5">5</option>
-                      <option value="6" selected>6</option>
-                      <option value="7">7</option>
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                      <option value="11">11</option>
-                      <option value="12">12</option>
-                    </select>
-                  </label>
-                  <label class="search-field">
-                    <span class="search-field-label">Alternatives per segment</span>
-                    <select class="viewpoint-select" id="search-max-paths" onchange="onSearchOptionsChange()"
-                      title="How many different routes to keep per segment (path tabs).">
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="4">4</option>
-                      <option value="5" selected>5</option>
-                      <option value="6">6</option>
-                      <option value="7">7</option>
-                      <option value="8">8</option>
-                      <option value="9">9</option>
-                      <option value="10">10</option>
-                    </select>
-                  </label>
-                  <label class="search-field">
-                    <span class="search-field-label">Search effort</span>
-                    <select class="viewpoint-select" id="search-effort" onchange="onSearchOptionsChange()"
-                      title="How much of the graph to explore before giving up (larger = more thorough, may be slower on dense graphs).">
-                      <option value="fast">Fast (smaller budget)</option>
-                      <option value="balanced" selected>Balanced</option>
-                      <option value="thorough">Thorough (larger budget)</option>
-                    </select>
-                  </label>
-                  <label class="search-field">
-                    <span class="search-field-label">Explore by</span>
-                    <select class="viewpoint-select" id="search-strategy" onchange="onSearchOptionsChange()"
-                      title="Path search uses weighted uniform-cost (UCS): Appendix B hops cost 1; penalized Association costs 100 (1 to Value/Meaning). This control is kept for compatibility; explore order does not change UCS results.">
-                      <option value="bfs" selected>BFS (legacy label)</option>
-                      <option value="dfs">DFS (legacy label)</option>
-                    </select>
-                  </label>
-                  <p class="search-field-hint">Search uses weighted UCS (strict hops first; Association only when allowed and cheaper alternatives exist). Higher hop limits and thorough effort help on long routes.</p>
+              <div class="control-block control-block-search-rigor">
+                <div class="search-rigor-primary-head">
+                  <div class="control-label">Semantic rigor</div>
+                  <button type="button" class="path-mode-info-btn" onclick="openRigorGuideModal()"
+                    aria-label="Learn about Semantic Rigor: presets, grammar gates, and Association bridges"
+                    title="Semantic Rigor guide: presets, logic gates, and §5.2.4 Association">ℹ</button>
                 </div>
+                <label class="search-field search-field--rigor-select">
+                  <select class="viewpoint-select search-rigor-preset-select" id="search-rigor-preset" onchange="onSearchRigorPresetChange()"
+                    aria-label="Semantic rigor preset"
+                    title="Grammar gates and Association bridges (not the same as Direct vs +Derived above). Academic is strictest; Discovery is loosest.">
+                    <option value="academic" selected>Academic (Strict)</option>
+                    <option value="pragmatic">Pragmatic (Balanced)</option>
+                    <option value="discovery">Discovery (Loose)</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <p class="search-rigor-primary-hint">Academic disables §5.2.4 Association bridges; Pragmatic and Discovery allow them as a last resort (penalised in results). Separate from <strong>Direct vs +Derived</strong>, which controls whether §5.7 derived edges are included in the graph.</p>
+              </div>
+              <div class="control-block">
+                <details class="path-mode-advanced">
+                  <summary class="path-mode-advanced-summary">Advanced options</summary>
+                  <div class="path-mode-advanced-body">
+                    <div class="search-advanced-group">
+                      <div class="search-advanced-group-title">Path mode</div>
+                      <div class="path-mode-toggle-row">
+                        <div class="toggle-group sidebar-toggle-group">
+                          <button class="toggle-btn active" id="btn-set" onclick="setSelectionMode('set')"
+                            title="Connect set: you pick an unordered set of points; the tool reorders them to find one strongest legal chain.">Connect set</button>
+                          <button class="toggle-btn" id="btn-ordered" onclick="setSelectionMode('ordered')"
+                            title="Ordered (directed): you define Start → Via → End (the tool respects the order).">Ordered (directed)</button>
+                        </div>
+                        <button type="button" class="path-mode-info-btn" id="path-mode-info-btn"
+                          popovertarget="path-mode-popover"
+                          aria-label="How the current path mode works"
+                          title="">ℹ</button>
+                      </div>
+                      <div id="path-mode-popover" popover="auto" class="path-mode-popover"></div>
+                      <p class="search-field-hint">Connect set is flexible and useful for exploration. Ordered mode is stricter and mainly for intentional Start → … → End chains.</p>
+                      <p class="search-field-hint" id="connect-set-exploratory-warning" role="note" hidden>⚠️ Exploratory Mode: The engine will reorder elements to find the most valid syntactic chain. For layered, causality-driven architecture, use Ordered (Start → Via → End) mode.</p>
+                    </div>
+
+                    <div class="search-advanced-group">
+                      <div class="search-advanced-group-title">Path search basics</div>
+                      <label class="search-field">
+                        <span class="search-field-label">Max hops per segment</span>
+                        <select class="viewpoint-select" id="search-max-depth" onchange="onSearchOptionsChange()"
+                          title="Maximum relationship hops between two consecutive waypoints (segment depth).">
+                          <option value="2">2</option>
+                          <option value="3">3</option>
+                          <option value="4">4</option>
+                          <option value="5">5</option>
+                          <option value="6" selected>6</option>
+                          <option value="7">7</option>
+                          <option value="8">8</option>
+                          <option value="9">9</option>
+                          <option value="10">10</option>
+                          <option value="11">11</option>
+                          <option value="12">12</option>
+                        </select>
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Alternatives per segment</span>
+                        <select class="viewpoint-select" id="search-max-paths" onchange="onSearchOptionsChange()"
+                          title="How many different routes to keep per segment (path tabs).">
+                          <option value="1">1</option>
+                          <option value="2">2</option>
+                          <option value="3">3</option>
+                          <option value="4">4</option>
+                          <option value="5" selected>5</option>
+                          <option value="6">6</option>
+                          <option value="7">7</option>
+                          <option value="8">8</option>
+                          <option value="9">9</option>
+                          <option value="10">10</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div class="search-advanced-group">
+                      <div class="search-advanced-group-title">Algorithm budget</div>
+                      <label class="search-field">
+                        <span class="search-field-label">Search effort</span>
+                        <select class="viewpoint-select" id="search-effort" onchange="onSearchOptionsChange()"
+                          title="How much of the graph to explore before giving up (larger = more thorough, may be slower on dense graphs).">
+                          <option value="fast">Fast (smaller budget)</option>
+                          <option value="balanced" selected>Balanced</option>
+                          <option value="thorough">Thorough (larger budget)</option>
+                        </select>
+                        <button type="button" class="search-field-help-btn"
+                          popovertarget="search-effort-popover"
+                          aria-label="How search effort works"
+                          title="How search effort works">?</button>
+                      </label>
+                      <div id="search-effort-popover" popover="auto" class="path-mode-popover search-field-popover">
+                        Search effort controls the exploration budget used by the pathfinder.
+                        <br><br>
+                        - <strong>Fast</strong>: smallest search budget; quickest response, may miss longer alternatives.<br>
+                        - <strong>Balanced</strong>: default budget; best trade-off for most cases.<br>
+                        - <strong>Thorough</strong>: largest budget; finds more alternatives, can be slower on dense graphs.
+                        <br><br>
+                        Start with <strong>Balanced</strong>, then move to <strong>Thorough</strong> when routes are missing or too repetitive.
+                      </div>
+                    </div>
+
+                    <div class="search-advanced-group">
+                      <div class="search-advanced-group-title">Perspective grouping</div>
+                      <label class="search-field">
+                        <span class="search-field-label">Perspective grouping</span>
+                        <select class="viewpoint-select" id="perspective-class-mode" onchange="onSearchOptionsChange()"
+                          title="How routes are assigned to Business/Infrastructure/Cross-layer groups.">
+                          <option value="exclusive" selected>Exclusive layers</option>
+                          <option value="dominant-share">Dominant layer share</option>
+                        </select>
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Dominant share threshold (%)</span>
+                        <select class="viewpoint-select" id="perspective-dominant-share" onchange="onSearchOptionsChange()"
+                          title="Used only with 'Dominant layer share': percentage of upper+infrastructure hops needed to classify as Business or Infrastructure focus.">
+                          <option value="50" selected>50%</option>
+                          <option value="55">55%</option>
+                          <option value="60">60%</option>
+                          <option value="65">65%</option>
+                          <option value="70">70%</option>
+                          <option value="75">75%</option>
+                          <option value="80">80%</option>
+                          <option value="85">85%</option>
+                          <option value="90">90%</option>
+                        </select>
+                        <button type="button" class="search-field-help-btn"
+                          popovertarget="perspective-dominant-share-popover"
+                          aria-label="How dominant share threshold works"
+                          title="How dominant share threshold works">?</button>
+                      </label>
+                    </div>
+
+                    <div class="search-advanced-group search-advanced-group--logic-overrides">
+                      <details class="advanced-logic-overrides">
+                      <summary class="advanced-logic-overrides-summary">Advanced Logic Overrides</summary>
+                      <div class="advanced-logic-overrides-body">
+                        <p class="search-field-hint">Override preset defaults here. Changing any option switches the main <strong>Semantic rigor</strong> control to <strong>Custom</strong>.</p>
+                        <label class="search-field search-field--checkbox allow-association-fallback-label">
+                          <input type="checkbox" id="allow-association-fallback" onchange="onAssociationFallbackChange()"
+                            title="When off, only Appendix B (and derived) relationships are used. When on, §5.2.4 Association may bridge gaps; penalized hops are flagged in the explanation.">
+                          <span class="search-field-label">Allow Association Fallback (§5.2.4)</span>
+                        </label>
+                        <label class="search-field search-field--checkbox allow-association-fallback-label">
+                          <input type="checkbox" id="restrict-core-to-core" onchange="onSearchOptionsChange()" checked>
+                          <span class="search-field-label">Restrict Core→Core detours via Motivation/Strategy</span>
+                        </label>
+                        <label class="search-field search-field--checkbox allow-association-fallback-label">
+                          <input type="checkbox" id="enforce-grammar" onchange="onSearchOptionsChange()" checked>
+                          <span class="search-field-label">Enforce dependency grammar (anti V-shape)</span>
+                        </label>
+                        <label class="search-field search-field--checkbox allow-association-fallback-label">
+                          <input type="checkbox" id="strict-realization" onchange="onSearchOptionsChange()" checked>
+                          <span class="search-field-label">Treat Realization as directional in grammar</span>
+                        </label>
+                      </div>
+                    </details>
+                    </div>
+
+                    <div class="search-advanced-group">
+                      <div class="search-advanced-group-title">Hop cost tuning</div>
+                      <label class="search-field">
+                        <span class="search-field-label">What these costs do</span>
+                        <button type="button" class="search-field-help-btn"
+                          popovertarget="hop-cost-tuning-popover"
+                          aria-label="How hop cost tuning works"
+                          title="How hop cost tuning works">?</button>
+                      </label>
+                      <div id="hop-cost-tuning-popover" popover="auto" class="path-mode-popover search-field-popover">
+                        Cost tuning ranks competing legal routes. Lower total cost wins.
+                        <br><br>
+                        - <strong>Direct hop cost</strong>: baseline for explicit Appendix B links.<br>
+                        - <strong>Derived hop cost</strong>: cost for §5.7 inferred links (usually above Direct).<br>
+                        - <strong>Association hop cost</strong>: generic §5.2.4 bridge cost (keep high unless you intentionally want generic links).<br>
+                        - <strong>Layer-skip penalty</strong>: extra cost when one hop jumps across an intermediate core layer (for example Business → Technology).<br>
+                        - <strong>Violation penalty</strong>: extra cost for Discovery-mode grammar violations.
+                        <br><br>
+                        Practical defaults: <strong>1 / 5 / 100 / 15 / 50</strong> (Direct / Derived / Association / Layer-skip / Violation).
+                      </div>
+                      <label class="search-field">
+                        <span class="search-field-label">Direct hop cost</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-direct" min="1" max="500" step="1" value="1"
+                          onchange="onSearchOptionsChange()"
+                          title="Uniform-cost weight for each direct Appendix B relationship hop (lower = preferred).">
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Derived hop cost</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-derived" min="1" max="500" step="1" value="5"
+                          onchange="onSearchOptionsChange()"
+                          title="Weight for each §5.7 derived relationship hop (usually higher than direct).">
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Association hop cost</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-association" min="1" max="500" step="1" value="100"
+                          onchange="onSearchOptionsChange()"
+                          title="Weight for each universal §5.2.4 Association (O) hop; keep high to prefer strict matrix chains unless fallback is on.">
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Layer-skip penalty</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-layer-skip" min="1" max="500" step="1" value="15"
+                          onchange="onSearchOptionsChange()"
+                          title="Extra UCS cost when a single hop skips one or more intermediate core layers (e.g. Business → Technology).">
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Violation penalty</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-violation" min="1" max="500" step="1" value="50"
+                          onchange="onSearchOptionsChange()"
+                          title="Extra UCS cost for Discovery-mode semantic rule breaks recorded in ruleTrace.">
+                      </label>
+                    </div>
+
+                    <p class="search-field-hint">Search uses weighted UCS: direct/derived/association/layer-skip/violation costs are soft ranking signals, while semantic toggles are hard rules in strict mode and trace tags in discovery mode.</p>
+                    <div id="perspective-dominant-share-popover" popover="auto" class="path-mode-popover search-field-popover">
+                      Routes are grouped by <strong>share of hops</strong> in upper vs infrastructure bands.
+                      <br><br>
+                      - If upper share is at least the threshold, route goes to <strong>Business Operations</strong>.<br>
+                      - If infrastructure share is at least the threshold, route goes to <strong>System Infrastructure</strong>.<br>
+                      - Otherwise, route stays in <strong>Cross-Layer Alignment</strong>.
+                      <br><br>
+                      <strong>50%</strong> is the most inclusive setting.
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
           </div>
@@ -300,9 +635,9 @@
         <div class="sidebar-controls-collapsible path-chrome-collapsible" id="path-chrome-collapsible">
           <button type="button" class="element-trigger path-chrome-trigger" id="path-chrome-trigger"
             aria-expanded="false" aria-controls="path-chrome-body-host"
-            title="Sidebar vs top bar and diagram details layout">
+            title="Interface options: panel orientation and details placement">
             <span class="left">
-              <span class="name" id="path-chrome-trigger-label">Layout</span>
+              <span class="name" id="path-chrome-trigger-label">Interface options</span>
             </span>
             <span class="chev" aria-hidden="true">▾</span>
           </button>
@@ -310,15 +645,37 @@
             aria-labelledby="path-chrome-trigger-label" hidden>
             <div class="path-chrome-stack">
               <div class="control-block control-block-panel-chrome">
-                <div class="control-label">Panel layout</div>
-                <div class="toggle-group sidebar-toggle-group">
+                <div class="control-label">Window layout</div>
+                <div class="toggle-group sidebar-toggle-group" role="group" aria-label="Window layout">
+                  <button type="button" class="toggle-btn" id="btn-interface-horizontal" onclick="setInterfaceLayout('horizontal')"
+                    title="Horizontal panels: controls on top, details below the diagram">Horizontal</button>
+                  <button type="button" class="toggle-btn" id="btn-interface-vertical" onclick="setInterfaceLayout('vertical')"
+                    title="Vertical panels: controls on the left, details beside the diagram">Vertical</button>
+                </div>
+
+                <div class="control-label" style="margin-top:10px">Custom settings</div>
+
+                <div class="toggle-group sidebar-toggle-group" role="group" aria-label="Controls placement">
                   <button type="button" class="toggle-btn" id="btn-layout-sidebar" onclick="setChromeLayout('sidebar')"
                     title="Controls in a column on the left (resizable)">Sidebar</button>
                   <button type="button" class="toggle-btn active" id="btn-layout-top" onclick="setChromeLayout('top')"
                     title="Controls in a bar along the top of the main area">Top bar</button>
                 </div>
-                <button type="button" class="panel-results-layout-btn" id="btn-results-layout" onclick="toggleResultsLayout()"
-                  title="Put path tabs and explanations to the right of the diagram">Details beside</button>
+
+                <div class="toggle-group sidebar-toggle-group" role="group" aria-label="Details placement" style="margin-top:8px">
+                  <button type="button" class="toggle-btn" id="btn-details-below" onclick="setResultsLayoutMode('stack')"
+                    title="Put path tabs and explanations under the diagram">Details below</button>
+                  <button type="button" class="toggle-btn" id="btn-details-beside" onclick="setResultsLayoutMode('side')"
+                    title="Put path tabs and explanations to the right of the diagram">Details beside</button>
+                </div>
+
+                <div class="control-label" style="margin-top:10px">Diagram</div>
+                <label class="search-field search-field--checkbox allow-association-fallback-label" style="margin-top:6px">
+                  <input type="checkbox" id="toggle-composite-subs" onchange="onCompositeSubsToggle()"
+                    checked
+                    title="Show/hide illustrated composite sub-components (the extra boxes drawn around composite elements).">
+                  <span class="search-field-label">Show composite sub-components</span>
+                </label>
               </div>
             </div>
           </div>
@@ -380,7 +737,7 @@
 
     <div class="diagram-area" id="diagram-area">
       
-      <div class="diagram-toolbar">
+      <div class="diagram-toolbar" id="diagram-toolbar">
         <div class="diagram-toolbar-row">
           <button type="button" class="diagram-view-btn outline-btn diagram-tool-btn" id="btn-toggle-swimlanes" onclick="toggleSwimlanes()"
             title="Show layer bands and swimlane connectors">Swimlanes</button>
@@ -404,12 +761,29 @@
       </div>
 
       <div class="diagram-empty" id="diagram-empty">
-        <span class="icon">⟶</span>
-        Select at least 2 elements, then click Find Path
+        <span class="icon" aria-hidden="true">⟶</span>
+        <div class="diagram-empty-title">Build a path</div>
+        <div class="diagram-empty-sub">
+          Select at least <strong>2 elements</strong>, then click <strong>Find Path</strong>.
+        </div>
+        <div class="diagram-empty-actions">
+          <button type="button" class="find-path-btn diagram-empty-primary" id="diagram-empty-start-btn" onclick="startEditingFromEmpty()" hidden>
+            Start editing
+          </button>
+          <button type="button" class="clear-all-btn diagram-empty-secondary" id="diagram-empty-examples-btn"
+            onclick="startEditingFromEmpty(); showQuickExamplesPanel()">
+            Show quick examples
+          </button>
+        </div>
       </div>
-      <div class="diagram-pan-viewport" id="diagram-pan-viewport" title="Drag to pan · wheel to zoom">
-        <div class="diagram-pan-surface" id="diagram-pan-surface">
-          <div id="path-diagram"></div>
+      <div class="diagram-viewport-wrap" id="diagram-viewport-wrap">
+        <div class="diagram-pan-viewport" id="diagram-pan-viewport" title="Drag to pan · wheel to zoom">
+          <div class="diagram-pan-surface" id="diagram-pan-surface">
+            <div id="path-diagram"></div>
+          </div>
+        </div>
+        <div class="diagram-no-path-overlay" id="diagram-no-path-overlay" hidden aria-hidden="true">
+          <div class="diagram-no-path-overlay__card" id="diagram-no-path-overlay-inner"></div>
         </div>
       </div>
     </div>
@@ -418,12 +792,17 @@
     <div class="panel-resize-handle panel-resize-handle--horizontal results-split-handle" id="results-split-resize"
       role="separator" aria-orientation="horizontal" aria-label="Resize diagram and path details" tabindex="0"></div>
 
-    <!-- Path tabs + explanations (single pane below the graph) -->
+    <!-- Path tabs + explanations: one scroll region so routes + text share vertical space -->
     <div class="results-lower" id="results-lower">
-      <div class="path-tabs" id="path-tabs" style="display:none"></div>
-      <div class="explanation-panel" id="explanation-panel">
-        <div id="explanation-content" style="color:var(--text-3);font-size:13px;padding:20px 0">
-          Path explanation will appear here after finding a path.
+      <div class="results-lower-scroll">
+        <div class="results-wide-picks-stack">
+          <div class="path-tabs" id="path-tabs" style="display:none"></div>
+          <div class="explanation-route-column" id="explanation-route-column" hidden></div>
+        </div>
+        <div class="explanation-panel" id="explanation-panel">
+          <div id="explanation-content" class="explanation-content-inner">
+            Path explanation will appear here after finding a path.
+          </div>
         </div>
       </div>
     </div>
@@ -467,6 +846,36 @@
   </div>
 </div>
 
+<!-- No-path alert (ordered chain / failing segment + link to metamodel) -->
+<div id="path-fail-modal" class="feedback-modal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="path-fail-modal-title">
+  <div class="feedback-modal-backdrop" data-path-fail-close="1" aria-hidden="true"></div>
+  <div class="feedback-modal-card path-fail-modal-card" role="document">
+    <div class="feedback-modal-head">
+      <h2 class="feedback-modal-title" id="path-fail-modal-title">No path found</h2>
+      <button type="button" class="feedback-modal-close" data-path-fail-close="1" title="Close" aria-label="Close">×</button>
+    </div>
+    <div id="path-fail-modal-body" class="path-fail-modal-body"></div>
+    <div class="feedback-modal-actions path-fail-modal-actions">
+      <button type="button" class="feedback-btn feedback-btn-primary" id="path-fail-open-mm">View on metamodel (§4.2)</button>
+      <button type="button" class="feedback-btn feedback-btn-secondary" id="path-fail-scroll-explain">Full explanation</button>
+      <button type="button" class="feedback-btn" data-path-fail-close="1">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Path route / badge glossary (grouped alternatives + layer & precision chips) -->
+<div class="mm-modal path-labels-modal" id="path-labels-modal" aria-hidden="true">
+  <div class="mm-modal-backdrop" data-path-labels-close="1"></div>
+  <div class="mm-modal-card path-labels-card" role="dialog" aria-modal="true" aria-labelledby="path-labels-title">
+    <div class="mm-modal-head">
+      <div class="mm-modal-title" id="path-labels-title">Path routes and badges</div>
+      <button class="mm-modal-close" type="button" title="Close" data-path-labels-close="1">×</button>
+    </div>
+    <div class="mm-modal-sub">How alternatives are grouped under each heading, and what the small badges on each route mean.</div>
+    <div id="path-labels-body" class="path-labels-body"></div>
+  </div>
+</div>
+
 <!-- Metamodel overlay (opened via “Show on metamodel”) -->
 <div class="mm-modal" id="mm-modal" aria-hidden="true">
   <div class="mm-modal-backdrop" data-mm-close="1"></div>
@@ -484,13 +893,20 @@
 
 <!-- ── JavaScript ─────────────────────────────────────────────────────────── -->
 
+<script src="./config/analytics-config.js"></script>
 <script src="./config/feedback-config.js"></script>
+<script src="./config/renderer-config.js"></script>
 <script src="./data/relationships.js"></script>
 <script src="./data/elements.js"></script>
 <script src="./data/matrix.js"></script>
 <script src="./data/viewpoints.js"></script>
+<script src="./data/scenarios.js"></script>
+<script src="./data/derivationLogic.js"></script>
 <script src="./logic/graph.js"></script>
 <script src="./logic/pathfinder.js"></script>
+<script src="./data/rendererVisuals.js"></script>
+<script src="./ui/rendererCore.js"></script>
+<script src="./ui/rendererLayout.js"></script>
 <script src="./ui/renderer.js"></script>
 <script src="./ui/app.js"></script>
 </body>

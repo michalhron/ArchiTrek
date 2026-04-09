@@ -218,6 +218,43 @@ const VIEWPOINT_CATEGORIES = {
   Cooperation:  ["businessProcessCooperation","applicationCooperation"],
   Realization:  ["serviceRealization","implementationAndDeployment"],
 };
+
+/**
+ * Resolve optional viewpoint-specific relationship vocabulary.
+ *
+ * Viewpoints may define either:
+ * - relationshipCodes: ["I","V",...]
+ * - relationshipCategories: ["Structural","Dependency",...]
+ *
+ * If neither is defined, returns null so pathfinding falls back to matrix-only
+ * relationship gating (element palette filtering still applies).
+ *
+ * @param {string|null|undefined} viewpointKey
+ * @returns {Set<string>|null}
+ */
+function getViewpointRelationshipAllowance(viewpointKey) {
+  const key = viewpointKey ? String(viewpointKey) : "";
+  if (!key) return null;
+  const vp = VIEWPOINTS?.[key];
+  if (!vp || vp.allElements) return null;
+
+  const out = new Set();
+  const codes = Array.isArray(vp.relationshipCodes) ? vp.relationshipCodes : [];
+  for (const raw of codes) {
+    const c = String(raw || "").trim().toUpperCase();
+    if (c) out.add(c);
+  }
+
+  const cats = Array.isArray(vp.relationshipCategories) ? vp.relationshipCategories : [];
+  for (const raw of cats) {
+    const cat = String(raw || "").trim();
+    const rels = RELATIONSHIP_CATEGORIES?.[cat];
+    if (!Array.isArray(rels)) continue;
+    for (const code of rels) out.add(String(code || "").toUpperCase());
+  }
+
+  return out.size ? out : null;
+}
 // === data/metamodel.js ===
 /**
  * ArchiMate 3.1 — Metamodel Aspect Compatibility Rules

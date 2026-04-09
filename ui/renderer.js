@@ -1,211 +1,144 @@
 // === ui/renderer.js ===
 /**
  * ui/renderer.js
- * ArchiMate Path Navigator — SVG Renderer
+ * ArchiTrek — SVG Renderer
  *
- * Draws path diagrams as SVG, in two modes:
- * compact   — linear left-to-right flow, elements in a single row
- * swimlane  — elements placed in horizontal layer lanes, arrows cross lanes
- *            (with Vertical: same-layer steps stack inside the lane; new column only when re-entering a layer)
+ * Draws path diagrams as SVG:
+ * compact   — linear left-to-right only
+ * swimlane  — horizontal lanes: spread = packed columns (reuse column on layer change) + cross-layer vertical hops; compact = same packing + tighter gaps (same element shapes, including composites)
+ * compact-lanes (pathFlow compact) — layer-aligned positions like swimlanes, tight columns, 90° L-connectors (no curves)
+ * Vertical — one implementation (renderSwimlane); swimlane mode adds lane bands only.
  *
  * EXPORTS:
  * renderPath(container, segments, options)
  * clearDiagram(container)
+ *
+ * Layout constants, SHAPES, COMPOSITE_PATTERNS, ICONS, ARROW_STYLES, and §4.2 metamodel
+ * geometry live in data/rendererVisuals.js (loaded before this script; see index.html).
  */
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────────────────
+function compositePatternSubCandidates(pattern) {
+  if (!pattern) return [];
+  if (Array.isArray(pattern.subCandidates) && pattern.subCandidates.length) return pattern.subCandidates;
+  return pattern.sub ? [pattern.sub] : [];
+}
 
-const EL_W   = 120;   
-const EL_H   = 52;    
-const EL_GAP = 160; 
+function hashStringFNV1a(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-const ICON_BADGE_SIZE = 14;
-const ICON_GLYPH_SIZE = 12;
-const ICON_PAD = 3;
+/**
+ * Deterministic pair of part types for composite decoration; stable for a given seed string.
+ * @param {Set<string>|null} excludeCanonicals Optional canonical element names to avoid (e.g. adjacent path hops)
+ *        so illustrated subs do not duplicate a real neighbor node’s type when alternatives exist.
+ */
+function pickCompositeIllustrationSubs(pattern, seedStr, excludeCanonicals = null) {
+  let pool = compositePatternSubCandidates(pattern);
+  if (pool.length === 0) return { subFirst: "Node", subSecond: "Node", moreCount: 0 };
+  if (pool.length === 1) return { subFirst: pool[0], subSecond: pool[0], moreCount: 0 };
+  if (excludeCanonicals && excludeCanonicals.size) {
+    const filtered = pool.filter((c) => !excludeCanonicals.has(c));
+    if (filtered.length >= 2) pool = filtered;
+  }
+  let h = hashStringFNV1a(String(seedStr));
+  const i0 = h % pool.length;
+  h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+  let i1 = h % pool.length;
+  if (i1 === i0) i1 = (i0 + 1) % pool.length;
+  const moreCount = pool.length > 2 ? pool.length - 2 : 0;
+  return { subFirst: pool[i0], subSecond: pool[i1], moreCount };
+}
 
-const LANE_H_MIN  = 90;   // Swimlane row height (single box per element; no fork stacks)
-/** Tight lane when “Vertical” is on: minimize horizontal bands so the diagram reads as a vertical stack. */
-const LANE_H_MIN_VERTICAL = Math.max(EL_H + 16, 66);
-const SWIM_COL_GAP_VERTICAL = 88; // horizontal step between columns (default EL_GAP is wider)
-/** Gap between element boxes stacked inside one swim lane (Vertical mode). */
-const SWIM_STACK_GAP = 8;
-const LANE_LABEL_W = 160; 
-const LANE_LABEL_PAD_X = 10;
-const LANE_LABEL_PAD_Y = 8;
-const LANE_LABEL_MAX_LINES = 3;
+/**
+ * Inline explanation for illustrated composite hops (same sub pick as drawElement / pickCompositeIllustrationSubs).
+ * @param {string} compositeCanonical
+ * @param {string} illustrationSeed
+ * @returns {string} HTML fragment or ""
+ */
+function formatCompositeArchitectNote(compositeCanonical, illustrationSeed) {
+  if (shouldHideCompositeIllustrations()) return "";
+  const pattern = COMPOSITE_PATTERNS[compositeCanonical];
+  if (!pattern) return "";
+  const { subFirst, subSecond } = pickCompositeIllustrationSubs(pattern, illustrationSeed);
+  const compositePhrase = sentenceCaseStart(withArticle(getDomainLabel(compositeCanonical)));
+  const a = withArticle(getDomainLabel(subFirst));
+  const b = withArticle(getDomainLabel(subSecond));
+  const subPhrase = subFirst === subSecond ? a : `${a} and ${b}`;
+  const inner = `(Architect's Note: ${compositePhrase} structurally aggregates components such as ${subPhrase}.)`;
+  return `<span class="architect-note">${escPathDiag(inner)}</span>`;
+}
 
-const REL_LABEL_MAX_CHARS = 18;
-const REL_LABEL_MAX_LINES = 2;
+function compositeAggGapY() {
+  return typeof COMPOSITE_V_GAP_VERTICAL === "number" ? COMPOSITE_V_GAP_VERTICAL : 40;
+}
 
+function compositeTopY(y, el, { alignVertical = false, swimlaneCompositeSubsBelowDiagonal = false } = {}) {
+  const p = COMPOSITE_PATTERNS[el];
+  if (!p) return y;
+  if (swimlaneCompositeSubsBelowDiagonal) return y;
+  if (shouldHideCompositeIllustrations()) return y;
+  if (alignVertical) {
+    if (p.subsSideBySide) return y - (EL_H + compositeAggGapY());
+    return y;
+  }
+  if (p.subsSideBySide) return y;
+  return y - COMPOSITE_V_OFF;
+}
 
+function compositeBottomY(y, el, { alignVertical = false, swimlaneCompositeSubsBelowDiagonal = false } = {}) {
+  const p = COMPOSITE_PATTERNS[el];
+  if (!p) return y + EL_H;
+  if (swimlaneCompositeSubsBelowDiagonal && p) return y + EL_H + compositeAggGapY() + EL_H;
+  if (shouldHideCompositeIllustrations()) return y + EL_H;
+  if (alignVertical) return y + EL_H;
+  if (p.subsSideBySide) return y + EL_H;
+  return y + COMPOSITE_V_OFF + EL_H;
+}
 
+function compositeMainTopDelta(el, { swimlaneCompositeSubsBelowDiagonal = false } = {}) {
+  const p = COMPOSITE_PATTERNS[el];
+  if (swimlaneCompositeSubsBelowDiagonal && p) return 0;
+  if (!p || p.subsSideBySide) return 0;
+  if (shouldHideCompositeIllustrations()) return 0;
+  return COMPOSITE_V_OFF;
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SHAPE DEFINITIONS
-// Each entry describes how to draw the element's base shape.
-// type: rect | rounded | parallelogram | ellipse | cloud | chevron | cube | document | dashed
-// ─────────────────────────────────────────────────────────────────────────────
+function compositeMainBottomDelta(el) {
+  const p = COMPOSITE_PATTERNS[el];
+  if (!p) return EL_H;
+  if (p.subsSideBySide) return EL_H;
+  if (shouldHideCompositeIllustrations()) return EL_H;
+  return COMPOSITE_V_OFF + EL_H;
+}
 
-const SHAPES = {
-  // Motivation
-  "Stakeholder": { type: "beveled" },
-  "Driver":      { type: "beveled" },
-  "Assessment":  { type: "beveled" },
-  "Goal":        { type: "beveled" },
-  "Outcome":     { type: "beveled" },
-  "Principle":   { type: "beveled" },
-  "Requirement": { type: "beveled" },
-  "Constraint":  { type: "beveled" },
-  "Meaning":     { type: "cloud" },
-  "Value":       { type: "ellipse" },
-  
-  // Strategy
-  "Resource":       { type: "rounded" },
-  "Capability":     { type: "rounded" },
-  "Value Stream":   { type: "chevron" },
-  "Course of Action": { type: "rounded" },
-  // Business
-  "Business Actor":         { type: "rounded" },
-  "Business Role":          { type: "rounded" },
-  "Business Collaboration": { type: "rounded" },
-  "Business Interface":     { type: "rounded" },
-  "Business Process":       { type: "rounded-arrow" },
-  "Business Function":      { type: "rounded" },
-  "Business Interaction":   { type: "rounded" },
-  "Business Event":         { type: "chevron" },
-  "Business Service":       { type: "rounded" },
-  "Business Object":        { type: "rect" },
-  "Contract":               { type: "rect" },
-  "Representation":         { type: "rect" },
-  "Product":                { type: "rounded" },
-  // Application
-  "Application Component":     { type: "rounded" },
-  "Application Collaboration": { type: "rounded" },
-  "Application Interface":     { type: "rounded" },
-  "Application Function":      { type: "rounded" },
-  "Application Interaction":   { type: "rounded" },
-  "Application Process":       { type: "rounded-arrow" },
-  "Application Event":         { type: "chevron" },
-  "Application Service":       { type: "rounded" },
-  "Data Object":               { type: "rect" },
-  // Technology
-  "Node":                     { type: "cube" },
-  "Device":                   { type: "cube" },
-  "System Software":          { type: "rounded" },
-  "Technology Collaboration": { type: "rounded" },
-  "Technology Interface":     { type: "rounded" },
-  "Path":                     { type: "rounded" },
-  "Communication Network":    { type: "rounded" },
-  "Technology Function":      { type: "rounded" },
-  "Technology Process":       { type: "rounded-arrow" },
-  "Technology Interaction":   { type: "rounded" },
-  "Technology Event":         { type: "chevron" },
-  "Technology Service":       { type: "rounded" },
-  "Technology Object":        { type: "rect" },
-  "Artifact":                 { type: "document" },
-  // Physical
-  "Equipment":           { type: "cube" },
-  "Facility":            { type: "cube" },
-  "Distribution Network":{ type: "rounded" },
-  "Material":            { type: "rounded" },
-  // Implementation
-  "Work Package":         { type: "rounded" },
-  "Deliverable":          { type: "document" },
-  "Implementation Event": { type: "chevron" },
-  "Plateau":              { type: "plateau" },
-  "Gap":                  { type: "rect" },
-  // Composite
-  "Location":  { type: "rect" },
-  "Grouping":  { type: "dashed" },
-};
+function elementShapeType(elementName) {
+  const key = String(elementName || "");
+  return (SHAPES[key] ?? { type: "rounded" }).type;
+}
 
+/**
+ * Vertical span of a path step in horizontal compact / horizontal swimlanes (`drawElement` without `alignVertical`).
+ * Collaboration / Path / CN composites use side-by-side illustrated subs (no extra vertical stack); only
+ * non-`subsSideBySide` patterns would reserve stacked above/below space (none in current COMPOSITE_PATTERNS).
+ */
+function horizontalLayoutStepOuterHeight(elementName, { swimlaneCompositeSubsBelowDiagonal = false } = {}) {
+  if (shouldHideCompositeIllustrations()) return EL_H;
+  const p = COMPOSITE_PATTERNS[elementName];
+  if (!p) return EL_H;
+  if (swimlaneCompositeSubsBelowDiagonal) return EL_H + compositeAggGapY() + EL_H;
+  if (p.subsSideBySide) return EL_H;
+  return 2 * COMPOSITE_V_OFF + EL_H;
+}
 
-const COMPOSITE_PATTERNS = {
-  "Path": { sub: "Node", rel: "G", label: "aggregates" },
-  "Communication Network": { sub: "Node", rel: "G", label: "aggregates" },
-  "Business Collaboration": { sub: "Business Role", rel: "G", label: "aggregates" },
-  "Application Collaboration": { sub: "Application Component", rel: "G", label: "aggregates" },
-  "Technology Collaboration": { sub: "Node", rel: "G", label: "aggregates" }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ICON PATHS (SVG path data, scaled to ~12×12, origin top-left of icon area)
-// Each function returns an SVG path 'd' string or SVG element string.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const ICONS = {
-  "Stakeholder": () => `<path d="M5,2 L11,2 L11,10 L5,10 Z" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M5,2 A4,4 0 0,0 5,10" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Driver": () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M6,1 L6,3 M6,9 L6,11 M1,6 L3,6 M9,6 L11,6 M2.5,2.5 L4,4 M8,8 L9.5,9.5 M2.5,9.5 L4,8 M8,4 L9.5,2.5" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Assessment": () => `<circle cx="5" cy="5" r="4.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.5"/>`,
-  "Goal": () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="0.8" fill="currentColor" stroke="none"/>`,
-  "Outcome": () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="0.8" fill="currentColor" stroke="none"/><path d="M12,6 L6.5,6 L8,4.5 M6.5,6 L8,7.5" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Principle": () => `<rect x="1" y="1" width="10" height="10" rx="1" stroke="currentColor" fill="none" stroke-width="1.2"/><text x="6" y="9" text-anchor="middle" font-size="8" font-family="sans-serif" font-weight="bold" fill="currentColor" stroke="none">!</text>`,
-  "Requirement": () => `<path d="M2,2 L10,2 L11,10 L3,10 Z" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="3.5" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.1"/><line x1="3.5" y1="8" x2="8" y2="8" stroke="currentColor" stroke-width="1.1"/>`,
-  "Constraint": () => `<path d="M2,2 L10,2 L11,10 L3,10 L2.5,8 L1,8 L1,4 L2.5,4 L2,2 Z" stroke="currentColor" fill="none" stroke-width="1.1"/><path d="M3.5,4 L9,9.5 M4.5,2 L10.5,8 M6.5,2 L11,6.5 M1.5,6 L4,8.5" stroke="currentColor" fill="none" stroke-width="0.8"/>`,
-  "Meaning": () => `<path d="M4,5 C2.5,5 1.5,6.5 2,8 C1,9 2,10.5 3.5,10 C4,11 6,11.5 7.5,10.5 C9,11 11,9.5 10,8 C11,6.5 10,5 8.5,5 C7,3.5 5,3.5 4,5 Z" stroke="currentColor" fill="none" stroke-width="1.1"/><circle cx="3" cy="12" r="0.6" fill="currentColor"/><circle cx="2" cy="14" r="0.4" fill="currentColor"/>`,
-  "Value": () => `<ellipse cx="6" cy="6" rx="5" ry="3.5" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-
-  "Resource":       () => `<rect x="1" y="3" width="10" height="7" rx="1" stroke="currentColor" fill="none" stroke-width="1.2"/><rect x="3" y="1" width="6" height="3" rx="1" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Capability":     () => `<rect x="1" y="1" width="4" height="4" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="7" y="1" width="4" height="4" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="1" y="7" width="4" height="4" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="7" y="7" width="4" height="4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Value Stream":   () => `<path d="M1,6 L3,3 L9,3 L11,6 L9,9 L3,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Course of Action": () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,4 C4,4 8,4 8,6 C8,8 4,8 4,8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="4" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.1"/>`,
-
-  "Business Actor":         () => `<path d="M6,1 a2,2 0 1,1 0,0.01 M2,11 C2,7.5 10,7.5 10,11" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Role":          () => `<path d="M1,11 L1,9 C1,6 11,6 11,9 L11,11" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="4" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Function":      () => `<path d="M2,1 L10,1 L10,11 L2,11 Z M2,4 C4,4 8,4 10,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Business Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
-  "Business Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Object":        () => `<rect x="1" y="3" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
-  "Contract":               () => `<path d="M2,1 L10,1 L10,11 L2,11 Z M4,4 L8,4 M4,6 L8,6 M4,8 L7,8" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Representation":         () => `<rect x="1" y="2" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="3" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1"/><line x1="3" y1="7" x2="8" y2="7" stroke="currentColor" stroke-width="1"/>`,
-  "Product":                () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.2"/>`,
-
-  "Application Component":     () => `<rect x="2" y="2" width="8" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="0" y="3.5" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/><rect x="0" y="7" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/>`,
-  "Application Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Function":      () => `<path d="M3,2 L3,10 M3,6 L9,6 M9,2 L9,10" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
-  "Application Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Data Object":               () => `<rect x="1" y="2" width="10" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
-
-  "Node":                     () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Device":                   () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="3" y="6" width="4" height="3" stroke="currentColor" fill="none" stroke-width="0.9"/>`,
-  "System Software":          () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1"/>`,
-  "Technology Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Path":                     () => `<line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.4"/><path d="M8,3 L11,6 L8,9" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,3 L1,6 L4,9" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Communication Network":    () => `<circle cx="6" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="6" y1="1" x2="6" y2="4" stroke="currentColor" stroke-width="1"/><line x1="6" y1="8" x2="6" y2="11" stroke="currentColor" stroke-width="1"/><line x1="1" y1="6" x2="4" y2="6" stroke="currentColor" stroke-width="1"/><line x1="8" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1"/>`,
-  "Technology Function":      () => `<path d="M2,1 L2,11 M2,6 L8,6 M8,1 L8,11" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
-  "Technology Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Object":        () => `<rect x="1" y="2" width="10" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
-  "Artifact":                 () => `<path d="M2,1 L8,1 L11,4 L11,11 L2,11 Z M8,1 L8,4 L11,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-
-  "Equipment":           () => `<circle cx="6" cy="6" r="4" stroke="currentColor" fill="none" stroke-width="1.1"/><path d="M6,2 L6,4 M6,8 L6,10 M2,6 L4,6 M8,6 L10,6" stroke="currentColor" stroke-width="1.1"/><circle cx="6" cy="6" r="1.5" stroke="currentColor" fill="none" stroke-width="1"/>`,
-  "Facility":            () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11 M4,7 L8,7 M4,9 L8,9" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Distribution Network":() => `<line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.4"/><path d="M8,3 L11,6 L8,9" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,3 L1,6 L4,9" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Material":            () => `<path d="M3,9 L3,5 L9,3 L9,7 Z M3,9 L9,7 M3,5 L9,3" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-
-  "Work Package":         () => `<rect x="1" y="3" width="10" height="7" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1"/>`,
-  "Deliverable":          () => `<path d="M2,1 L8,1 L11,4 L11,11 L2,11 Z M8,1 L8,4 L11,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Implementation Event": () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Plateau":              () => `<rect x="1" y="2" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="2" y1="11" x2="11" y2="11" stroke="currentColor" stroke-width="1"/><line x1="3" y1="12.5" x2="11" y2="12.5" stroke="currentColor" stroke-width="1"/>`,
-  "Gap":                  () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1" stroke-dasharray="2,2"/>`,
-
-  "Location":  () => `<path d="M6,1 C3.5,1 1.5,3 1.5,5.5 C1.5,8.5 6,12 6,12 C6,12 10.5,8.5 10.5,5.5 C10.5,3 8.5,1 6,1 Z" stroke="currentColor" fill="none" stroke-width="1.1"/><circle cx="6" cy="5.5" r="1.5" stroke="currentColor" fill="none" stroke-width="1"/>`,
-  "Grouping":  () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1" stroke-dasharray="3,2"/>`,
-};
+/** In vertical compact, composites are side-loaded (left/right), so row height is element height. */
+function verticalLayoutStepOuterHeight(_elementName) {
+  return EL_H;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MINI ICONS FOR SELECTORS
@@ -263,7 +196,7 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
                  Z" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
       }
       case "document": {
-        const fold = 12;
+        const fold = DOCUMENT_SHAPE_FOLD;
         const d = `
           <path d="M0.8,0.8 L${w-fold},0.8 L${w-0.8},${fold} L${w-0.8},${h-0.8} L0.8,${h-0.8} Z"
                 fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
@@ -293,10 +226,12 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
     }
   })();
 
-  const badgeMarkup = iconFn && elementName !== "Value" && elementName !== "Meaning" ? (() => {
+  const badgeMarkup = iconFn && elementName !== "Value" ? (() => {
     const pad = 3;
-    const gx = w - 12 - pad;
-    const gy = pad;
+    const d = shape.type === "cube" ? SHAPE_CUBE_DEPTH : 0;
+    const doc = shape.type === "document";
+    const gx = w - 12 - pad - d - (doc ? DOCUMENT_ICON_INSET_X : 0) - CORNER_GLYPH_NUDGE_X;
+    const gy = pad + d + (doc ? DOCUMENT_ICON_INSET_Y : 0) + CORNER_GLYPH_NUDGE_Y;
     return `<g transform="translate(${gx}, ${gy})" color="${stroke}">${iconFn()}</g>`;
   })() : "";
 
@@ -334,11 +269,14 @@ window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, w
   const g = svgEl("g", {});
   g.appendChild(shapeEl);
 
-  if (iconFn && elementName !== "Value" && elementName !== "Meaning") {
+  if (iconFn && elementName !== "Value") {
     const pad = 8;
     const glyphSize = 14;
-    const iconX = x + (w - 1.6) - glyphSize - pad;
-    const iconY = y + pad;
+    const d = shape.type === "cube" ? SHAPE_CUBE_DEPTH : 0;
+    const doc = shape.type === "document";
+    const innerW = w - 1.6;
+    const iconX = x + innerW - glyphSize - pad - d - (doc ? DOCUMENT_ICON_INSET_X : 0) - CORNER_GLYPH_NUDGE_X;
+    const iconY = y + pad + d + (doc ? DOCUMENT_ICON_INSET_Y : 0) + CORNER_GLYPH_NUDGE_Y;
     const iconG = svgEl("g", { transform: `translate(${iconX}, ${iconY})`, color: stroke });
     const glyph = document.createElementNS(SVG_NS, "svg");
     glyph.setAttribute("viewBox", "0 0 12 12");
@@ -394,24 +332,6 @@ window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, w
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RELATIONSHIP ARROW DEFINITIONS
-// ─────────────────────────────────────────────────────────────────────────────
-
-const ARROW_STYLES = {
-  C: { line: "solid",  startMarker: "diamond-filled", endMarker: "none" },
-  G: { line: "solid",  startMarker: "diamond-open",   endMarker: "none" },
-  I: { line: "solid",  startMarker: "circle-filled",  endMarker: "arrow-filled" },
-  R: { line: "dashed", startMarker: "none",           endMarker: "triangle-open" }, 
-  V: { line: "solid",  startMarker: "none",           endMarker: "arrow-open" },
-  A: { line: "dashed", startMarker: "none",           endMarker: "arrow-open" },
-  N: { line: "dashed", startMarker: "none",           endMarker: "arrow-open" },
-  O: { line: "solid",  startMarker: "none",           endMarker: "none" },
-  T: { line: "solid",  startMarker: "none",           endMarker: "arrow-filled" },
-  F: { line: "dashed", startMarker: "none",           endMarker: "arrow-filled" },
-  S: { line: "solid",  startMarker: "none",           endMarker: "triangle-open" },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // SVG HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -431,6 +351,32 @@ function svgEl(tag, attrs, ...children) {
 function getColor(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName]?.color ? ELEMENTS[elementName].color : "#f0f0f0"; }
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+/**
+ * End X of the drawn stroke for flat horizontal hops — matches path inset toward the target
+ * ({@link ARROW_MARKER_TARGET_CLEARANCE}), not the raw port x2. Centers labels on the visible gap.
+ */
+function horizontalStrokeEndXForLabel(x1, x2, y1, y2, orthogonal) {
+  const clr = ARROW_MARKER_TARGET_CLEARANCE;
+  if (Math.abs(y1 - y2) >= 0.5) return x2;
+  if (orthogonal) {
+    if (Math.abs(x2 - x1) > clr) return x2 + Math.sign(x1 - x2) * clr;
+    return x2;
+  }
+  if (Math.abs(x2 - x1) > clr) return x2 + Math.sign(x1 - x2) * clr;
+  return x2;
+}
+
+/** Half-height of the inline horizontal rel-label row (must match makeRelLabel horizontal branch). */
+function horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList) {
+  const hasHopBadge = showBadges && hopIndex != null;
+  const hopBadgeR = hasHopBadge ? (codesList.length > 1 ? 9 : 7) : 0;
+  const nLinesH = Math.max(1, (labelLines ?? [""]).length);
+  const lineHH = 10.0;
+  const textHalfH = Math.max(lineHH * 0.56, (nLinesH * lineHH) / 2);
+  const multilineExtra = nLinesH > 1 ? 2 : 0;
+  return Math.max(hasHopBadge ? hopBadgeR + 1 : 0, textHalfH) + multilineExtra;
+}
 
 function shadeHex(hex, amt) {
   const h = (hex || "").trim(); const m = /^#?([0-9a-f]{6})$/i.exec(h); if (!m) return hex;
@@ -477,69 +423,261 @@ function wrapLabel(text, maxChars = REL_LABEL_MAX_CHARS, maxLines = REL_LABEL_MA
 }
 
 function makeRelLabel(mx, my, labelLines, {
-  fontSize = 9.5,
-  lineH = 11.5,
+  // Match element subtitle scale (e.g. "Business Role") more closely.
+  fontSize = 8.5,
+  lineH = 10.0,
   hopIndex = null,
+  /** Number printed on the badge; defaults to hopIndex (path step). Use visual index when path order ≠ diagram order. */
+  badgeDisplayNumber = null,
   showBadges = true,
   hasChoices = false,
-  /** Vertical edges: badge and relation name sit on opposite sides of the arrow (no overlap with the stroke). */
+  /** @deprecated Kept for call-site compatibility; horizontal labels use a centered badge+name row above the stroke. */
+  horizontalBadgeAnchorX = null,
+  /** Vertical edges: hop number + relation name beside the connector (east by default; west when verticalStraddleWest). */
   verticalStraddle = false,
+  /** Connector x (column center) for vertical edges; falls back to mx. */
+  straddleAnchorX = null,
+  /**
+   * Single-column vertical: shift the label cluster east of the node box (connector is at column center;
+   * anchor + small gap was still inside the 120px rect and overlapped titles).
+   */
+  straddleExtraX = 0,
+  /** Same as verticalStraddle but place the badge+text cluster west of the connector (for flanked composites). */
+  verticalStraddleWest = false,
+  /**
+   * World X of the vertical relationship stroke (spine or outer bus), excluding label nudges.
+   * When set, enforces min clearance so the badge does not sit on the line.
+   */
+  straddleLineStrokeX = null,
+  /**
+   * Force the badge center to be offset from the vertical spine/bus stroke by a fixed amount (east side).
+   * Used to keep spine badges from being bisected by the line.
+   */
+  forceBadgeCenterOffsetFromLineEast = null,
 } = {}) {
   const labelG = svgEl("g", { class: "rel-label" });
 
-  const straddle = verticalStraddle && hopIndex != null && showBadges;
-  const textX = straddle ? mx + 44 : mx;
-  const badgeCx = straddle ? mx - 44 : mx;
-  const hitPadX = straddle ? 100 : 45;
-  const hitPadY = straddle ? 28 : 25;
-  const hitBox = svgEl("rect", {
-    x: mx - hitPadX, y: my - hitPadY, width: hitPadX * 2, height: hitPadY * 2,
-    fill: "transparent", cursor: "pointer",
-  });
-  labelG.appendChild(hitBox);
+  if (verticalStraddle) {
+    const anchor = straddleAnchorX != null ? straddleAnchorX : mx;
+    const badgeR = hasChoices ? 9 : 7;
+    const textGap =
+      straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)
+        ? Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE)
+        : VERT_BADGE_NAME_GAP;
+    const lines = labelLines ?? [""];
+    const nLines = Math.max(1, lines.length);
 
-  let badgeG = null;
-  if (hopIndex != null && showBadges) {
-    badgeG = svgEl("g", { class: "rel-label-badge" });
-    const badgeY = straddle ? my : my - 15;
-    const badgeCircle = svgEl("circle", {
-      cx: badgeCx, cy: badgeY, r: hasChoices ? "11" : "9",
-      fill: "var(--accent, #1e3a5f)", stroke: "#ffffff", "stroke-width": "1.5",
-      style: "transition: all 0.15s ease;",
-    });
-    const badgeText = svgEl("text", {
-      x: badgeCx, y: badgeY + 1, "text-anchor": "middle", "dominant-baseline": "central",
-      "font-size": "10", "font-family": "DM Sans, system-ui, sans-serif", "font-weight": "800",
-      fill: "#ffffff", style: "transition: all 0.15s ease;",
-    });
-    badgeText.textContent = hasChoices ? `${hopIndex} ▾` : String(hopIndex);
+    const badgeCy = 0;
+    const showHop = hopIndex != null && showBadges;
+    const badgeNum = badgeDisplayNumber != null ? badgeDisplayNumber : hopIndex;
+    const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+    /** Full width of badge + gap + text (east: circle left → text right; west: text left → circle right). */
+    const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
+    const approxW = textStartXEast + approxTextW;
 
-    badgeG.appendChild(badgeCircle);
-    badgeG.appendChild(badgeText);
+    let stackX;
+    let textAnchor;
+    let textBlockX;
+    let circleCx;
+    if (verticalStraddleWest) {
+      // West: stroke is to the right; badge hugs the line; relation name flows left (text-anchor end).
+      stackX = anchor - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
+      textAnchor = "end";
+      textBlockX = approxTextW;
+      circleCx = approxTextW + textGap + badgeR;
+    } else {
+      // East / spine: default placement clears the stroke by BADGE_LINE_CLEARANCE.
+      stackX = anchor + straddleExtraX + BADGE_LINE_CLEARANCE;
+      textAnchor = "start";
+      textBlockX = textStartXEast;
+      circleCx = badgeR;
+    }
+
+    if (straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)) {
+      const lineX = straddleLineStrokeX;
+      if (verticalStraddleWest) {
+        const circleRight = stackX + circleCx + badgeR;
+        const maxRight = lineX - SPINE_BADGE_CLEAR_FROM_LINE;
+        if (circleRight > maxRight) {
+          stackX -= circleRight - maxRight;
+        }
+      } else {
+        if (forceBadgeCenterOffsetFromLineEast != null && Number.isFinite(forceBadgeCenterOffsetFromLineEast)) {
+          // Exact spine/bus offset: badge center sits at (lineX + offset), not "minimum clearance".
+          stackX = lineX + forceBadgeCenterOffsetFromLineEast - circleCx;
+        }
+        const leftEdge = stackX;
+        const minLeft = lineX + SPINE_BADGE_CLEAR_FROM_LINE;
+        if (leftEdge < minLeft) {
+          stackX += minLeft - leftEdge;
+        }
+      }
+    }
+
+    const stackG = svgEl("g", { class: "rel-label-stack" });
+    stackG.setAttribute("transform", `translate(${stackX}, ${my})`);
+
+    let badgeG = null;
+    if (showHop) {
+      badgeG = svgEl("g", { class: "rel-label-badge" });
+      badgeG.appendChild(svgEl("circle", {
+        cx: circleCx,
+        cy: badgeCy,
+        r: badgeR,
+        fill: "var(--accent, #1e3a5f)",
+        stroke: "none",
+        style: "transition: all 0.15s ease;",
+      }));
+      const badgeText = svgEl("text", {
+        x: circleCx,
+        y: badgeCy + 1,
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+        "font-size": "8.5",
+        "font-family": "DM Sans, system-ui, sans-serif",
+        "font-weight": "800",
+        fill: "#ffffff",
+        style: "transition: all 0.15s ease;",
+      });
+      badgeText.textContent = hasChoices ? `${badgeNum} ▾` : String(badgeNum);
+      badgeG.appendChild(badgeText);
+    }
+
+    const codeLabel = svgEl("text", {
+      x: textBlockX,
+      "text-anchor": textAnchor,
+      "font-size": String(fontSize),
+      "font-family": "DM Sans, system-ui, sans-serif",
+      fill: "var(--lbl-fill, #2f2f2b)",
+      "paint-order": "stroke",
+      stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
+      "stroke-width": "4",
+      "stroke-linejoin": "round",
+      style: "transition: fill 0.15s ease, stroke 0.15s ease;",
+    });
+    if (nLines === 1) {
+      codeLabel.setAttribute("y", "0");
+      codeLabel.setAttribute("dominant-baseline", "central");
+    } else {
+      codeLabel.setAttribute("y", String(-lineH / 2));
+      codeLabel.setAttribute("dominant-baseline", "alphabetic");
+    }
+    lines.forEach((ln, i) => {
+      const tspan = svgEl("tspan", { x: textBlockX, dy: i === 0 ? "0" : String(lineH) });
+      tspan.textContent = ln;
+      codeLabel.appendChild(tspan);
+    });
+    if (verticalStraddleWest) {
+      stackG.appendChild(codeLabel);
+      if (badgeG) stackG.appendChild(badgeG);
+    } else {
+      if (badgeG) stackG.appendChild(badgeG);
+      stackG.appendChild(codeLabel);
+    }
+
+    const hitCenterX = stackX + approxW / 2;
+    const hitCenterY = my;
+    const hitPadX = Math.max(72, approxW / 2 + 14);
+    const hitPadY = nLines > 1 ? 36 : 28;
+    labelG.appendChild(svgEl("rect", {
+      x: hitCenterX - hitPadX,
+      y: hitCenterY - hitPadY,
+      width: hitPadX * 2,
+      height: hitPadY * 2,
+      fill: "transparent",
+      cursor: "pointer",
+    }));
+    labelG.appendChild(stackG);
+    return { labelG, codeLabel };
   }
 
+  // Horizontal: my is the vertical center of the badge+name row (drawArrow places it just above the stroke).
+  const linesH = labelLines ?? [""];
+  const nLinesH = Math.max(1, linesH.length);
+  const approxTextWHoriz = Math.min(170, Math.max(48, linesH.join(" ").length * (fontSize * 0.55)));
+  const badgeRHoriz = hasChoices ? 9 : 7;
+  const showHopH = hopIndex != null && showBadges;
+  const horizTextGap = VERT_BADGE_NAME_GAP;
+  const textStartXHoriz = showHopH ? 2 * badgeRHoriz + horizTextGap : 0;
+  const totalWHoriz = textStartXHoriz + approxTextWHoriz;
+  const textHalfHHoriz = Math.max(lineH * 0.56, (nLinesH * lineH) / 2);
+  const multilineExtraHoriz = nLinesH > 1 ? 2 : 0;
+  const stackHalfHHoriz = Math.max(showHopH ? badgeRHoriz + 1 : 0, textHalfHHoriz) + multilineExtraHoriz;
+  const stackOriginX = mx - totalWHoriz / 2;
+
+  const hitPadX = Math.max(90, totalWHoriz / 2 + 24);
+  const hitPadY = Math.max(22, stackHalfHHoriz + 12);
+  labelG.appendChild(svgEl("rect", {
+    x: mx - hitPadX,
+    y: my - hitPadY,
+    width: hitPadX * 2,
+    height: hitPadY * 2,
+    fill: "transparent",
+    cursor: "pointer",
+  }));
+
+  const stackG = svgEl("g", { class: "rel-label-stack rel-label-stack--horizontal" });
+  stackG.setAttribute("transform", `translate(${stackOriginX}, ${my})`);
+
+  let badgeG = null;
+  if (showHopH) {
+    badgeG = svgEl("g", { class: "rel-label-badge" });
+    const bcx = badgeRHoriz;
+    badgeG.appendChild(svgEl("circle", {
+      cx: bcx,
+      cy: 0,
+      r: String(badgeRHoriz),
+      fill: "var(--accent, #1e3a5f)",
+      stroke: "none",
+      style: "transition: all 0.15s ease;",
+    }));
+    const badgeText = svgEl("text", {
+      x: bcx,
+      y: 1,
+      "text-anchor": "middle",
+      "dominant-baseline": "central",
+      "font-size": "8.5",
+      "font-family": "DM Sans, system-ui, sans-serif",
+      "font-weight": "800",
+      fill: "#ffffff",
+      style: "transition: all 0.15s ease;",
+    });
+    const badgeNumH = badgeDisplayNumber != null ? badgeDisplayNumber : hopIndex;
+    badgeText.textContent = hasChoices ? `${badgeNumH} ▾` : String(badgeNumH);
+    badgeG.appendChild(badgeText);
+    stackG.appendChild(badgeG);
+  }
+
+  const textAnchorX = showHopH ? textStartXHoriz : totalWHoriz / 2;
   const codeLabel = svgEl("text", {
-    x: textX,
-    y: my,
-    "text-anchor": straddle ? "start" : "middle",
+    x: textAnchorX,
+    "text-anchor": showHopH ? "start" : "middle",
     "font-size": String(fontSize),
     "font-family": "DM Sans, system-ui, sans-serif",
     fill: "var(--lbl-fill, #2f2f2b)",
     "paint-order": "stroke",
     stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
-    "stroke-width": "7",
+    "stroke-width": "4",
     "stroke-linejoin": "round",
     style: "transition: fill 0.15s ease, stroke 0.15s ease;",
   });
-
-  (labelLines ?? [""]).forEach((ln, i) => {
-    const tspan = svgEl("tspan", { x: textX, dy: i === 0 ? "0" : String(lineH) });
+  /** Multi-line: baselines sit above the geometric text center; nudge down so the block lines up with the badge. */
+  const multiLineVisualNudge = nLinesH > 1 ? 2 : 0;
+  if (nLinesH === 1) {
+    codeLabel.setAttribute("y", "0");
+    codeLabel.setAttribute("dominant-baseline", "central");
+  } else {
+    codeLabel.setAttribute("y", String(-lineH / 2 + multiLineVisualNudge));
+    codeLabel.setAttribute("dominant-baseline", "alphabetic");
+  }
+  linesH.forEach((ln, i) => {
+    const tspan = svgEl("tspan", { x: textAnchorX, dy: i === 0 ? "0" : String(lineH) });
     tspan.textContent = ln;
     codeLabel.appendChild(tspan);
   });
 
-  labelG.appendChild(codeLabel);
-  if (badgeG) labelG.appendChild(badgeG);
+  stackG.appendChild(codeLabel);
+  labelG.appendChild(stackG);
 
   return { labelG, codeLabel };
 }
@@ -603,69 +741,6 @@ function wrapSvgTextLines(svg, text, maxWidthPx, {
   return lines;
 }
 
-function drawSwimlaneLabel(svg, { layer, laneY }) {
-  const clipId = `lane-label-clip-${layer.id}`;
-  const defs = svg.querySelector("defs") ?? (() => {
-    const d = svgEl("defs", {});
-    svg.insertBefore(d, svg.firstChild);
-    return d;
-  })();
-
-  const clipPath = svgEl("clipPath", { id: clipId });
-  clipPath.appendChild(svgEl("rect", {
-    x: 0,
-    y: laneY,
-    width: LANE_LABEL_W,
-    height: LANE_H,
-  }));
-  defs.appendChild(clipPath);
-
-  const labelG = svgEl("g", { "clip-path": `url(#${clipId})` });
-
-  const maxTextW = Math.max(10, LANE_LABEL_W - LANE_LABEL_PAD_X * 2);
-  const maxTextH = Math.max(10, LANE_H - LANE_LABEL_PAD_Y * 2);
-
-  const fontFamily = "DM Sans, system-ui, sans-serif";
-  const fontWeight = "850";
-  const lineHFactor = 1.15;
-
-  let fontSize = 13;
-  let lines = [];
-  for (; fontSize >= 9; fontSize--) {
-    lines = wrapSvgTextLines(svg, layer.label, maxTextW, {
-      fontSize,
-      fontFamily,
-      fontWeight,
-      maxLines: LANE_LABEL_MAX_LINES,
-    });
-    const lineH = fontSize * lineHFactor;
-    const totalH = lines.length * lineH;
-    if (totalH <= maxTextH + 0.1) break;
-  }
-
-  const lineH = fontSize * lineHFactor;
-  const totalH = lines.length * lineH;
-  const startY = laneY + LANE_H / 2 - totalH / 2 + lineH / 2;
-  const x = LANE_LABEL_PAD_X;
-
-  lines.forEach((ln, i) => {
-    const t = svgEl("text", {
-      x,
-      y: startY + i * lineH,
-      "text-anchor": "start",
-      "dominant-baseline": "middle",
-      "font-size": String(fontSize),
-      "font-family": fontFamily,
-      "font-weight": fontWeight,
-      fill: layer.borderColor,
-    });
-    t.textContent = ln;
-    labelG.appendChild(t);
-  });
-
-  return labelG;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // ELEMENT BOX DRAWING
 // ─────────────────────────────────────────────────────────────────────────────
@@ -674,98 +749,904 @@ function drawSwimlaneLabel(svg, { layer, laneY }) {
  * Polished Element Drawer with Multi-line Text Wrapping
  */
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Hover tooltip for SVG elements (styled, theme-aware)
+// ─────────────────────────────────────────────────────────────────────────────
 
-function drawStandardElement(name, x, y, w, h, fontSize = 11) {
-  const shape = SHAPES[name] ?? { type: "rounded" };
-  const color = getColor(name);
-  const iconFn = ICONS[name];
+let _archiHoverTip = null;
+let _archiHoverTipRaf = 0;
+let _archiHoverTipLastXY = null;
+
+function ensureArchiHoverTip() {
+  if (_archiHoverTip) return _archiHoverTip;
+  const el = document.createElement("div");
+  el.id = "archi-hover-tip";
+  el.className = "archi-hover-tip";
+  el.style.display = "none";
+  el.setAttribute("role", "tooltip");
+  document.body.appendChild(el);
+  _archiHoverTip = el;
+
+  const hide = () => hideArchiHoverTip();
+  window.addEventListener("scroll", hide, { passive: true });
+  window.addEventListener("blur", hide);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hide();
+  });
+
+  return el;
+}
+
+function setArchiHoverTipContent({
+  displayName,
+  canonicalName,
+  fill,
+  stroke,
+  iconSvg,
+} = {}) {
+  const tip = ensureArchiHoverTip();
+  tip.classList.remove("archi-hover-tip--rich");
+  const e = typeof escPathDiag === "function" ? escPathDiag : (s) => String(s ?? "");
+  const title = e(displayName || canonicalName || "");
+  const icon = iconSvg ? `<span class="archi-hover-tip__icon" aria-hidden="true">${iconSvg}</span>` : "";
+
+  tip.style.setProperty("--archi-tip-fill", fill || "#ffffff");
+  tip.style.setProperty("--archi-tip-stroke", stroke || "#2f2f2b");
+  tip.innerHTML = `
+    <div class="archi-hover-tip__inner">
+      <div class="archi-hover-tip__title-row">
+        ${icon}
+        <div class="archi-hover-tip__title">${title}</div>
+      </div>
+    </div>
+  `.trim();
+}
+
+function labelWouldTruncateInBox(measureSvg, label, w, { subtitle = "" } = {}) {
+  const safeLabel = String(label || "");
+  if (!safeLabel.trim()) return false;
+  const baseFontSize = 11;
+  const fontSize = subtitle ? Math.max(9, baseFontSize - 2) : baseFontSize;
+  const padX = 10;
+  const maxTextW = Math.max(24, w - padX * 2 - SAFE_TEXT_RIGHT_TRIM);
+  const maxLines = 3;
+
+  try {
+    if (measureSvg && typeof wrapSvgTextLines === "function") {
+      const lines = wrapSvgTextLines(measureSvg, safeLabel, maxTextW, {
+        fontSize,
+        fontWeight: "700",
+        maxLines,
+      });
+      if (!lines || !lines.length) return false;
+      if (lines.length >= maxLines && String(lines[lines.length - 1] || "").includes("…")) return true;
+      const joined = lines.join(" ").replace(/\s+/g, " ").trim();
+      return joined.length < safeLabel.replace(/\s+/g, " ").trim().length;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
+  // Fallback heuristic (no measuring available): approximate chars per line.
+  const approxChar = fontSize * 0.52;
+  const maxChars = Math.max(8, Math.floor(maxTextW / approxChar));
+  return safeLabel.trim().length > (maxChars * maxLines);
+}
+
+function positionArchiHoverTip(clientX, clientY) {
+  const tip = ensureArchiHoverTip();
+  const pad = 12;
+  const offset = 14;
+  const wasHidden = tip.style.display === "none";
+  if (wasHidden) {
+    tip.style.display = "block";
+    tip.style.opacity = "0";
+  }
+
+  const rect = tip.getBoundingClientRect();
+  const vw = window.innerWidth || 0;
+  const vh = window.innerHeight || 0;
+
+  let left = clientX + offset;
+  let top = clientY + offset;
+  if (left + rect.width + pad > vw) left = Math.max(pad, clientX - rect.width - offset);
+  if (top + rect.height + pad > vh) top = Math.max(pad, clientY - rect.height - offset);
+
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  if (wasHidden) tip.style.opacity = "1";
+}
+
+function showArchiHoverTip(evt) {
+  const tip = ensureArchiHoverTip();
+  tip.style.display = "block";
+  tip.style.opacity = "1";
+  if (evt && typeof evt.clientX === "number" && typeof evt.clientY === "number") {
+    positionArchiHoverTip(evt.clientX, evt.clientY);
+  }
+}
+
+function hideArchiHoverTip() {
+  if (!_archiHoverTip) return;
+  _archiHoverTip.classList.remove("archi-hover-tip--rich");
+  _archiHoverTip.style.display = "none";
+  _archiHoverTip.style.opacity = "0";
+  _archiHoverTipLastXY = null;
+  if (_archiHoverTipRaf) cancelAnimationFrame(_archiHoverTipRaf);
+  _archiHoverTipRaf = 0;
+}
+
+/** Rich HTML for explanation-panel pills (native <code>title</code> is flaky inside &lt;summary&gt;). */
+const EXPLAIN_BADGE_TIP_HTML = {
+  association: `
+    <div class="explain-rich-tip">
+      <p class="explain-rich-tip__p"><strong>Generic link (Association)</strong></p>
+      <p class="explain-rich-tip__p">In ArchiMate, Association is intentionally generic: it does not assert a direction between elements, and it is not one of the relationships created by applying the §5.7 derivation rules to other links.</p>
+    </div>
+  `.trim(),
+  waypoint: `
+    <div class="explain-rich-tip">
+      <p class="explain-rich-tip__p"><strong>Waypoint:</strong> A &ldquo;must-visit&rdquo; milestone on your architectural road trip. It breaks your journey into manageable phases (segments).</p>
+      <p class="explain-rich-tip__p"><strong>Manual:</strong> You set this yourself to force a specific strategic constraint.</p>
+      <p class="explain-rich-tip__p"><strong>Automatic:</strong> The logic identified this as a necessary bridge to complete your selected path.</p>
+    </div>
+  `.trim(),
+};
+
+function explainSemanticStrengthTipHtml(sourceEl) {
+  const strengthRaw = sourceEl?.getAttribute?.("data-semantic-strength") || "Strong";
+  const mappingRaw = sourceEl?.getAttribute?.("data-semantic-mapping") || "";
+  const ruleRaw = sourceEl?.getAttribute?.("data-semantic-rule") || "the active modeling rule";
+  const rule = escPathDiag(ruleRaw);
+  const fullLabel = mappingRaw ? `${strengthRaw} (${mappingRaw})` : strengthRaw;
+  const labelHtml = `<strong>${escPathDiag(fullLabel)}</strong>`;
+  const tone =
+    strengthRaw === "Informal"
+      ? "This hop is semantically loose under strict rigor."
+      : strengthRaw === "Valid"
+        ? "This hop is still normative and derived per §5.7."
+        : "This hop is a direct or structural connection.";
+  return `
+    <div class="explain-rich-tip">
+      <p class="explain-rich-tip__p">Semantic strength: ${labelHtml}</p>
+      <p class="explain-rich-tip__p">This hop is considered ${labelHtml} because it follows ${rule}.</p>
+      <p class="explain-rich-tip__p">${tone}</p>
+    </div>
+  `.trim();
+}
+
+function showExplainBadgeRichTip(evt, key, sourceEl = null) {
+  const html =
+    key === "semantic-strength"
+      ? explainSemanticStrengthTipHtml(sourceEl)
+      : EXPLAIN_BADGE_TIP_HTML[key];
+  if (!html) return;
+  const tip = ensureArchiHoverTip();
+  tip.classList.add("archi-hover-tip--rich");
+  tip.innerHTML = `<div class="archi-hover-tip__inner archi-hover-tip__inner--rich">${html}</div>`;
+  tip.style.display = "block";
+  tip.style.opacity = "1";
+  let cx = evt && typeof evt.clientX === "number" ? evt.clientX : null;
+  let cy = evt && typeof evt.clientY === "number" ? evt.clientY : null;
+  if ((cx == null || cy == null) && evt?.target && typeof evt.target.getBoundingClientRect === "function") {
+    const r = evt.target.getBoundingClientRect();
+    cx = r.left + r.width / 2;
+    cy = r.bottom + 6;
+  }
+  if (cx != null && cy != null) positionArchiHoverTip(cx, cy);
+}
+
+/**
+ * Delegated hover/focus for Association and Waypoint pills in the path explanation (see {@link EXPLAIN_BADGE_TIP_HTML}).
+ */
+function initExplainBadgeTips() {
+  const container = document.getElementById("explanation-content");
+  if (!container || container.dataset.explainBadgeTipsInit) return;
+  container.dataset.explainBadgeTipsInit = "1";
+
+  let badgeTipEl = null;
+
+  const targetFromEvent = (e) => {
+    const raw = e.target;
+    const el = raw?.nodeType === 3 ? raw.parentElement : raw;
+    return el?.closest?.(".explain-badge-tip[data-explain-tip]");
+  };
+
+  container.addEventListener("pointerover", (e) => {
+    const el = targetFromEvent(e);
+    if (!el) return;
+    if (badgeTipEl === el) return;
+    badgeTipEl = el;
+    const key = el.getAttribute("data-explain-tip");
+    if (!key) return;
+    showExplainBadgeRichTip(e, key, el);
+  });
+
+  container.addEventListener("pointerout", (e) => {
+    const rel = e.relatedTarget;
+    if (badgeTipEl && (!rel || !badgeTipEl.contains(rel))) {
+      hideArchiHoverTip();
+      badgeTipEl = null;
+    }
+  });
+
+  container.addEventListener("focusin", (e) => {
+    const el = targetFromEvent(e);
+    if (!el) return;
+    badgeTipEl = el;
+    const key = el.getAttribute("data-explain-tip");
+    if (key) showExplainBadgeRichTip(e, key, el);
+  });
+
+  container.addEventListener("focusout", () => {
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (a && a.closest?.(".explain-badge-tip") && container.contains(a)) return;
+      hideArchiHoverTip();
+      badgeTipEl = null;
+    });
+  });
+}
+
+window.initExplainBadgeTips = initExplainBadgeTips;
+
+function moveArchiHoverTip(evt) {
+  if (!_archiHoverTip || _archiHoverTip.style.display === "none") return;
+  if (!evt || typeof evt.clientX !== "number" || typeof evt.clientY !== "number") return;
+  _archiHoverTipLastXY = { x: evt.clientX, y: evt.clientY };
+  if (_archiHoverTipRaf) return;
+  _archiHoverTipRaf = requestAnimationFrame(() => {
+    _archiHoverTipRaf = 0;
+    if (!_archiHoverTipLastXY) return;
+    positionArchiHoverTip(_archiHoverTipLastXY.x, _archiHoverTipLastXY.y);
+  });
+}
+
+
+function drawStandardElement(name, x, y, w, h, opts = {}) {
+  const subtitle = typeof opts === "object" && opts ? String(opts.subtitle || "").trim() : "";
+  const canonicalName =
+    typeof opts === "object" && opts && opts.canonicalName
+      ? String(opts.canonicalName)
+      : String(name || "");
+  const baseFontSize = typeof opts === "number" ? opts : (opts.fontSize ?? 11);
+  const fontSize = subtitle ? Math.max(9, baseFontSize - 2) : baseFontSize;
+  const measureSvg = typeof opts === "object" && opts && opts.measureSvg ? opts.measureSvg : null;
+  const highlightMissingLabel =
+    typeof opts === "object" && opts ? Boolean(opts.highlightMissingLabel) : false;
+
+  const shape = SHAPES[canonicalName] ?? SHAPES[name] ?? { type: "rounded" };
+  const color = getColor(canonicalName);
+  const iconFn = ICONS[canonicalName];
   
   const g = document.createElementNS(SVG_NS, "g");
   g.appendChild(drawShape(shape.type, x, y, w, h, color));
 
-  // Spec legend: Value & Meaning (mint) have no corner glyph; chamfered lavender boxes do.
-  const showCornerGlyph = iconFn && w > 60 && name !== "Value" && name !== "Meaning";
+  // Value (ellipse) has no corner glyph; Meaning shows a thought-bubble badge like other motivation types.
+  const showCornerGlyph = iconFn && w > 60 && canonicalName !== "Value";
   if (showCornerGlyph) {
-    const badgeX = x + w - ICON_BADGE_SIZE - ICON_PAD;
-    const badgeY = y + ICON_PAD;
+    const cube = shape.type === "cube";
+    const doc = shape.type === "document";
+    const badgeX = cube
+      ? x + w - SHAPE_CUBE_DEPTH - ICON_GLYPH_SIZE - ICON_PAD - CORNER_GLYPH_NUDGE_X
+      : x + w - ICON_BADGE_SIZE - ICON_PAD - (doc ? DOCUMENT_ICON_INSET_X : 0) - CORNER_GLYPH_NUDGE_X;
+    const badgeY = cube
+      ? y + SHAPE_CUBE_DEPTH + ICON_PAD + CORNER_GLYPH_NUDGE_Y
+      : y + ICON_PAD + (doc ? DOCUMENT_ICON_INSET_Y : 0) + CORNER_GLYPH_NUDGE_Y;
     // color property passes down to the SVG "currentColor" strokes
     const iconG = svgEl("g", { transform: `translate(${badgeX}, ${badgeY})`, color: "#2f2f2b" });
     const glyph = document.createElementNS(SVG_NS, "svg");
     glyph.setAttribute("viewBox", "0 0 12 12");
     glyph.setAttribute("width", ICON_GLYPH_SIZE);
     glyph.setAttribute("height", ICON_GLYPH_SIZE);
+    glyph.setAttribute("preserveAspectRatio", "xMidYMid meet");
     glyph.innerHTML = iconFn();
     iconG.appendChild(glyph);
     g.appendChild(iconG);
   }
 
-  // FIXED: Split strings longer than 8 chars into 2 lines
-  const words = name.split(" ");
-  let lines = (words.length > 1 && name.length > 8) ? 
-              [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : 
-              [name];
+  const padX = 10;
+  const maxTextW = Math.max(24, w - padX * 2 - SAFE_TEXT_RIGHT_TRIM);
+  const wrapApproxLines = (text, maxChars, maxLines) => {
+    const words = String(text || "").split(/\s+/).filter(Boolean);
+    if (!words.length) return [String(text || "")];
+    const wrapped = [];
+    let cur = "";
+    for (const word of words) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (next.length <= maxChars || !cur) {
+        cur = next;
+        continue;
+      }
+      wrapped.push(cur);
+      cur = word;
+      if (wrapped.length >= maxLines) break;
+    }
+    if (cur && wrapped.length < maxLines) wrapped.push(cur);
+    if (wrapped.length >= maxLines && words.join(" ").length > wrapped.join(" ").length) {
+      wrapped[wrapped.length - 1] = wrapped[wrapped.length - 1].replace(/\s+$/, "") + "…";
+    }
+    return wrapped.length ? wrapped : [String(text || "")];
+  };
 
-  const lineH = fontSize + 2;
-  const startY = y + (h / 2) - ((lines.length - 1) * (lineH / 2));
+  let lines;
+  if (measureSvg) {
+    lines = wrapSvgTextLines(measureSvg, name, maxTextW, {
+      fontSize,
+      fontWeight: "700",
+      maxLines: 3,
+    });
+    if (!lines.length) lines = [name];
+  } else {
+    const approxChar = fontSize * 0.52;
+    const maxChars = Math.max(8, Math.floor(maxTextW / approxChar));
+    lines = wrapApproxLines(name, maxChars, 3);
+  }
+
+  const subtitleFontSize = 8.5;
+  const subtitleLineH = 9.5;
+  let subtitleLines = [];
+  if (subtitle) {
+    if (measureSvg) {
+      subtitleLines = wrapSvgTextLines(measureSvg, subtitle, maxTextW, {
+        fontSize: subtitleFontSize,
+        fontWeight: "600",
+        maxLines: 2,
+      });
+    } else {
+      const subtitleApproxChar = subtitleFontSize * 0.52;
+      const subtitleMaxChars = Math.max(10, Math.floor(maxTextW / subtitleApproxChar));
+      subtitleLines = wrapApproxLines(subtitle, subtitleMaxChars, 2);
+    }
+    if (!subtitleLines.length) subtitleLines = [subtitle];
+  }
+
+  const lineH = subtitle ? Math.max(10, fontSize + 1) : fontSize + 2;
+  const subtitleReserved = subtitle ? subtitleLines.length * subtitleLineH + 6 : 0;
+  const textBandTop = y + SAFE_TEXT_TOP_TRIM;
+  const textBandBottom = y + h - subtitleReserved - 6;
+  const textBandH = Math.max(textBandBottom - textBandTop, lineH);
+  const titleCenterY = textBandTop + textBandH / 2 + (subtitle ? 1 : 0);
+  const startY = titleCenterY - ((lines.length - 1) * (lineH / 2));
+  const titleFill = highlightMissingLabel ? "#b45309" : "#111";
+  const textAnchorX = x + padX + maxTextW / 2;
 
   lines.forEach((line, i) => {
     const txt = svgEl("text", {
-      x: x + w / 2, y: startY + (i * lineH),
+      x: textAnchorX, y: startY + (i * lineH),
       "text-anchor": "middle", "dominant-baseline": "central",
       "font-size": fontSize, "font-family": "DM Sans, system-ui, sans-serif",
-      "font-weight": "700", fill: "#111", "pointer-events": "none"
+      "font-weight": "700", fill: titleFill, "pointer-events": "none",
+      "paint-order": "stroke fill",
+      stroke: "var(--surface, #ffffff)",
+      "stroke-width": "3",
+      "stroke-linejoin": "round",
     });
     txt.textContent = line;
     g.appendChild(txt);
   });
 
+  if (subtitle && subtitleLines.length) {
+    const subtitleBottomY = y + h - 6;
+    const subtitleStartY = subtitleBottomY - ((subtitleLines.length - 1) * subtitleLineH);
+    subtitleLines.forEach((line, idx) => {
+      g.appendChild(svgEl("text", {
+        x: textAnchorX,
+        y: subtitleStartY + (idx * subtitleLineH),
+        "text-anchor": "middle",
+        "dominant-baseline": "central",
+        "font-size": String(subtitleFontSize),
+        "font-family": "DM Sans, system-ui, sans-serif",
+        "font-weight": "600",
+        fill: "#334155",
+        opacity: "0.9",
+        "pointer-events": "none",
+        "paint-order": "stroke fill",
+        stroke: "var(--surface, #ffffff)",
+        "stroke-width": "2.4",
+        "stroke-linejoin": "round",
+      }, line));
+    });
+  }
+
   return g;
 }
 
-function drawElement(name, x, y, w = EL_W, h = EL_H, { swimlaneSimple = false } = {}) {
+function activeDomainContextKey() {
+  const raw = window?.state?.domainContext;
+  const key = String(raw || "abstract");
+  if (typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[key]) return key;
+  return "abstract";
+}
+
+function shouldHighlightMissingThematicLabels() {
+  if (typeof window === "undefined") return false;
+  try {
+    const q = new URLSearchParams(window.location?.search || "");
+    if (q.get("debugLabels") === "1") return true;
+  } catch (_) {}
+  return window.location?.hostname === "localhost";
+}
+
+/** Caches one random pick per domain + element so labels do not flicker on redraw. */
+const SCENARIO_LABEL_VARIANT_CACHE = new Map();
+let scenarioVariantCacheForDomain = null;
+
+function resolveScenarioMappedLabel(domainKey, canonical, raw) {
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    const strs = raw.map((x) => String(x ?? "").trim()).filter(Boolean);
+    if (!strs.length) return null;
+    if (strs.length === 1) return strs[0];
+    const cacheKey = `${domainKey}\0${canonical}`;
+    if (SCENARIO_LABEL_VARIANT_CACHE.has(cacheKey)) {
+      return SCENARIO_LABEL_VARIANT_CACHE.get(cacheKey);
+    }
+    const idx = Math.floor(Math.random() * strs.length);
+    const chosen = strs[idx];
+    SCENARIO_LABEL_VARIANT_CACHE.set(cacheKey, chosen);
+    return chosen;
+  }
+  if (raw == null) return null;
+  return String(raw);
+}
+
+function getScenarioDisplayName(elementName) {
+  const canonical = String(elementName || "");
+  const key = activeDomainContextKey();
+  if (scenarioVariantCacheForDomain !== key) {
+    SCENARIO_LABEL_VARIANT_CACHE.clear();
+    scenarioVariantCacheForDomain = key;
+  }
+  const labels =
+    typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[key]?.labels
+      ? SCENARIOS[key].labels
+      : {};
+  const hasKey = Object.prototype.hasOwnProperty.call(labels, canonical);
+  const resolved = hasKey ? resolveScenarioMappedLabel(key, canonical, labels[canonical]) : null;
+  const hasMapping = hasKey && resolved != null;
+  const display = hasMapping ? resolved : canonical;
+  const missingThematic = key !== "abstract" && !hasMapping;
+  return {
+    canonical,
+    display,
+    isThematic: key !== "abstract" && display !== canonical,
+    domainContext: key,
+    missingThematic,
+    highlightMissing: missingThematic && shouldHighlightMissingThematicLabels(),
+  };
+}
+
+/** Second line in step-by-step chips: ArchiMate element type when the primary label is a scenario/thematic name. */
+function explainAbstractSublineFromScenario(scenario) {
+  if (!scenario || scenario.display === scenario.canonical) return "";
+  return `<span class="path-node-chip-abstract">${escPathDiag(scenario.canonical)}</span>`;
+}
+
+function getDomainLabel(elementName) {
+  return getScenarioDisplayName(elementName).display;
+}
+
+function startsWithArticle(term) {
+  return /^(?:the|a|an)\b/i.test(String(term || "").trim());
+}
+
+function looksLikeProperNoun(term) {
+  const t = String(term || "").trim();
+  if (!t) return false;
+  const forcedProper = new Set(["Emperor Palpatine", "Darth Vader"]);
+  if (forcedProper.has(t)) return true;
+  return /^(?:Emperor|Darth|General|Admiral|Doctor|Dr\.|Mr\.|Ms\.|Mrs\.)\b/.test(t);
+}
+
+function withArticle(term) {
+  const t = String(term || "").trim();
+  if (!t) return "";
+  if (startsWithArticle(t) || looksLikeProperNoun(t)) return t;
+  return `the ${t}`;
+}
+
+function sentenceCaseStart(text) {
+  const t = String(text || "");
+  if (!t) return "";
+  return t[0].toUpperCase() + t.slice(1);
+}
+
+function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignVertical = false, illustrationSeed = "", hideCompositeIllustrations = false, diagUpperOnWest = null, compactCornerSide = "left", swimlaneCompositeSubsBelowDiagonal = false, swimlaneCompositePlacement = null, swimlaneExcludeAdjacentIllustrationSubs = null } = {}) {
   const safeName = String(name || "");
+  const scenario = getScenarioDisplayName(safeName);
+  const mainLabel = getDomainLabel(safeName);
+  const subtitle = scenario.isThematic ? scenario.canonical : "";
   const pattern = COMPOSITE_PATTERNS[safeName];
   const g = svgEl("g", { class: "archimate-element", style: "cursor: pointer;" });
 
-  if (!pattern || swimlaneSimple) {
-    const box = drawStandardElement(safeName, x, y, w, h);
+  // Small tooltip: only show when the label is actually truncated in-box.
+  g.addEventListener("mouseenter", (e) => {
+    try {
+      const wouldTruncate = labelWouldTruncateInBox(measureSvg, mainLabel, w, { subtitle });
+      if (!wouldTruncate) {
+        hideArchiHoverTip();
+        return;
+      }
+      const fill = typeof getColor === "function" ? getColor(safeName) : "#ffffff";
+      const stroke = "#2f2f2b";
+      const iconSvg =
+        (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function")
+          ? window.getElementMiniSvg(safeName, 18)
+          : "";
+      setArchiHoverTipContent({
+        displayName: mainLabel,
+        canonicalName: safeName,
+        fill,
+        stroke,
+        iconSvg,
+      });
+      showArchiHoverTip(e);
+    } catch (_) {}
+  });
+  g.addEventListener("mousemove", (e) => moveArchiHoverTip(e));
+  g.addEventListener("mouseleave", () => hideArchiHoverTip());
+
+  if (!pattern) {
+    const box = drawStandardElement(mainLabel, x, y, w, h, {
+      measureSvg,
+      subtitle,
+      canonicalName: safeName,
+      highlightMissingLabel: scenario.highlightMissing,
+    });
     box.onclick = () => window.showElementDetails?.(safeName);
     g.appendChild(box);
     return g;
   }
 
-  // COMPOSITE PATTERN: Vertical Aggregation (e.g., Nodes into Path)
-  const vOffset = 85;
-  const subTop = drawStandardElement(pattern.sub, x, y - vOffset, w, h, 10);
-  subTop.onclick = () => window.showElementDetails?.(pattern.sub);
-  g.appendChild(subTop);
-  const subBot = drawStandardElement(pattern.sub, x, y + vOffset, w, h, 10);
-  subBot.onclick = () => window.showElementDetails?.(pattern.sub);
-  g.appendChild(subBot);
-  
-  const mainBox = drawStandardElement(safeName, x, y, w, h);
+  // Optional simplification: render composites as just the main box (no illustration sub-elements).
+  if (hideCompositeIllustrations) {
+    const box = drawStandardElement(mainLabel, x, y, w, h, {
+      measureSvg,
+      subtitle,
+      canonicalName: safeName,
+      highlightMissingLabel: scenario.highlightMissing,
+    });
+    box.onclick = () => window.showElementDetails?.(safeName);
+    g.appendChild(box);
+    return g;
+  }
+
+  const seed = illustrationSeed || `${safeName}:0`;
+  const { subFirst, subSecond, moreCount } = pickCompositeIllustrationSubs(
+    pattern,
+    seed,
+    swimlaneExcludeAdjacentIllustrationSubs
+  );
+
+  const appendMoreTypesHint = () => {
+    if (moreCount <= 0) return;
+    const hintG = svgEl("g", { class: "composite-illustration-more" });
+    const tx = x + w - 6;
+    const ty = y + 16;
+    const ti = document.createElementNS(SVG_NS, "title");
+    ti.textContent = `Example only: ${moreCount} more part type${moreCount === 1 ? "" : "s"} may aggregate here (not path hops).`;
+    hintG.appendChild(ti);
+    hintG.appendChild(svgEl("text", {
+      x: tx,
+      y: ty,
+      "text-anchor": "end",
+      "dominant-baseline": "central",
+      "font-size": "14",
+      "font-family": "DM Sans, system-ui, sans-serif",
+      "font-weight": "700",
+      fill: "#475569",
+      "pointer-events": "none",
+    }, "⋯"));
+    g.appendChild(hintG);
+  };
+
+  // Vertical compact: all composites use T-bone side-loading to keep junctions visible.
+  if (alignVertical) {
+    // Vertical view: place illustrated subs on diagonals (≈45°) to keep the spine corridor clear.
+    // Pick the diagonal orientation based on the incoming hop's label/bypass side (passed in).
+    const gapX = typeof COMPOSITE_H_GAP_VERTICAL === "number" ? COMPOSITE_H_GAP_VERTICAL : COMPOSITE_H_GAP;
+    const gapY = typeof COMPOSITE_V_GAP_VERTICAL === "number" ? COMPOSITE_V_GAP_VERTICAL : 40;
+    const dx = w + gapX;
+    const dy = h + gapY;
+    const upperOnWest = (diagUpperOnWest == null) ? true : !!diagUpperOnWest;
+    const xUpper = upperOnWest ? (x - dx) : (x + dx);
+    const yUpper = y - dy;
+    const xLower = upperOnWest ? (x + dx) : (x - dx);
+    const yLower = y + dy;
+    const illSubs = svgEl("g", { class: "composite-illustration composite-illustration--vertical" });
+    const subLScenario = getScenarioDisplayName(subFirst);
+    const subL = drawStandardElement(subLScenario.display, xUpper, yUpper, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subLScenario.isThematic ? subLScenario.canonical : "",
+      canonicalName: subFirst,
+      highlightMissingLabel: subLScenario.highlightMissing,
+    });
+    subL.onclick = () => window.showElementDetails?.(subFirst);
+    illSubs.appendChild(subL);
+    const subRScenario = getScenarioDisplayName(subSecond);
+    const subR = drawStandardElement(subRScenario.display, xLower, yLower, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subRScenario.isThematic ? subRScenario.canonical : "",
+      canonicalName: subSecond,
+      highlightMissingLabel: subRScenario.highlightMissing,
+    });
+    subR.onclick = () => window.showElementDetails?.(subSecond);
+    illSubs.appendChild(subR);
+    g.appendChild(illSubs);
+
+    const mainBox = drawStandardElement(mainLabel, x, y, w, h, {
+      measureSvg,
+      subtitle,
+      canonicalName: safeName,
+      highlightMissingLabel: scenario.highlightMissing,
+    });
+    mainBox.onclick = () => window.showElementDetails?.(safeName);
+    g.appendChild(mainBox);
+
+    const illEdges = svgEl("g", { class: "composite-illustration" });
+    // Upper sub → Parent: dashed diagonal into the parent corner (line only; no aggregation glyph).
+    {
+      const sx = upperOnWest ? (xUpper + w) : xUpper;
+      const sy = yUpper + h;
+      const ex = upperOnWest ? x : (x + w);
+      const ey = y;
+      const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+      arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: subFirst, to: safeName, code: "G" }); };
+      illEdges.appendChild(arrowG);
+    }
+    // Parent → Lower sub: dashed diagonal from parent corner.
+    {
+      const sx = upperOnWest ? (x + w) : x;
+      const sy = y + h;
+      const ex = upperOnWest ? xLower : (xLower + w);
+      const ey = yLower;
+      const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+      arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
+      illEdges.appendChild(arrowG);
+    }
+    g.appendChild(illEdges);
+    appendMoreTypesHint();
+    return g;
+  }
+
+  // Horizontal swimlanes: illustrated subs below the main box. Layout is chosen from routing (vertical bus X)
+  // so subs avoid H–V–H corridors — prefer one sub centered under the parent + one diagonal; else dual-diagonal.
+  if (swimlaneCompositeSubsBelowDiagonal) {
+    const gapX = typeof COMPOSITE_H_GAP_VERTICAL === "number" ? COMPOSITE_H_GAP_VERTICAL : COMPOSITE_H_GAP;
+    const gapY = compositeAggGapY();
+    const dx = w + gapX;
+    const dy = h + gapY;
+    const xLeft = x - dx;
+    const xRight = x + dx;
+    const ySub = y + dy;
+    const belowCenterX = x + w / 2 - EL_W / 2;
+    const placement = swimlaneCompositePlacement && swimlaneCompositePlacement.mode
+      ? swimlaneCompositePlacement
+      : { mode: "dual-diag" };
+
+    const illSubs = svgEl("g", { class: "composite-illustration composite-illustration--swimlane-below-diagonal" });
+
+    const appendSub = (canonical, px, py) => {
+      const subScenario = getScenarioDisplayName(canonical);
+      const subEl = drawStandardElement(subScenario.display, px, py, w, h, {
+        fontSize: 10,
+        measureSvg,
+        subtitle: subScenario.isThematic ? subScenario.canonical : "",
+        canonicalName: canonical,
+        highlightMissingLabel: subScenario.highlightMissing,
+      });
+      subEl.onclick = () => window.showElementDetails?.(canonical);
+      illSubs.appendChild(subEl);
+    };
+
+    if (placement.mode === "below-diag") {
+      const diagOnRight = !!placement.diagOnRight;
+      appendSub(subFirst, belowCenterX, ySub);
+      appendSub(subSecond, diagOnRight ? xRight : xLeft, ySub);
+    } else {
+      appendSub(subFirst, xLeft, ySub);
+      appendSub(subSecond, xRight, ySub);
+    }
+
+    g.appendChild(illSubs);
+
+    const mainBox = drawStandardElement(mainLabel, x, y, w, h, {
+      measureSvg,
+      subtitle,
+      canonicalName: safeName,
+      highlightMissingLabel: scenario.highlightMissing,
+    });
+    mainBox.onclick = () => window.showElementDetails?.(safeName);
+    g.appendChild(mainBox);
+
+    const illEdges = svgEl("g", { class: "composite-illustration" });
+
+    if (placement.mode === "below-diag") {
+      const diagOnRight = !!placement.diagOnRight;
+      const cx = x + w / 2;
+      const sy0 = y + h;
+      {
+        const ey = ySub;
+        const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+        arrowG.appendChild(svgEl("path", { d: `M ${cx} ${sy0} L ${cx} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subFirst, code: "G" }); };
+        illEdges.appendChild(arrowG);
+      }
+      if (diagOnRight) {
+        const sx = x + w;
+        const ex = xRight;
+        const ey = ySub;
+        const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy0} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
+        illEdges.appendChild(arrowG);
+      } else {
+        const sx = x;
+        const ex = xLeft + w;
+        const ey = ySub;
+        const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy0} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
+        illEdges.appendChild(arrowG);
+      }
+    } else {
+      {
+        const sx = x;
+        const sy = y + h;
+        const ex = xLeft + w;
+        const ey = ySub;
+        const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subFirst, code: "G" }); };
+        illEdges.appendChild(arrowG);
+      }
+      {
+        const sx = x + w;
+        const sy = y + h;
+        const ex = xRight;
+        const ey = ySub;
+        const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
+        illEdges.appendChild(arrowG);
+      }
+    }
+    g.appendChild(illEdges);
+    appendMoreTypesHint();
+    return g;
+  }
+
+  // COMPOSITE PATTERN: Illustration-only aggregation.
+  // Default: stacked above/below. Compact lanes: bottom + right corner to avoid overlaps.
+  const vOffset = COMPOSITE_V_OFF;
+  const cornerCompact = typeof window !== "undefined" && window.state && window.state.pathFlow === "compact";
+  const side = (compactCornerSide === "right") ? "right" : "left";
+  const xSide =
+    cornerCompact
+      ? (side === "left" ? (x - (w + COMPOSITE_H_GAP)) : (x + w + COMPOSITE_H_GAP))
+      : null;
+  const ySide = cornerCompact ? y : null;
+  const illSubs = svgEl("g", { class: "composite-illustration" });
+  if (cornerCompact) {
+    const xBottom = x;
+    const yBottom = y + vOffset;
+    const subRScenario = getScenarioDisplayName(subFirst);
+    const subR = drawStandardElement(subRScenario.display, xSide, ySide, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subRScenario.isThematic ? subRScenario.canonical : "",
+      canonicalName: subFirst,
+      highlightMissingLabel: subRScenario.highlightMissing,
+    });
+    subR.onclick = () => window.showElementDetails?.(subFirst);
+    illSubs.appendChild(subR);
+    const subBScenario = getScenarioDisplayName(subSecond);
+    const subB = drawStandardElement(subBScenario.display, xBottom, yBottom, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subBScenario.isThematic ? subBScenario.canonical : "",
+      canonicalName: subSecond,
+      highlightMissingLabel: subBScenario.highlightMissing,
+    });
+    subB.onclick = () => window.showElementDetails?.(subSecond);
+    illSubs.appendChild(subB);
+  } else {
+    const subTopScenario = getScenarioDisplayName(subFirst);
+    const subTop = drawStandardElement(subTopScenario.display, x, y - vOffset, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subTopScenario.isThematic ? subTopScenario.canonical : "",
+      canonicalName: subFirst,
+      highlightMissingLabel: subTopScenario.highlightMissing,
+    });
+    subTop.onclick = () => window.showElementDetails?.(subFirst);
+    illSubs.appendChild(subTop);
+    const subBotScenario = getScenarioDisplayName(subSecond);
+    const subBot = drawStandardElement(subBotScenario.display, x, y + vOffset, w, h, {
+      fontSize: 10,
+      measureSvg,
+      subtitle: subBotScenario.isThematic ? subBotScenario.canonical : "",
+      canonicalName: subSecond,
+      highlightMissingLabel: subBotScenario.highlightMissing,
+    });
+    subBot.onclick = () => window.showElementDetails?.(subSecond);
+    illSubs.appendChild(subBot);
+  }
+  g.appendChild(illSubs);
+
+  const mainBox = drawStandardElement(mainLabel, x, y, w, h, {
+    measureSvg,
+    subtitle,
+    canonicalName: safeName,
+    highlightMissingLabel: scenario.highlightMissing,
+  });
   mainBox.onclick = () => window.showElementDetails?.(safeName);
   g.appendChild(mainBox);
 
-  // Aggregation arrows marked with clickable "G" badges
-  const drawAggLine = (fromY, isTop) => {
+  const illEdges = svgEl("g", { class: "composite-illustration" });
+  const drawAggVertical = (xLine, y0, y1, fromSub) => {
     const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-    const xM = x + w/2, yS = isTop ? fromY + h : fromY, yE = isTop ? y : y + h;
-    arrowG.appendChild(svgEl("path", { d: `M ${xM} ${yS} L ${xM} ${yE}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
-    const dSize = 6, dY = isTop ? yE - dSize : yE + dSize;
-    arrowG.appendChild(svgEl("path", { d: `M ${xM} ${yE} L ${xM-dSize} ${dY} L ${xM} ${isTop?yE-dSize*2:yE+dSize*2} L ${xM+dSize} ${dY} Z`, stroke: "#333", "stroke-width": "1.5", fill: "#fff" }));
-    
-    const badgeY = isTop ? yS + 18 : yS - 18;
-    arrowG.appendChild(svgEl("circle", { cx: xM, cy: badgeY, r: "8", fill: "#64748b", stroke: "#fff" }));
-    arrowG.appendChild(svgEl("text", { x: xM, y: badgeY, "text-anchor": "middle", "dominant-baseline": "central", "font-size": "9", fill: "#fff", "font-weight": "800" }, "G"));
-    
-    arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: pattern.sub, to: safeName, code: "G" }); };
+    arrowG.appendChild(svgEl("path", { d: `M ${xLine} ${y0} L ${xLine} ${y1}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+    arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
     return arrowG;
   };
-  g.appendChild(drawAggLine(y - vOffset, true));
-  g.appendChild(drawAggLine(y + vOffset, false));
+  const drawAggHorizontal = (yLine, x0, x1, fromSub) => {
+    const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+    arrowG.appendChild(svgEl("path", { d: `M ${x0} ${yLine} L ${x1} ${yLine}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+    arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
+    return arrowG;
+  };
+
+  if (cornerCompact) {
+    // Bottom sub → Parent: vertical dashed.
+    illEdges.appendChild(drawAggVertical(
+      x + w / 2,
+      y + vOffset,
+      y + h,
+      subSecond
+    ));
+    // Parent ↔ side sub: horizontal dashed.
+    if (xSide != null) {
+      if (side === "left") {
+        illEdges.appendChild(drawAggHorizontal(
+          y + h / 2,
+          xSide + w,
+          x,
+          subFirst
+        ));
+      } else {
+        illEdges.appendChild(drawAggHorizontal(
+          y + h / 2,
+          x + w,
+          xSide,
+          subFirst
+        ));
+      }
+    }
+  } else {
+    const drawAggLine = (fromY, isTop, fromSub) => {
+      const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
+      const xM = x + w / 2;
+      const yS = isTop ? fromY + h : fromY;
+      const yE = isTop ? y : y + h;
+      arrowG.appendChild(svgEl("path", { d: `M ${xM} ${yS} L ${xM} ${yE}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
+      return arrowG;
+    };
+    illEdges.appendChild(drawAggLine(y - vOffset, true, subFirst));
+    illEdges.appendChild(drawAggLine(y + vOffset, false, subSecond));
+  }
+  g.appendChild(illEdges);
+  appendMoreTypesHint();
   return g;
 }
+
+// (Removed experimental: collision-aware deferred composite overlays)
 
 function drawShape(type, x, y, w, h, fill) {
   const stroke = "#2f2f2b";
@@ -856,7 +1737,7 @@ function drawShape(type, x, y, w, h, fill) {
       return g;
     }
     case "document": {
-      const fold = 12;
+      const fold = DOCUMENT_SHAPE_FOLD;
       const g = svgEl("g", {});
       g.appendChild(svgEl("path", {
         d: `M${x},${y} L${x+w-fold},${y} L${x+w},${y+fold} L${x+w},${y+h} L${x},${y+h} Z`,
@@ -892,8 +1773,12 @@ function describeRelCodesForTooltip(codes, isDirect) {
 }
 
 function describeRelCodesForDiagramLabel(codes) {
-  const list = (codes ?? []).map(c => c.toUpperCase());
-  return list.map(c => RELATIONSHIPS[c]?.name ?? c).join(" / ");
+  const list = (codes ?? []).map((c) => String(c).toUpperCase()).filter(Boolean);
+  if (list.length > 1) {
+    return "Undecided";
+  }
+  if (list.length === 0) return "";
+  return list.map((c) => RELATIONSHIPS[c]?.name ?? c).join(" / ");
 }
 
 
@@ -901,68 +1786,1102 @@ function describeRelCodesForDiagramLabel(codes) {
 // ARROW DRAWING (Restored Interaction & Orthogonal Routing)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Whether `activeCode` is a direct (Appendix B) vs §5.7 derived relationship for this hop. */
+function isActiveCodeDirectInMatrix(step, activeCode) {
+  if (!activeCode || !step) return step?.isDirect ?? true;
+  const U = String(activeCode).toUpperCase();
+  if (step.matrixDirectCodes?.length && step.matrixDirectCodes.includes(U)) return true;
+  if (step.matrixDerivedCodes?.length && step.matrixDerivedCodes.includes(U)) return false;
+  return step.isDirect ?? true;
+}
 
-function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, { hopIndex = null, showBadges = true } = {}) {
-  const chosenCode = typeof window !== 'undefined' && window.state?.userChoices?.[hopIndex];
-  const activeCode = chosenCode ?? (codes?.[0] ?? "O");
+/**
+ * Path steps sometimes omit full Appendix B split lists (edge-only fallback). For UI tier/badge,
+ * merge the normative row for this directed pair so derived letters classify as derived.
+ */
+function pathStepWithCanonicalMatrixRow(step, fromEl, toEl) {
+  if (!step || !fromEl || !toEl || typeof mergeMatrixRowForPair !== "function") return step;
+  const row = mergeMatrixRowForPair(fromEl, toEl, true);
+  const md = (row.direct || []).map((c) => String(c).toUpperCase());
+  const mder = (row.derived || []).map((c) => String(c).toUpperCase());
+  if (md.length === 0 && mder.length === 0) return step;
+  return { ...step, matrixDirectCodes: md, matrixDerivedCodes: mder };
+}
+
+/**
+ * Short label for relationship-choice buttons: Appendix B direct vs §5.7 derived from the matrix row.
+ * Association (O) is the universal fallback (§5.2.4), not an Appendix B cell code — show as distinct from Direct/Derived.
+ */
+function relChoiceMatrixKindLabel(code, matrixDirectCodes, matrixDerivedCodes) {
+  const U = String(code || "").toUpperCase();
+  if (U === "O") return "Generic";
+  const d = (matrixDirectCodes || []).map((c) => String(c).toUpperCase());
+  const der = (matrixDerivedCodes || []).map((c) => String(c).toUpperCase());
+  if (d.includes(U)) return "Direct";
+  if (der.includes(U)) return "Derived";
+  return "";
+}
+
+/**
+ * When a hop has multiple Appendix B options, the explanation UI also offers Association (O); see {@link explainEdge} {@code codesForButtons}.
+ * @param {string[]} matrixCodes
+ * @returns {string[]}
+ */
+function relationshipPickerCodesFromMatrixCodes(matrixCodes) {
+  const raw = Array.isArray(matrixCodes) ? matrixCodes : [];
+  if (raw.length <= 1) {
+    return raw.map((c) => String(c));
+  }
+  const out = [];
+  const seen = new Set();
+  for (const c of raw) {
+    const u = String(c || "").toUpperCase();
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    out.push(c);
+  }
+  if (!seen.has("O")) out.push("O");
+  return out;
+}
+
+/**
+ * {@code userChoices[hopIndex]} can be stale (different path alternative, session restore, etc.).
+ * Only accept a stored choice if it appears in this hop's picker list (matrix codes, plus O when multi-option).
+ */
+function resolvedRelationshipCodeForHop(step, hopIndex) {
+  const matrixCodes = step?.codes?.length ? step.codes : [];
+  const pickerCodes =
+    matrixCodes.length > 1 ? relationshipPickerCodesFromMatrixCodes(matrixCodes) : matrixCodes;
+  const list = pickerCodes.map((c) => String(c).toUpperCase());
+  const fallback = (matrixCodes[0] != null ? String(matrixCodes[0]) : "O").toUpperCase();
+  if (hopIndex == null || typeof window === "undefined") return fallback;
+  const raw = window.state?.userChoices?.[hopIndex];
+  if (raw == null || raw === "") return fallback;
+  const u = String(raw).toUpperCase();
+  if (!list.includes(u)) return fallback;
+  const exact = pickerCodes.find((c) => String(c).toUpperCase() === u);
+  return exact != null ? String(exact).toUpperCase() : u;
+}
+
+/** True when the user has explicitly picked a code for this hop (multi-code hops only). */
+function edgeChoiceCommittedForHop(hopIndex, codesList) {
+  if (hopIndex == null || !codesList || codesList.length <= 1) return true;
+  if (typeof window === "undefined") return false;
+  const raw = window.state?.userChoices?.[hopIndex];
+  if (raw == null || raw === "") return false;
+  const u = String(raw).toUpperCase();
+  const pickerCodes = relationshipPickerCodesFromMatrixCodes(codesList);
+  return pickerCodes.some((c) => String(c).toUpperCase() === u);
+}
+
+function swimlaneLabelRectHitsObstacles(rect, obstacles) {
+  for (const r of obstacles) {
+    if (!(rect.right <= r.left || rect.left >= r.right || rect.bottom <= r.top || rect.top >= r.bottom)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** How many swimlane obstacle rects intersect a label bounds (for picking east vs west straddle). */
+function swimlaneCountLabelObstacleHits(rawRect, obstacles) {
+  const pad = 10;
+  const rect = {
+    left: rawRect.left - pad,
+    right: rawRect.right + pad,
+    top: rawRect.top - pad,
+    bottom: rawRect.bottom + pad,
+  };
+  let n = 0;
+  for (const o of obstacles) {
+    if (!(rect.right <= o.left || rect.left >= o.right || rect.bottom <= o.top || rect.top >= o.bottom)) n++;
+  }
+  return n;
+}
+
+/**
+ * Keeps vertical-straddle hop labels on the Y range of the drawn connector segment (after obstacle nudges,
+ * which can otherwise push badge+text by ±100px and look “random” vs the stroke).
+ */
+function clampVertStraddleLabelYToSegment(labelY, yLoL, yHiL, labelLines, codesList, hopIndex, showBadges) {
+  const relLineH = 11.5;
+  const nLines = Math.max(1, (labelLines ?? [""]).length);
+  const showHop = hopIndex != null && showBadges;
+  const badgeR = showHop ? (codesList.length > 1 ? 11 : 9) : 0;
+  const textHalfH = Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
+  const stackHalfH = Math.max(badgeR + 2, textHalfH);
+  const edgePad = 3;
+  const lenL = yHiL - yLoL;
+  if (lenL <= 1e-6) return labelY;
+  const safeTop = yLoL + stackHalfH + edgePad;
+  const safeBottom = yHiL - stackHalfH - edgePad;
+  if (safeTop <= safeBottom) {
+    return clamp(labelY, safeTop, safeBottom);
+  }
+  const mid = (yLoL + yHiL) / 2;
+  return Math.max(
+    yLoL + stackHalfH + edgePad,
+    Math.min(mid, yHiL - stackHalfH - edgePad),
+  );
+}
+
+/**
+ * Mirrors {@link makeRelLabel} vertical-straddle placement for obstacle tests (same stackX / width heuristics).
+ */
+function estimateSwimlaneVertStraddleLabelRect({
+  straddleAnchorX,
+  labelY,
+  straddleExtraX,
+  effectiveVerticalStraddleWest,
+  straddleLineStrokeX,
+  forceBadgeCenterOffsetFromLineEast,
+  labelLines,
+  codesList,
+  hopIndex,
+  showBadges,
+}) {
+  const hasChoices = codesList.length > 1;
+  const fontSize = 8.5;
+  const relLineH = 11.5;
+  const badgeR = hasChoices ? 9 : 7;
+  const showHop = hopIndex != null && showBadges;
+  const textGap =
+    straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)
+      ? Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE)
+      : VERT_BADGE_NAME_GAP;
+  const lines = labelLines ?? [""];
+  const nLines = Math.max(1, lines.length);
+  const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+  const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
+  /** Slight margin so nudge tests don’t underestimate vs real makeRelLabel + spine clearance. */
+  const approxW = textStartXEast + approxTextW + 18;
+  const textHalfH = Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
+  const stackHalfH = Math.max((showHop ? badgeR : 0) + 2, textHalfH);
+
+  let stackX;
+  let circleCx = showHop ? badgeR : 0;
+  if (effectiveVerticalStraddleWest) {
+    stackX = straddleAnchorX - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
+    circleCx = approxTextW + textGap + badgeR;
+  } else {
+    stackX = straddleAnchorX + straddleExtraX + BADGE_LINE_CLEARANCE;
+    circleCx = badgeR;
+  }
+
+  if (straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)) {
+    const lineX = straddleLineStrokeX;
+    if (effectiveVerticalStraddleWest) {
+      const circleRight = stackX + circleCx + badgeR;
+      const maxRight = lineX - SPINE_BADGE_CLEAR_FROM_LINE;
+      if (circleRight > maxRight) {
+        stackX -= circleRight - maxRight;
+      }
+    } else {
+      if (forceBadgeCenterOffsetFromLineEast != null && Number.isFinite(forceBadgeCenterOffsetFromLineEast)) {
+        stackX = lineX + forceBadgeCenterOffsetFromLineEast - circleCx;
+      }
+      const leftEdge = stackX;
+      const minLeft = lineX + SPINE_BADGE_CLEAR_FROM_LINE;
+      if (leftEdge < minLeft) {
+        stackX += minLeft - leftEdge;
+      }
+    }
+  }
+
+  return {
+    left: stackX,
+    right: stackX + approxW,
+    top: labelY - stackHalfH,
+    bottom: labelY + stackHalfH,
+  };
+}
+
+function estimateSwimlaneHorizontalLabelRect(labelLineX, labelY, labelLines, hopIndex, showBadges, hasChoices) {
+  const fontSize = 8.5;
+  const lineH = 10.0;
+  const showHop = hopIndex != null && showBadges;
+  const lines = labelLines ?? [""];
+  const nLines = Math.max(1, lines.length);
+  const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+  const badgeR = hasChoices ? 9 : 7;
+  const textStartX = showHop ? 2 * badgeR + VERT_BADGE_NAME_GAP : 0;
+  const totalW = textStartX + approxTextW;
+  const textHalfH = Math.max(lineH * 0.56, (nLines * lineH) / 2);
+  const multilineExtra = nLines > 1 ? 2 : 0;
+  const stackHalfH = Math.max(showHop ? badgeR + 1 : 0, textHalfH) + multilineExtra;
+  const pad = 8;
+  return {
+    left: labelLineX - totalW / 2 - pad,
+    right: labelLineX + totalW / 2 + pad,
+    top: labelY - stackHalfH - pad,
+    bottom: labelY + stackHalfH + pad,
+  };
+}
+
+function nudgeSwimlaneRelLabelAgainstObstacles({
+  labelLineX,
+  labelY,
+  straddleAnchorX,
+  useVertStraddle,
+  effectiveVerticalStraddleWest,
+  straddleExtraX,
+  straddleLineStrokeX,
+  forceBadgeCenterOffsetFromLineEast,
+  labelLines,
+  codesList,
+  hopIndex,
+  showBadges,
+  obstacles,
+}) {
+  if (!obstacles || obstacles.length === 0) {
+    return { labelLineX, labelY, straddleAnchorX };
+  }
+  const hasChoices = codesList.length > 1;
+
+  const tryOffset = (dx, dy) => {
+    const sax = straddleAnchorX + (useVertStraddle ? dx : 0);
+    const lx = labelLineX + dx;
+    const ly = labelY + dy;
+    const rawRect = useVertStraddle
+      ? estimateSwimlaneVertStraddleLabelRect({
+          straddleAnchorX: sax,
+          labelY: ly,
+          straddleExtraX,
+          effectiveVerticalStraddleWest,
+          straddleLineStrokeX,
+          forceBadgeCenterOffsetFromLineEast,
+          labelLines,
+          codesList,
+          hopIndex,
+          showBadges,
+        })
+      : estimateSwimlaneHorizontalLabelRect(lx, ly, labelLines, hopIndex, showBadges, hasChoices);
+    const pad = 10;
+    const rect = {
+      left: rawRect.left - pad,
+      right: rawRect.right + pad,
+      top: rawRect.top - pad,
+      bottom: rawRect.bottom + pad,
+    };
+    return !swimlaneLabelRectHitsObstacles(rect, obstacles);
+  };
+
+  /**
+   * When the stroke has a fixed vertical spine/bus X ({@code straddleLineStrokeX}), horizontal nudges
+   * must not move {@code straddleAnchorX}: {@code makeRelLabel} only enforces min clearance *past*
+   * the line, so sliding the anchor east detaches the badge stack from the actual connector (spread
+   * swimlanes: labels drift to lane bands while H–V–H runs far to the right).
+   */
+  const lockStraddleToStrokeX =
+    useVertStraddle &&
+    straddleLineStrokeX != null &&
+    Number.isFinite(straddleLineStrokeX);
+
+  /** Horizontal inline labels: keep nudges small so text stays near the stroke (swimlane obstacle avoid). */
+  const OFFSETS = useVertStraddle
+    ? lockStraddleToStrokeX
+      ? [
+          [0, 0],
+          [0, -22],
+          [0, 22],
+          [0, -44],
+          [0, 44],
+          [0, -66],
+          [0, 66],
+        ]
+      : [
+          [0, 0],
+          [0, -22],
+          [0, 22],
+          [0, -44],
+          [0, 44],
+          [0, -66],
+          [0, 66],
+          [36, 0],
+          [-36, 0],
+          [52, 0],
+          [-52, 0],
+          [68, 0],
+          [-68, 0],
+          [84, 0],
+          [-84, 0],
+          [100, 0],
+          [-100, 0],
+          [120, 0],
+          [-120, 0],
+          [36, -22],
+          [36, 22],
+          [-36, -22],
+          [-36, 22],
+          [68, -28],
+          [-68, -28],
+          [68, 28],
+          [-68, 28],
+          [0, -88],
+          [0, 88],
+          [0, -110],
+          [0, 110],
+        ]
+    : [
+        [0, 0],
+        [0, -11],
+        [0, 11],
+        [0, -18],
+        [0, 18],
+        [0, -22],
+        [0, 22],
+        [0, -30],
+        [0, 30],
+        [0, -36],
+        [0, 36],
+        [0, -44],
+        [0, 44],
+        [24, 0],
+        [-24, 0],
+        [40, 0],
+        [-40, 0],
+        [56, 0],
+        [-56, 0],
+        [72, 0],
+        [-72, 0],
+        [24, -18],
+        [-24, -18],
+        [24, 18],
+        [-24, 18],
+        [40, -22],
+        [-40, -22],
+        [40, 22],
+        [-40, 22],
+      ];
+  for (const [dx, dy] of OFFSETS) {
+    if (tryOffset(dx, dy)) {
+      return {
+        labelLineX: labelLineX + dx,
+        labelY: labelY + dy,
+        straddleAnchorX: straddleAnchorX + (useVertStraddle ? dx : 0),
+      };
+    }
+  }
+  return { labelLineX, labelY, straddleAnchorX };
+}
+
+function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
+  hopIndex = null,
+  /** Shown on the hop badge (1…n top-to-bottom). Defaults to hopIndex; set in vertical compact when path order ≠ visual order. */
+  displayHopIndex = null,
+  showBadges = true,
+  strokeOnly = false,
+  interactiveOnly = false,
+  /** True when this hop crosses a swimlane band (nudge labels off the lane divider line). */
+  crossLaneEdge = false,
+  /**
+   * Swimlanes: route through horizontal gap between nodes (H–V–H) instead of a diagonal through boxes.
+   * Endpoints stay right-center of source and left-center of target.
+   */
+  orthogonal = false,
+  /**
+   * When orthogonal and the hop changes layer (different y): draw a cubic Bézier instead of H–V–H so
+   * the link reads as one smooth curve and does not waste horizontal space on long elbow legs.
+   */
+  smoothCrossLane = false,
+  /** Orthogonal swimlane hops: mid = H–V–H at horizontal midpoint; source = one 90° bend at the source port (L or mirrored Γ). */
+  orthogonalPin = "mid",
+  /**
+   * Vertical swimlanes: x1,y1,x2,y2 are bottom-center of source → top-center of target (never cy→cy).
+   * If column centers differ, uses an elbow (vertical–horizontal–vertical) instead of a vertical through box centers.
+   */
+  verticalSwimlanePorts = false,
+  /** Appendix B direct letters for this hop (enables correct dash/markers when cycling alternatives). */
+  matrixDirectCodes = null,
+  /** Appendix B derived letters for this hop */
+  matrixDerivedCodes = null,
+  /**
+   * Vertical compact + flanked composite (Communication Network, Path, …): place hop notes west of the spine
+   * when entering that row so labels do not sit over the right-hand illustration box.
+   */
+  verticalStraddleWest = false,
+  /** Vertical scaffold only: for same-lane hops, route with a side jog instead of a straight center line. */
+  sameLaneSideJog = false,
+  /** Extra horizontal offset for badge/label stack (used by vertical staircase anti-overlap). */
+  badgeStairOffsetX = 0,
+  /** Optional per-edge label nudge (compact de-overlap). */
+  labelNudgeX = 0,
+  /** Optional per-edge label nudge (compact de-overlap). */
+  labelNudgeY = 0,
+  /** Disable short helper leader line for compact readability. */
+  disableStraddleLeader = false,
+  /**
+   * Vertical compact: when set, replace default same-column / elbow / source-pin polylines with a bus
+   * M x1 y… L tx y… L tx y… L x2 y… so labels and badges sit on the outer vertical track at x = tx.
+   */
+  outerArcTrackX = null,
+  /**
+   * Vertical compact outer bypass: orthogonal C-shape using main-box side ports (cy) and vertical bus at tx.
+   * When set, takes precedence over {@code outerArcTrackX} and default top/bottom ports.
+   */
+  outerArcCShape = null,
+  /**
+   * Spread horizontal swimlanes: optional vertical-bus X for H–V–H cross-lane routes (obstacle-avoiding).
+   * When null, uses chord midpoint.
+   */
+  swimlaneOrthogonalBusX = null,
+  /**
+   * Horizontal swimlanes: padded node/composite rects; nudges hop labels off illustrated sub-boxes and neighbors.
+   */
+  swimlaneLabelObstacles = null,
+  /**
+   * Horizontal swimlanes: target main-box right X so H–V–H bus clamping does not route the return leg through the target.
+   * Optional; when null, only the source-side clamp (bus X ≥ x1) is applied after the return-elbow nudge.
+   */
+  swimlaneOrthoBusMaxX = null,
+} = {}) {
+  const OUTER_BYPASS_RETURN_ELBOW_MIN_PX = 50;
+  const codesList = codes && codes.length ? codes : [];
+  const choiceUndecided =
+    hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
+  const activeCode =
+    hopIndex != null
+      ? resolvedRelationshipCodeForHop({ codes: codesList }, hopIndex)
+      : (codesList[0] ?? "O");
   const UPPER = activeCode.toUpperCase();
   const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
+  const isDirectForStroke = (() => {
+    if (matrixDirectCodes && matrixDirectCodes.includes(UPPER)) return true;
+    if (matrixDerivedCodes && matrixDerivedCodes.includes(UPPER)) return false;
+    return isDirect;
+  })();
 
   ensureMarkers(svg);
-  
-  // Orthogonal routing; straight vertical when endpoints share x (avoids degenerate Manhattan segments).
+
   const midX = x1 + (x2 - x1) / 2;
   const sameX = Math.abs(x1 - x2) < 0.5;
-  const d = sameX
-    ? `M ${x1} ${y1} L ${x2} ${y2}`
-    : (Math.abs(y1 - y2) < 5)
-      ? `M ${x1} ${y1} L ${x2} ${y2}`
-      : `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+  const yLo = Math.min(y1, y2);
+  const yHi = Math.max(y1, y2);
+  const len = yHi - yLo;
 
-  const g = svgEl("g", { class: "archimate-arrow clickable-arrow", style: "cursor: pointer;" });
-  if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
+  let d;
+  /** True when stroke path is a smooth cubic (cross-lane swimlane); round caps look cleaner with markers. */
+  let pathCurved = false;
+  let y1s = y1;
+  let y2s = y2;
+  let orthoMidX = null;
+  /** Orthogonal route with a vertical middle segment (labels straddle like pure vertical edges). */
+  let orthoVertical = false;
+  /** Straight vertical segment with inset (compact vertical, or swimlane same column). */
+  let straightVerticalInset = false;
+  /** Swimlane elbow between two column centers (bottom/top ports, not through box interiors). */
+  let swimlaneColElbow = false;
 
-  const isDash = style.line === "dashed" || !isDirect;
+  let outerArcCShapeApplied = false;
+  /** @type {{ sy: number, ey: number, sx: number, ex: number } | null} */
+  let outerArcCShapeMeta = null;
+  let outerArcFixedLabelY = null;
+  if (
+    outerArcCShape &&
+    Number.isFinite(outerArcCShape.tx) &&
+    [outerArcCShape.sx, outerArcCShape.sy, outerArcCShape.ex, outerArcCShape.ey].every(Number.isFinite)
+  ) {
+    let { tx: txC, sx, sy, ex, ey } = outerArcCShape;
+    const clr = ARROW_MARKER_TARGET_CLEARANCE;
+    const segDx = ex - txC;
+    const exR =
+      Math.abs(segDx) > clr ? ex - Math.sign(segDx || 1) * clr : ex;
+    const returnSpan = Math.abs(exR - txC);
+    if (returnSpan < OUTER_BYPASS_RETURN_ELBOW_MIN_PX) {
+      // Ensure the marker-end lands on a clearly horizontal "return leg" (two right angles).
+      txC = exR + Math.sign(txC - exR || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
+    }
+    d = `M ${sx} ${sy} L ${txC} ${sy} L ${txC} ${ey} L ${exR} ${ey}`;
+    orthoMidX = txC;
+    orthoVertical = true;
+    swimlaneColElbow = true;
+    pathCurved = false;
+    straightVerticalInset = false;
+    outerArcCShapeApplied = true;
+    outerArcCShapeMeta = { sx, sy, ex: exR, ey };
+    outerArcFixedLabelY = (sy + ey) / 2;
 
-  g.appendChild(svgEl("path", { d: d, stroke: "transparent", "stroke-width": "15", fill: "none", class: "archimate-arrow-hit" }));
-  g.appendChild(svgEl("path", {
-    d: d, stroke: "#333", "stroke-width": "1.6", fill: "none",
-    class: "archimate-arrow-stroke",
-    "stroke-dasharray": isDash ? "6,3" : "none",
-    "marker-end": style.endMarker !== "none" ? `url(#end-${UPPER}-${isDirect ? "d" : "r"})` : "",
-    "marker-start": style.startMarker !== "none" ? `url(#start-${UPPER})` : "",
-    "pointer-events": "none",
-  }));
+    // #region agent log
+    __agentLog(
+      "ui/renderer.js:mkArrowPath outerArcCShape",
+      "outerArcCShape path computed",
+      {
+        hopIndex,
+        txC,
+        sx,
+        sy,
+        ex,
+        exR,
+        ey,
+        returnSegLen: Math.abs(exR - txC),
+        d,
+      },
+      "pre-fix",
+      "B"
+    );
+    // #endregion
+  }
 
-  const labelLines = wrapLabel(describeRelCodesForDiagramLabel([activeCode]));
-  const isVertical = sameX && Math.abs(y1 - y2) > 8;
-  // Mid-gap along the segment; vertical uses straddle layout (badge left / label right of the stroke).
-  const tAlong = isVertical && hopIndex != null
-    ? 0.5 + (hopIndex % 2) * 0.08
-    : 0.5;
-  const span = y2 - y1;
-  const labelAlong = isVertical
-    ? y1 + span * tAlong
+  if (!outerArcCShapeApplied) {
+  if (verticalSwimlanePorts) {
+    if (sameX) {
+      const isLv = len > 8;
+      // Inset only the path start so the start marker sits in the gap; end at the target edge so
+      // marker-end (arrow/triangle) touches the destination box — symmetric inset on both ends
+      // leaves both markers floating mid-gap (reads as “random” placement).
+      const insetStart = isLv ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+      if (y1 < y2) {
+        y1s = y1 + insetStart;
+        y2s = y2;
+      } else {
+        y1s = y1 - insetStart;
+        y2s = y2;
+      }
+      d = `M ${x1} ${y1s} L ${x2} ${y2s}`;
+      straightVerticalInset = isLv;
+    } else {
+      const ym = (y1 + y2) / 2;
+      const clrE = ARROW_MARKER_TARGET_CLEARANCE;
+      const y2e =
+        Math.abs(y2 - ym) > clrE ? y2 - Math.sign(y2 - ym) * clrE : y2;
+      d = `M ${x1} ${y1} L ${x1} ${ym} L ${x2} ${ym} L ${x2} ${y2e}`;
+      orthoMidX = midX;
+      orthoVertical = len > 10;
+      swimlaneColElbow = true;
+    }
+  } else if (orthogonal && !sameX) {
+    if (Math.abs(y1 - y2) < 0.5) {
+      orthoMidX = midX;
+      const clrF = ARROW_MARKER_TARGET_CLEARANCE;
+      const x2f =
+        Math.abs(x2 - x1) > clrF ? x2 + Math.sign(x1 - x2) * clrF : x2;
+      if (sameLaneSideJog) {
+        const jogRise = Math.max(22, Math.ceil(EL_H * 0.75));
+        const jogY = y1 - jogRise;
+        d = `M ${x1} ${y1} L ${x1} ${jogY} L ${x2} ${jogY} L ${x2f} ${y2}`;
+        orthoVertical = true;
+      } else {
+        d = `M ${x1} ${y1} L ${x2f} ${y2}`;
+      }
+    } else if (smoothCrossLane) {
+      orthoMidX = midX;
+      /**
+       * Chord-aligned Bézier controls so B′(0) and B′(1) are parallel to (x1,y1)→(x2,y2).
+       * If both inner controls share y with P0/P3, the end tangent is forced horizontal and
+       * marker-end orient="auto" draws a flat arrowhead while the stroke still looks diagonal.
+       */
+      const clrB = ARROW_MARKER_TARGET_CLEARANCE;
+      const vx0 = x2 - x1;
+      const vy0 = y2 - y1;
+      const chordLen0 = Math.hypot(vx0, vy0) || 1;
+      const x2b =
+        chordLen0 > clrB ? x2 - (vx0 / chordLen0) * clrB : x2;
+      const y2b =
+        chordLen0 > clrB ? y2 - (vy0 / chordLen0) * clrB : y2;
+      const vx = x2b - x1;
+      const vy = y2b - y1;
+      const chordLen = Math.hypot(vx, vy) || 1;
+      const ux = vx / chordLen;
+      const uy = vy / chordLen;
+      const dxAbs = Math.abs(vx);
+      const pullBase = Math.min(dxAbs * 0.38, chordLen * 0.36);
+      const pull = Math.min(88, Math.max(20, pullBase));
+      const c1x = x1 + ux * pull;
+      const c1y = y1 + uy * pull;
+      const c2x = x2b - ux * pull;
+      const c2y = y2b - uy * pull;
+      d = `M ${x1} ${y1} C ${c1x} ${c1y} ${c2x} ${c2y} ${x2b} ${y2b}`;
+      pathCurved = true;
+      orthoVertical = len > 8;
+    } else if (orthogonalPin === "source") {
+      // Mechanical "two right angles" for side-entry: force a 3-segment orthogonal route:
+      // horizontal out → vertical bus → horizontal return into target (with a real return leg).
+      //
+      // This avoids the "lazy L" that makes open markers (triangle/arrow) look like floating tips.
+      const clrS = ARROW_MARKER_TARGET_CLEARANCE;
+      let tx =
+        swimlaneOrthogonalBusX != null && Number.isFinite(swimlaneOrthogonalBusX)
+          ? swimlaneOrthogonalBusX
+          : midX;
+      let x2Bus =
+        Math.abs(x2 - tx) > clrS ? x2 - Math.sign(x2 - tx) * clrS : x2;
+      const returnSpan0 = Math.abs(x2Bus - tx);
+      if (returnSpan0 < OUTER_BYPASS_RETURN_ELBOW_MIN_PX) {
+        tx = x2Bus + Math.sign(tx - x2Bus || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
+      }
+      // Return-elbow nudge can push the bus left of the source’s right port (x1), so the first leg cuts through the source box.
+      tx = Math.max(tx, x1);
+      if (swimlaneOrthoBusMaxX != null && Number.isFinite(swimlaneOrthoBusMaxX)) {
+        tx = Math.min(tx, swimlaneOrthoBusMaxX);
+      }
+      x2Bus =
+        Math.abs(x2 - tx) > clrS ? x2 - Math.sign(x2 - tx) * clrS : x2;
+      orthoMidX = tx;
+      d = `M ${x1} ${y1} L ${tx} ${y1} L ${tx} ${y2} L ${x2Bus} ${y2}`;
+      orthoVertical = len > 8;
+      swimlaneColElbow = true;
+    } else {
+      const clrM = ARROW_MARKER_TARGET_CLEARANCE;
+      const x2mForBus = (bx) =>
+        Math.abs(x2 - bx) > clrM ? x2 - Math.sign(x2 - bx) * clrM : x2;
+      let busX =
+        swimlaneOrthogonalBusX != null && Number.isFinite(swimlaneOrthogonalBusX)
+          ? swimlaneOrthogonalBusX
+          : midX;
+      let x2m = x2mForBus(busX);
+      let returnSpan = Math.abs(x2m - busX);
+      if (returnSpan < OUTER_BYPASS_RETURN_ELBOW_MIN_PX) {
+        busX = x2m + Math.sign(busX - x2m || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
+      }
+      busX = Math.max(busX, x1);
+      if (swimlaneOrthoBusMaxX != null && Number.isFinite(swimlaneOrthoBusMaxX)) {
+        busX = Math.min(busX, swimlaneOrthoBusMaxX);
+      }
+      orthoMidX = busX;
+      x2m = x2mForBus(busX);
+      d = `M ${x1} ${y1} L ${orthoMidX} ${y1} L ${orthoMidX} ${y2} L ${x2m} ${y2}`;
+      orthoVertical = len > 10;
+    }
+  } else if (sameX) {
+    const isLongVertical = len > 8;
+    const insetStart = isLongVertical ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+    if (y1 < y2) {
+      y1s = y1 + insetStart;
+      y2s = y2;
+    } else {
+      y1s = y1 - insetStart;
+      y2s = y2;
+    }
+    d = `M ${x1} ${y1s} L ${x2} ${y2s}`;
+    straightVerticalInset = isLongVertical;
+  } else {
+    const clrD = ARROW_MARKER_TARGET_CLEARANCE;
+    let xe = x2;
+    let ye = y2;
+    const flatH = Math.abs(y1 - y2) < 0.5;
+    const flatV = Math.abs(x1 - x2) < 0.5;
+    if (flatH && Math.abs(x2 - x1) > clrD) {
+      xe = x2 + Math.sign(x1 - x2) * clrD;
+    } else if (flatV && Math.abs(y2 - y1) > clrD) {
+      ye = y2 + Math.sign(y1 - y2) * clrD;
+    } else if (!flatH && !flatV) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.hypot(dx, dy);
+      if (len > clrD) {
+        xe = x2 - (dx / len) * clrD;
+        ye = y2 - (dy / len) * clrD;
+      }
+    }
+    d = `M ${x1} ${y1} L ${xe} ${ye}`;
+  }
+  }
+
+  let txArc =
+    !outerArcCShapeApplied && outerArcTrackX != null && Number.isFinite(outerArcTrackX)
+      ? outerArcTrackX
+      : null;
+  if (txArc != null) {
+    const clrTx = ARROW_MARKER_TARGET_CLEARANCE;
+    const x2Bus = (() => {
+      const span = Math.abs(x2 - txArc);
+      return span > clrTx ? x2 - Math.sign(x2 - txArc) * clrTx : x2;
+    })();
+    const returnSpan = Math.abs(x2Bus - txArc);
+    if (returnSpan < OUTER_BYPASS_RETURN_ELBOW_MIN_PX) {
+      // Keep a real horizontal return elbow so marker-end is unmistakably horizontal.
+      txArc = x2Bus + Math.sign(txArc - x2Bus || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
+    }
+    if (verticalSwimlanePorts && sameX) {
+      d = `M ${x1} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
+      orthoMidX = txArc;
+      orthoVertical = true;
+      swimlaneColElbow = true;
+      straightVerticalInset = false;
+      pathCurved = false;
+    } else if (verticalSwimlanePorts && !sameX) {
+      d = `M ${x1} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
+      orthoMidX = txArc;
+      orthoVertical = true;
+      swimlaneColElbow = true;
+      pathCurved = false;
+    } else if (!verticalSwimlanePorts && orthogonal && !sameX && Math.abs(y1 - y2) >= 0.5 && orthogonalPin === "source") {
+      d = `M ${x1} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
+      orthoMidX = txArc;
+      orthoVertical = true;
+      swimlaneColElbow = true;
+      pathCurved = false;
+    } else if (sameX && !verticalSwimlanePorts) {
+      d = `M ${x1} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
+      orthoMidX = txArc;
+      orthoVertical = true;
+      swimlaneColElbow = true;
+      straightVerticalInset = false;
+      pathCurved = false;
+    }
+
+    // #region agent log
+    __agentLog(
+      "ui/renderer.js:mkArrowPath outerArcTrackX",
+      "outerArcTrackX route decision",
+      {
+        hopIndex,
+        verticalSwimlanePorts,
+        orthogonal,
+        sameX,
+        x1,
+        y1,
+        x2,
+        y2,
+        y1s,
+        y2s,
+        txArc,
+        x2Bus,
+        returnSegLen: Math.abs(x2Bus - txArc),
+        d,
+      },
+      "pre-fix",
+      "C"
+    );
+    // #endregion
+  }
+
+  /** Horizontal swimlanes: H–V–H between different columns (same as vertical elbow, needs straddle + leader even when len ≤ 10). */
+  const orthogonalCornerRoute =
+    !verticalSwimlanePorts && orthogonal && !sameX && Math.abs(y1 - y2) >= 0.5;
+
+  const isLongVertical = straightVerticalInset;
+  /** Any straight vertical segment in the same column: keep badges to the right of the line (short hops used to fall back to centered labels with a −10px offset and overlapped the source box). */
+  const sameColumnVertical = sameX && len > 1e-6;
+  const sameColumnOuterCShape =
+    outerArcCShapeMeta != null && Math.abs(outerArcCShapeMeta.sx - outerArcCShapeMeta.ex) < 0.5;
+  const useVertStraddle =
+    sameColumnVertical ||
+    sameColumnOuterCShape ||
+    orthoVertical ||
+    swimlaneColElbow ||
+    orthogonalCornerRoute;
+
+  const isDash = !choiceUndecided && (style.line === "dashed" || !isDirectForStroke);
+
+  const mkStrokePath = () => {
+    const attrs = {
+      d: d,
+      stroke: "#333",
+      "stroke-width": choiceUndecided ? "1.5" : "1.6",
+      fill: "none",
+      class: "archimate-arrow-stroke",
+      "stroke-dasharray": choiceUndecided ? "3 5" : isDash ? "6,3" : "none",
+      "marker-end":
+        choiceUndecided || style.endMarker === "none"
+          ? ""
+          : `url(#end-${UPPER}-${isDirectForStroke ? "d" : "r"})`,
+      "marker-start":
+        choiceUndecided || style.startMarker === "none" ? "" : `url(#start-${UPPER})`,
+      "pointer-events": "none",
+    };
+    if (choiceUndecided || pathCurved) attrs["stroke-linecap"] = "round";
+    return svgEl("path", attrs);
+  };
+
+  if (strokeOnly) {
+    const g = svgEl("g", {
+      class: `archimate-arrow-stroke-layer${choiceUndecided ? " provisional" : ""}`,
+    });
+    g.appendChild(mkStrokePath());
+    return g;
+  }
+
+  const labelLines = wrapLabel(
+    choiceUndecided
+      ? describeRelCodesForDiagramLabel(codesList)
+      : describeRelCodesForDiagramLabel([activeCode])
+  );
+  const yLoL = outerArcCShapeMeta
+    ? Math.min(outerArcCShapeMeta.sy, outerArcCShapeMeta.ey)
+    : isLongVertical
+      ? Math.min(y1s, y2s)
+      : orthoVertical
+        ? yLo
+        : Math.min(y1, y2);
+  const yHiL = outerArcCShapeMeta
+    ? Math.max(outerArcCShapeMeta.sy, outerArcCShapeMeta.ey)
+    : isLongVertical
+      ? Math.max(y1s, y2s)
+      : orthoVertical
+        ? yHi
+        : Math.max(y1, y2);
+  const lenL = yHiL - yLoL;
+  /** Geometric center of the drawn stroke — keeps every label at the same relative position in the gap. */
+  let labelAlong = useVertStraddle
+    ? outerArcFixedLabelY != null
+      ? outerArcFixedLabelY
+      : (yLoL + yHiL) / 2
     : (y1 + y2) / 2;
-  const labelX = midX;
-  const labelY = isVertical
-    ? labelAlong + (showBadges ? 0 : 4)
-    : labelAlong - 10;
-  const { labelG } = makeRelLabel(labelX, labelY, labelLines, {
+  if (useVertStraddle && lenL > 1e-6) {
+    const maxPad = Math.min(20, Math.max(12, lenL * 0.2));
+    if (lenL > 2 * maxPad) {
+      labelAlong = clamp(labelAlong, yLoL + maxPad, yHiL - maxPad);
+    }
+  }
+  const stairOffsetX = Number.isFinite(badgeStairOffsetX) ? badgeStairOffsetX : 0;
+  const nudgeX = Number.isFinite(labelNudgeX) ? labelNudgeX : 0;
+  const nudgeY = Number.isFinite(labelNudgeY) ? labelNudgeY : 0;
+  // For outer-bypass C-shapes, always place the label stack on the *outside* of the bus.
+  // This prevents the hop badge+name from collapsing back into the spine’s vertical label column.
+  let effectiveVerticalStraddleWest = (() => {
+    if (outerArcCShapeApplied && outerArcCShape && Number.isFinite(outerArcCShape.tx) && outerArcCShapeMeta) {
+      const tx = outerArcCShape.tx;
+      const nearX = Math.min(outerArcCShapeMeta.sx, outerArcCShapeMeta.ex);
+      return tx < nearX;
+    }
+    return !!verticalStraddleWest;
+  })();
+  let straddleAnchorX =
+    (orthoVertical || swimlaneColElbow || orthogonalCornerRoute) && orthoMidX != null
+      ? orthoMidX + stairOffsetX + nudgeX
+      : midX + stairOffsetX + nudgeX;
+  /** Uniform offset past main box so every hop’s label column lines up beside the spine. */
+  const tightOuterBypassBadge = outerArcCShapeApplied;
+  const straddleExtraX = tightOuterBypassBadge
+    ? 0
+    : sameColumnVertical || sameColumnOuterCShape
+      ? VERT_STRADDLE_PAST_MAIN
+      : 0;
+  let labelLineX = useVertStraddle
+    ? straddleAnchorX
+    : (() => {
+        if (Math.abs(y1 - y2) >= 0.5) {
+          return ((x1 + x2) / 2) + stairOffsetX + nudgeX;
+        }
+        const xEnd = horizontalStrokeEndXForLabel(x1, x2, y1, y2, orthogonal);
+        const segLeft = Math.min(x1, xEnd);
+        const segRight = Math.max(x1, xEnd);
+        const segMid = (segLeft + segRight) / 2;
+        const fontSize = 8.5;
+        const lines = labelLines ?? [""];
+        const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+        const hasChoices = codesList.length > 1;
+        const showHop = hopIndex != null && showBadges;
+        const hopBadgeR = showHop ? (hasChoices ? 9 : 7) : 0;
+        const textStartW = showHop ? 2 * hopBadgeR + VERT_BADGE_NAME_GAP : 0;
+        const totalW = textStartW + approxTextW;
+        const halfW = totalW / 2;
+        const margin = 6;
+        const minLX = segLeft + halfW + margin;
+        const maxLX = segRight - halfW - margin;
+        const unclamped = segMid + stairOffsetX + nudgeX;
+        if (minLX <= maxLX) return clamp(unclamped, minLX, maxLX);
+        return unclamped;
+      })();
+  let labelY = useVertStraddle ? labelAlong + (showBadges ? 0 : 4) : (y1 + y2) / 2;
+  labelY += nudgeY;
+  /** Horizontal hops: inline badge+name row; my is row center, placed just above the stroke. */
+  if (!useVertStraddle) {
+    // Stroke uses y1,y2 from geometry — labelNudgeY must not change yLine or labels float off the dash.
+    const yLine = (y1 + y2) / 2;
+    const stackHalfH = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
+    const gapAboveStroke = 2;
+    labelY = yLine - stackHalfH - gapAboveStroke;
+  }
+  /** Keep hop labels off the swimlane band divider (often coincides with the gap midpoint). */
+  if (crossLaneEdge && useVertStraddle && lenL > 1e-6) {
+    const nudge = Math.min(6, lenL * 0.06);
+    labelY -= y2 > y1 ? nudge : -nudge;
+  }
+  if (useVertStraddle && lenL > 1e-6) {
+    labelY = clampVertStraddleLabelYToSegment(
+      labelY,
+      yLoL,
+      yHiL,
+      labelLines,
+      codesList,
+      hopIndex,
+      showBadges,
+    );
+  }
+  /** Vertical stroke x (path geometry, excludes label nudge) — enforces badge clearance from spine / outer bus. */
+  let straddleLineStrokeX = null;
+  if (useVertStraddle) {
+    if (outerArcCShapeApplied && outerArcCShape && Number.isFinite(outerArcCShape.tx)) {
+      straddleLineStrokeX = outerArcCShape.tx;
+    } else if (txArc != null && Number.isFinite(txArc)) {
+      straddleLineStrokeX = txArc;
+    } else if (orthoMidX != null && Number.isFinite(orthoMidX)) {
+      straddleLineStrokeX = orthoMidX;
+    } else if (sameColumnVertical || sameColumnOuterCShape) {
+      straddleLineStrokeX = x1;
+    }
+  }
+  /**
+   * Cross-lane H–V–H: choose label stack east vs west of the vertical bus by whichever side
+   * hits fewer node / composite illustration rects (avoids sitting in the column under green-lane subs
+   * when the hop runs upward from a lower lane).
+   */
+  if (
+    swimlaneLabelObstacles &&
+    swimlaneLabelObstacles.length &&
+    crossLaneEdge &&
+    useVertStraddle &&
+    !outerArcCShapeApplied
+  ) {
+    const rectE = estimateSwimlaneVertStraddleLabelRect({
+      straddleAnchorX,
+      labelY,
+      straddleExtraX,
+      effectiveVerticalStraddleWest: false,
+      straddleLineStrokeX,
+      forceBadgeCenterOffsetFromLineEast:
+        useVertStraddle && (sameColumnVertical || sameColumnOuterCShape) ? 22 : null,
+      labelLines,
+      codesList,
+      hopIndex,
+      showBadges,
+    });
+    const rectW = estimateSwimlaneVertStraddleLabelRect({
+      straddleAnchorX,
+      labelY,
+      straddleExtraX,
+      effectiveVerticalStraddleWest: true,
+      straddleLineStrokeX,
+      forceBadgeCenterOffsetFromLineEast: null,
+      labelLines,
+      codesList,
+      hopIndex,
+      showBadges,
+    });
+    const hitE = swimlaneCountLabelObstacleHits(rectE, swimlaneLabelObstacles);
+    const hitW = swimlaneCountLabelObstacleHits(rectW, swimlaneLabelObstacles);
+    if (hitW < hitE) {
+      effectiveVerticalStraddleWest = true;
+    } else if (hitE < hitW) {
+      effectiveVerticalStraddleWest = false;
+    } else if (y2 < y1) {
+      effectiveVerticalStraddleWest = true;
+    }
+  }
+  const forceBadgeCenterOffsetFromLineEast =
+    useVertStraddle && !effectiveVerticalStraddleWest && (sameColumnVertical || sameColumnOuterCShape) ? 22 : null;
+  if (swimlaneLabelObstacles && swimlaneLabelObstacles.length) {
+    const nudged = nudgeSwimlaneRelLabelAgainstObstacles({
+      labelLineX,
+      labelY,
+      straddleAnchorX,
+      useVertStraddle,
+      effectiveVerticalStraddleWest,
+      straddleExtraX,
+      straddleLineStrokeX,
+      forceBadgeCenterOffsetFromLineEast,
+      labelLines,
+      codesList,
+      hopIndex,
+      showBadges,
+      obstacles: swimlaneLabelObstacles,
+    });
+    labelLineX = nudged.labelLineX;
+    labelY = nudged.labelY;
+    straddleAnchorX = nudged.straddleAnchorX;
+  }
+  if (useVertStraddle && lenL > 1e-6) {
+    labelY = clampVertStraddleLabelYToSegment(
+      labelY,
+      yLoL,
+      yHiL,
+      labelLines,
+      codesList,
+      hopIndex,
+      showBadges,
+    );
+  }
+  /**
+   * Swimlane obstacle nudges can shift inline hop rows vertically; keep them tied to the horizontal stroke.
+   */
+  if (
+    !useVertStraddle &&
+    swimlaneLabelObstacles &&
+    swimlaneLabelObstacles.length &&
+    Math.abs(y1 - y2) < 0.5
+  ) {
+    const yLine = (y1 + y2) / 2;
+    const sh = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
+    const targetY = yLine - sh - 2;
+    labelY = clamp(labelY, targetY - 52, targetY + 52);
+  }
+  /**
+   * East/west ports sit at mid-Y; unclamped labels sit partly above the EL_H bbox. After obstacle nudges,
+   * re-clamp so the row stays within the shape band (compact + swimlane same-lane horizontal).
+   */
+  if (!useVertStraddle && Math.abs(y1 - y2) < 0.5) {
+    const yLine = (y1 + y2) / 2;
+    const sh = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
+    const minCenterY = yLine - EL_H / 2 + 2 + sh;
+    if (labelY < minCenterY) labelY = minCenterY;
+  }
+  const badgeDisplayNumber = displayHopIndex != null ? displayHopIndex : hopIndex;
+  const { labelG } = makeRelLabel(labelLineX, labelY, labelLines, {
     hopIndex,
+    badgeDisplayNumber,
     showBadges,
-    hasChoices: (codes?.length ?? 0) > 1,
-    verticalStraddle: isVertical,
+    hasChoices: codesList.length > 1,
+    verticalStraddle: useVertStraddle,
+    straddleAnchorX: useVertStraddle ? straddleAnchorX : null,
+    straddleExtraX: useVertStraddle ? straddleExtraX : 0,
+    verticalStraddleWest: useVertStraddle ? effectiveVerticalStraddleWest : false,
+    straddleLineStrokeX: useVertStraddle ? straddleLineStrokeX : null,
+    forceBadgeCenterOffsetFromLineEast,
   });
-  g.appendChild(labelG);
 
-  g.addEventListener("click", (e) => {
-    e.preventDefault(); e.stopPropagation();
-    if (typeof window.clearHopHighlights === "function") window.clearHopHighlights();
-    if ((codes?.length ?? 0) > 1 && typeof window.cycleEdgeChoice === "function") window.cycleEdgeChoice(hopIndex);
-    if (typeof window.highlightHop === "function") window.highlightHop(hopIndex);
-    if (typeof window.expandHopDetails === "function") window.expandHopDetails(hopIndex, { scroll: false });
+  /** Vertical layouts rely on shared Y alignment between connector and label stack; tethers are omitted. */
+  const showStraddleLeader = false;
+  const leaderEl = showStraddleLeader
+    ? svgEl("line", {
+      x1: straddleAnchorX,
+      y1: labelY,
+      x2: straddleAnchorX + BADGE_LINE_CLEARANCE + straddleExtraX,
+      y2: labelY,
+      stroke: "rgba(51,65,85,0.4)",
+      "stroke-width": "1",
+      "pointer-events": "none",
+      class: "rel-label-leader",
+    })
+    : null;
+
+  const wireClick = (g) => {
+    g.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (typeof window.clearHopHighlights === "function") window.clearHopHighlights();
+      if (codesList.length > 1 && typeof window.cycleEdgeChoice === "function") window.cycleEdgeChoice(hopIndex);
+      if (typeof window.highlightHop === "function") window.highlightHop(hopIndex);
+      // After optional full re-render (multi-rel hops), scroll the explanation panel on the next frame.
+      requestAnimationFrame(() => {
+        if (typeof window.expandHopDetails === "function") window.expandHopDetails(hopIndex, { scroll: true });
+      });
+    });
+  };
+
+  if (interactiveOnly) {
+    const g = svgEl("g", {
+      class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}`,
+      style: "cursor: pointer;",
+    });
+    if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
+    g.appendChild(svgEl("path", { d: d, stroke: "transparent", "stroke-width": "15", fill: "none", class: "archimate-arrow-hit" }));
+    if (leaderEl) g.appendChild(leaderEl);
+    g.appendChild(labelG);
+    wireClick(g);
+    return g;
+  }
+
+  const g = svgEl("g", {
+    class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}`,
+    style: "cursor: pointer;",
   });
+  if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
+  g.appendChild(svgEl("path", { d: d, stroke: "transparent", "stroke-width": "15", fill: "none", class: "archimate-arrow-hit" }));
+  g.appendChild(mkStrokePath());
+  if (leaderEl) g.appendChild(leaderEl);
+  g.appendChild(labelG);
+  wireClick(g);
 
   return g;
 }
@@ -979,10 +2898,34 @@ function ensureMarkers(svg) {
 
   const color = "#333";
 
+  // #region agent log
+  __agentLog(
+    "ui/renderer.js:ensureMarkers",
+    "ensureMarkers init",
+    {
+      hasDefs: !!svg.querySelector("defs"),
+      markerTargetClearance: ARROW_MARKER_TARGET_CLEARANCE,
+      defaultStrokeWidth: 1.6,
+    },
+    "pre-fix",
+    "D"
+  );
+  // #endregion
+
   const mkOpen = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"10", markerHeight:"7", refX:"10", refY:"3.5", orient:"auto" });
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "8",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+      overflow: "visible",
+    });
     m.appendChild(svgEl("polyline", {
-      points:"0 0, 10 3.5, 0 7",
+      points:"0 0, 8 4, 0 8",
       fill:"none",
       stroke: color,
       "stroke-width":"1.2",
@@ -991,14 +2934,34 @@ function ensureMarkers(svg) {
     return m;
   };
   const mkFilled = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"10", markerHeight:"7", refX:"10", refY:"3.5", orient:"auto" });
-    m.appendChild(svgEl("polygon", { points:"0 0, 10 3.5, 0 7", fill: color }));
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "8",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+      overflow: "visible",
+    });
+    m.appendChild(svgEl("polygon", { points:"0 0, 8 4, 0 8", fill: color }));
     return m;
   };
   const mkTriangle = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"10", markerHeight:"8", refX:"10", refY:"4", orient:"auto" });
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "8",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+      overflow: "visible",
+    });
     m.appendChild(svgEl("polygon", {
-      points:"0 0, 10 4, 0 8",
+      points:"0 0, 8 4, 0 8",
       fill:"#ffffff",
       stroke: color,
       "stroke-width":"1.2",
@@ -1007,14 +2970,32 @@ function ensureMarkers(svg) {
     return m;
   };
   const mkDiamondFilled = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"12", markerHeight:"8", refX:"0", refY:"4", orient:"auto" });
-    m.appendChild(svgEl("polygon", { points:"0 4, 6 0, 12 4, 6 8", fill: color }));
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "0",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+    });
+    m.appendChild(svgEl("polygon", { points:"0 4, 4 0, 8 4, 4 8", fill: color }));
     return m;
   };
   const mkDiamondOpen = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"12", markerHeight:"8", refX:"0", refY:"4", orient:"auto" });
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "0",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+    });
     m.appendChild(svgEl("polygon", {
-      points:"0 4, 6 0, 12 4, 6 8",
+      points:"0 4, 4 0, 8 4, 4 8",
       fill:"white",
       stroke: color,
       "stroke-width":"1.2",
@@ -1023,7 +3004,16 @@ function ensureMarkers(svg) {
     return m;
   };
   const mkCircle = (id) => {
-    const m = svgEl("marker", { id, markerWidth:"8", markerHeight:"8", refX:"4", refY:"4", orient:"auto" });
+    const m = svgEl("marker", {
+      id,
+      viewBox: "0 0 8 8",
+      markerWidth: "8",
+      markerHeight: "8",
+      refX: "4",
+      refY: "4",
+      orient: "auto",
+      markerUnits: "strokeWidth",
+    });
     m.appendChild(svgEl("circle", { cx:"4", cy:"4", r:"3.5", fill: color }));
     return m;
   };
@@ -1045,86 +3035,286 @@ function ensureMarkers(svg) {
 // COMPACT LAYOUT — linear left-to-right
 // ─────────────────────────────────────────────────────────────────────────────
 
-function renderCompact(svg, flatSteps, { showBadges = true, alignVertical = false } = {}) {
-  const hasPattern = flatSteps.some(s => COMPOSITE_PATTERNS[s.element]);
-  /** Must match drawElement composite layout (sub-elements above/below main box). */
-  const COMPOSITE_V_OFF = 85;
+/**
+ * Vertical compact: hops **into** a flanked-composite step (Communication Network, Path, collaborations)
+ * place relationship notes west of the spine so they do not cover the right-hand illustration box;
+ * hops **out** use the default east straddle. Two wide steps in a row alternate by hop index.
+ */
+// (moved to ui/rendererCore.js)
 
-  const verticalGapBetween = (prevEl, nextEl) => {
-    const down = COMPOSITE_PATTERNS[prevEl] ? (COMPOSITE_V_OFF + EL_H) : EL_H;
-    const up = COMPOSITE_PATTERNS[nextEl] ? COMPOSITE_V_OFF : 0;
-    // Extra space between boxes so vertical connectors are long enough for labels beside the line.
-    return down + 48 + up;
-  };
 
-  if (!alignVertical) {
-    const totalW = flatSteps.length * EL_W + (flatSteps.length - 1) * EL_GAP + 100;
-    const totalH = hasPattern ? 320 : 150;
-    svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
-    svg.setAttribute("width", "100%"); svg.setAttribute("height", String(totalH));
-    let x = 50; const y = totalH / 2 - EL_H / 2;
-    const positions = [];
-    for (let i = 0; i < flatSteps.length; i++) {
-      const step = flatSteps[i];
-      positions.push({ x, y, cy: y + EL_H / 2, cx: x + EL_W / 2 });
-      x += EL_W + EL_GAP;
+/** True if otherCy is strictly between source/target row centers (excludes adjacent path rows). */
+// (moved to ui/rendererCore.js)
+
+/**
+ * Horizontal span of a vertical-compact row (main box + optional T-bone flanks). Must match drawElement(alignVertical).
+ */
+// (moved to ui/rendererLayout.js)
+
+/** Union of horizontal extents (spine + flanks) for all steps at main-box origin x = 0. */
+// (moved to ui/rendererLayout.js)
+
+/**
+ * Lane column width: content span + pad, capped by MAX; never below intrinsic span (composites may exceed MAX).
+ */
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+/**
+ * Per-hop outer C-shape: side ports at main-box faces, bus at tx. Stagger parallel east/west bypasses.
+ * @returns {Map<number, { tx: number, sx: number, sy: number, ex: number, ey: number }>}
+ */
+// (moved to ui/rendererLayout.js)
+
+/** Rough outer-bus X for layout scoring (no stagger). */
+// (moved to ui/rendererLayout.js)
+
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+/**
+ * Vertical swimlanes (rotated lanes): layer lanes as vertical columns.
+ * Path still flows top-to-bottom; cross-layer hops move between columns.
+ */
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+// (moved to ui/rendererLayout.js)
+
+/** `sortedIndices[visualIdx]` is the original path index of the node at that visual row. */
+function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFlatSteps, sortedIndices, illustrationPathKey = "0") {
+  const origToVisual = new Map();
+  sortedIndices.forEach((origIdx, visualIdx) => origToVisual.set(origIdx, visualIdx));
+  const outerArcByHop = computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices);
+  const badgeOffsetByHop = new Map();
+  const BADGE_STAIR_STEP_PX = 15;
+  const BADGE_STAIR_MAX_Y_GAP = Math.max(24, Math.ceil(EL_H * 0.65));
+  const verticalHopRows = [];
+  for (let hop = 1; hop < pathFlatSteps.length; hop++) {
+    const step = pathFlatSteps[hop];
+    if (!step.codes) continue;
+    const vFrom = origToVisual.get(hop - 1);
+    const vTo = origToVisual.get(hop);
+    if (vFrom == null || vTo == null || vFrom === vTo) continue;
+    const a = positions[vFrom];
+    const b = positions[vTo];
+    verticalHopRows.push({
+      hop,
+      rawY: (a.cy + b.cy) / 2,
+      fromBand: a.bandId,
+      toBand: b.bandId,
+    });
+  }
+  verticalHopRows.sort((p, q) => p.rawY - q.rawY);
+  let prevBadgeSeq = null;
+  for (const row of verticalHopRows) {
+    const sameBandSeq = row.fromBand === row.toBand;
+    if (
+      prevBadgeSeq &&
+      sameBandSeq &&
+      prevBadgeSeq.sameBandSeq &&
+      Math.abs(row.rawY - prevBadgeSeq.rawY) <= BADGE_STAIR_MAX_Y_GAP
+    ) {
+      badgeOffsetByHop.set(row.hop, prevBadgeSeq.offset + BADGE_STAIR_STEP_PX);
+    } else {
+      badgeOffsetByHop.set(row.hop, 0);
     }
-    for (let i = 0; i < flatSteps.length; i++) {
-      svg.appendChild(drawElement(flatSteps[i].element, positions[i].x, positions[i].y));
+    prevBadgeSeq = { rawY: row.rawY, sameBandSeq, offset: badgeOffsetByHop.get(row.hop) || 0 };
+  }
+  const verticalLabelNudgesByHop = computeVerticalLabelNudges(
+    pathFlatSteps,
+    steps,
+    positions,
+    sortedIndices,
+    badgeOffsetByHop,
+    outerArcByHop
+  );
+
+  // Expand the drawable area so outer-bypass lanes and their label stacks never get clipped.
+  // (Outer tx may be < 0 on West routes; viewBox starting at 0 would cut off labels.)
+  // Also extend upward: vertical straddle labels (badge + stroked text) sit on the connector and
+  // can extend above y=0 when the hop is short or nudged — compact + swimlanes share this path.
+  {
+    const vb = String(svg.getAttribute("viewBox") || "0 0 0 0").trim().split(/\s+/).map(Number);
+    const vbX = Number.isFinite(vb[0]) ? vb[0] : 0;
+    const vbY = Number.isFinite(vb[1]) ? vb[1] : 0;
+    const vbW = Number.isFinite(vb[2]) ? vb[2] : 0;
+    const vbH = Number.isFinite(vb[3]) ? vb[3] : 0;
+
+    let minX = vbX;
+    let maxX = vbX + vbW;
+    let minY = vbY;
+    const pad = 18;
+    /** Extra above estimateVerticalHopLabelRect top (text stroke, badge vs heuristic). */
+    const padTop = 8;
+
+    for (let hop = 1; hop < pathFlatSteps.length; hop++) {
+      const step = pathFlatSteps[hop];
+      if (!step?.codes) continue;
+      const vFrom = origToVisual.get(hop - 1);
+      const vTo = origToVisual.get(hop);
+      if (vFrom == null || vTo == null || vFrom === vTo) continue;
+      const a = positions[vFrom];
+      const b = positions[vTo];
+      const fromEl = steps[vFrom].element;
+      const toEl = steps[vTo].element;
+      const outer = outerArcByHop.get(hop) ?? null;
+
+      if (outer && typeof outer === "object" && Number.isFinite(outer.tx)) {
+        minX = Math.min(minX, outer.tx - pad);
+        maxX = Math.max(maxX, outer.tx + pad);
+      }
+
+      const lab = estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outer);
+      lab.x += (badgeOffsetByHop.get(hop) || 0) + (verticalLabelNudgesByHop.get(hop)?.x || 0);
+      lab.y += (verticalLabelNudgesByHop.get(hop)?.y || 0);
+      const left = lab.x - lab.w / 2;
+      const right = lab.x + lab.w / 2;
+      minX = Math.min(minX, left - pad);
+      maxX = Math.max(maxX, right + pad);
+      const labTop = lab.y - lab.h / 2 - padTop;
+      minY = Math.min(minY, labTop - pad);
     }
-    for (let i = 1; i < flatSteps.length; i++) {
-      const step = flatSteps[i];
-      if (!step.codes) continue;
-      const prev = positions[i - 1];
-      const cur = positions[i];
-      svg.appendChild(drawArrow(prev.x + EL_W, prev.cy, cur.x, cur.y + EL_H / 2, step.codes, step.isDirect, svg, { hopIndex: i, showBadges }));
+
+    if (Number.isFinite(minX) && Number.isFinite(maxX) && maxX > minX && vbW > 0 && vbH > 0) {
+      const newW = maxX - minX;
+      const newY = Math.min(vbY, minY);
+      const newH = vbH + (vbY - newY);
+      svg.setAttribute("viewBox", `${minX} ${newY} ${newW} ${newH}`);
     }
-    return;
   }
 
-  // Vertical stack: spacing must account for composite patterns (taller than EL_H).
-  if (!flatSteps.length) return; // defensive; renderPath should already guard
+  const appendHopArrows = (strokeOnly, interactiveOnly) => {
+    for (let hop = 1; hop < pathFlatSteps.length; hop++) {
+      const step = pathFlatSteps[hop];
+      if (!step.codes) continue;
+      const vFrom = origToVisual.get(hop - 1);
+      const vTo = origToVisual.get(hop);
+      if (vFrom == null || vTo == null || vFrom === vTo) continue;
+      const prevEl = steps[vFrom].element;
+      const curEl = steps[vTo].element;
+      const prevBand = positions[vFrom].bandId;
+      const curBand = positions[vTo].bandId;
+      const crossLane = prevBand !== curBand;
+      const westByDirection = !crossLane && positions[vTo].x < positions[vFrom].x;
+      const { x1, y1, x2, y2 } = layerGravityHopPorts(positions[vFrom], positions[vTo], prevEl, curEl);
+      svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
+        hopIndex: hop,
+        displayHopIndex: hop,
+        showBadges,
+        strokeOnly: !!strokeOnly,
+        interactiveOnly: !!interactiveOnly,
+        crossLaneEdge: crossLane,
+        orthogonal: true,
+        smoothCrossLane: crossLane,
+        orthogonalPin: "source",
+        verticalSwimlanePorts: crossLane,
+        sameLaneSideJog: false,
+        verticalStraddleWest: westByDirection || verticalStraddleWestForCompactHop(prevEl, curEl, hop),
+        badgeStairOffsetX: badgeOffsetByHop.get(hop) || 0,
+        labelNudgeX: verticalLabelNudgesByHop.get(hop)?.x || 0,
+        labelNudgeY: verticalLabelNudgesByHop.get(hop)?.y || 0,
+        outerArcCShape: outerArcByHop.get(hop) ?? null,
+        outerArcTrackX: null,
+        matrixDirectCodes: step.matrixDirectCodes,
+        matrixDerivedCodes: step.matrixDerivedCodes,
+      }));
+    }
+  };
 
-  let y = 50;
-  if (flatSteps[0] && COMPOSITE_PATTERNS[flatSteps[0].element]) y += COMPOSITE_V_OFF;
+  for (let i = 0; i < steps.length; i++) {
+    const origIdx = sortedIndices[i];
+    const illustrationSeed = `${illustrationPathKey}:${origIdx}:${steps[i].element}`;
+    const incomingPreferWest = (() => {
+      if (origIdx <= 0) return false;
+      const prevEl = pathFlatSteps[origIdx - 1]?.element;
+      const curEl = pathFlatSteps[origIdx]?.element;
+      if (!prevEl || !curEl) return false;
+      return verticalStraddleWestForCompactHop(prevEl, curEl, origIdx);
+    })();
+    svg.appendChild(drawElement(steps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
+      measureSvg: svg,
+      alignVertical: true,
+      illustrationSeed,
+      hideCompositeIllustrations: shouldHideCompositeIllustrations(),
+      // Place the upper composite sub on the opposite side of the incoming hop label/bypass.
+      diagUpperOnWest: !incomingPreferWest,
+    }));
+  }
+  appendHopArrows(true, false);
+  // Match horizontal swimlanes: draw aggregation illustration (subs + dashed connectors) above relationship strokes
+  // so orthogonal hops do not paint over the example part boxes.
+  svg.querySelectorAll(".composite-illustration").forEach((g) => {
+    svg.appendChild(g);
+  });
+  appendHopArrows(false, true);
+}
 
+/** Compact horizontal left-to-right layout only (vertical uses renderSwimlane with showLaneBands: false). */
+function renderCompact(svg, flatSteps, { showBadges = true, illustrationPathKey = "0" } = {}) {
+  const hasPattern = flatSteps.some(s => COMPOSITE_PATTERNS[s.element]);
+  const totalW = flatSteps.length * EL_W + (flatSteps.length - 1) * EL_GAP + 100;
+  const totalH = hasPattern ? 320 : 150;
+  svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
+  svg.setAttribute("width", "100%"); svg.setAttribute("height", String(totalH));
+  let x = 50; const y = totalH / 2 - EL_H / 2;
   const positions = [];
   for (let i = 0; i < flatSteps.length; i++) {
     const step = flatSteps[i];
-    positions.push({ x: 0, y, cy: y + EL_H / 2, cx: 0 });
-    if (i < flatSteps.length - 1) y += verticalGapBetween(step.element, flatSteps[i + 1].element);
+    positions.push({ x, y, cy: y + EL_H / 2, cx: x + EL_W / 2 });
+    x += EL_W + EL_GAP;
   }
-
-  // Horizontal padding around the centered column (labels sit on the arrow at midX).
-  const totalW = EL_W + 220;
-  const xCenter = totalW / 2 - EL_W / 2;
-  for (const p of positions) {
-    p.x = xCenter;
-    p.cx = xCenter + EL_W / 2;
-  }
-
-  const lastEl = flatSteps[flatSteps.length - 1]?.element;
-  const lastY = positions[positions.length - 1].y;
-  const bottomExtent = lastEl && COMPOSITE_PATTERNS[lastEl] ? (COMPOSITE_V_OFF + EL_H) : EL_H;
-  const totalH = lastY + bottomExtent + 50;
-
-  svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
-  svg.setAttribute("width", "100%"); svg.setAttribute("height", String(totalH));
-  svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
-
   for (let i = 0; i < flatSteps.length; i++) {
-    svg.appendChild(drawElement(flatSteps[i].element, positions[i].x, positions[i].y));
+    const illustrationSeed = `${illustrationPathKey}:${i}:${flatSteps[i].element}`;
+    svg.appendChild(drawElement(flatSteps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
+      measureSvg: svg,
+      illustrationSeed,
+      hideCompositeIllustrations: shouldHideCompositeIllustrations(),
+    }));
   }
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
     if (!step.codes) continue;
     const prev = positions[i - 1];
     const cur = positions[i];
-    const prevEl = flatSteps[i - 1].element;
-    const curEl = flatSteps[i].element;
-    const y1 = COMPOSITE_PATTERNS[prevEl] ? prev.y + COMPOSITE_V_OFF + EL_H : prev.y + EL_H;
-    const y2 = COMPOSITE_PATTERNS[curEl] ? cur.y - COMPOSITE_V_OFF : cur.y;
-    svg.appendChild(drawArrow(prev.cx, y1, cur.cx, y2, step.codes, step.isDirect, svg, { hopIndex: i, showBadges }));
+    svg.appendChild(drawArrow(prev.x + EL_W, prev.cy, cur.x, cur.y + EL_H / 2, step.codes, step.isDirect, svg, {
+      hopIndex: i,
+      showBadges,
+      strokeOnly: true,
+      matrixDirectCodes: step.matrixDirectCodes,
+      matrixDerivedCodes: step.matrixDerivedCodes,
+    }));
+  }
+  for (let i = 1; i < flatSteps.length; i++) {
+    const step = flatSteps[i];
+    if (!step.codes) continue;
+    const prev = positions[i - 1];
+    const cur = positions[i];
+    svg.appendChild(drawArrow(prev.x + EL_W, prev.cy, cur.x, cur.y + EL_H / 2, step.codes, step.isDirect, svg, {
+      hopIndex: i,
+      showBadges,
+      interactiveOnly: true,
+      matrixDirectCodes: step.matrixDirectCodes,
+      matrixDerivedCodes: step.matrixDerivedCodes,
+    }));
   }
 }
 
@@ -1138,181 +3328,532 @@ function renderCompact(svg, flatSteps, { showBadges = true, alignVertical = fals
  * Location and Grouping are registered with layer "Composite" for filtering, but in swimlanes they
  * should sit in the lane of an adjacent non-Composite step (or Business as a last resort).
  */
-function getSwimlaneLayer(elementName, index, flatSteps) {
-  const raw = getLayer(elementName);
-  if (raw !== "Composite") return raw;
-  for (let j = index - 1; j >= 0; j--) {
-    const L = getLayer(flatSteps[j].element);
-    if (L !== "Composite") return L;
-  }
-  for (let j = index + 1; j < flatSteps.length; j++) {
-    const L = getLayer(flatSteps[j].element);
-    if (L !== "Composite") return L;
-  }
-  return "Business";
-}
+// (moved to ui/rendererCore.js)
 
 /**
- * Consecutive path steps with the same swimlane layer and column form one vertical stack in that lane.
+ * Connector endpoints for horizontal swimlanes. With compact packing only, same-column hops use
+ * top/bottom centers (straight vertical); spread layout always uses right-center → left-center for curves.
  */
-function buildSwimlaneStackGroups(flatSteps, cols) {
-  const groups = [];
-  let gStart = 0;
-  for (let i = 1; i <= flatSteps.length; i++) {
-    if (i < flatSteps.length) {
-      const L = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
-      const prevL = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
-      if (L === prevL && cols[i] === cols[i - 1]) continue;
-    }
-    groups.push({ start: gStart, end: i - 1 });
-    gStart = i;
-  }
-  return groups;
-}
+// (moved to ui/rendererCore.js)
 
-function renderSwimlane(svg, flatSteps, { showBadges = true, alignVertical = false } = {}) {
-  /** Swimlanes use a single box per element (no aggregation fork); arrows attach to box edges. */
+/** Vertical layer-gravity hops: same-lane use side ports; cross-lane use top/bottom centers. */
+// (moved to ui/rendererCore.js)
+
+function renderSwimlane(svg, flatSteps, {
+  showBadges = true,
+  alignVertical = false,
+  showLaneBands = true,
+  /** Horizontal lanes only: spread = curved cross-lane hops + EL_GAP; compact = L-shaped 90° hops + tighter columns. */
+  horizontalLaneLayout = "spread",
+  illustrationPathKey = "0",
+} = {}) {
+  /**
+   * Vertical: one code path for Compact+Vertical and Swimlanes+Vertical (showLaneBands false vs true).
+   * Lane tints and left labels are optional; diagram geometry and edges are identical.
+   */
+  if (alignVertical) {
+    const layout = (() => {
+      if (!showLaneBands) return computeVerticalCompactLayout(flatSteps);
+      const rowLayout = computeVerticalCompactLayout(flatSteps);
+      const colLayout = computeVerticalRotatedLaneLayout(flatSteps);
+      if (!rowLayout) return colLayout;
+      if (!colLayout) return rowLayout;
+      const rowScore = scoreVerticalLayoutReadability(rowLayout, flatSteps);
+      const colScore = scoreVerticalLayoutReadability(colLayout, flatSteps);
+      return colScore < rowScore ? colLayout : rowLayout;
+    })();
+    if (!layout) return;
+    const { steps, positions, totalW, totalH, sortedIndices, pathFlatSteps, usedBands, laneMetrics, laneOrientation } = layout;
+
+    if (showLaneBands) {
+      if (usedBands.length === 0) return;
+      if (laneOrientation === "columns") {
+        svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", String(totalH));
+        svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
+
+        const bgG = svgEl("g", { class: "swimlane-bands-layer", style: "pointer-events: none;" });
+        let colIx = 0;
+        for (const band of usedBands) {
+          const m = laneMetrics[band.id];
+          if (!m) continue;
+          const w = Math.max(1, m.w || EL_W);
+          const h = Math.max(1, m.h || LANE_H_MIN);
+          bgG.appendChild(svgEl("rect", {
+            x: m.x,
+            y: m.y,
+            width: w,
+            height: h,
+            fill: band.color,
+            stroke: band.borderColor,
+            opacity: "0.5",
+          }));
+          bgG.appendChild(drawSwimlaneColumnLabel(svg, {
+            layer: band,
+            laneX: m.x,
+            laneY: m.y,
+            laneW: w,
+            clipIdSuffix: `vc${colIx++}`,
+          }));
+        }
+        svg.appendChild(bgG);
+      } else {
+        const xShift = VERTICAL_ROW_SWIMLANE_LABEL_W + LANE_CONTENT_GAP;
+        for (const p of positions) {
+          p.x += xShift;
+          p.cx += xShift;
+        }
+        const swimlaneW = totalW + xShift;
+
+        svg.setAttribute("viewBox", `0 0 ${swimlaneW} ${totalH}`);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", String(totalH));
+        svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
+
+        const bgG = svgEl("g", { class: "swimlane-bands-layer", style: "pointer-events: none;" });
+        let bandIx = 0;
+        for (const band of usedBands) {
+          const m = laneMetrics[band.id];
+          if (!m) continue;
+          const h = Math.max(1, m.h);
+          bgG.appendChild(svgEl("rect", {
+            x: 0,
+            y: m.y,
+            width: swimlaneW,
+            height: h,
+            fill: band.color,
+            stroke: band.borderColor,
+            opacity: "0.5",
+          }));
+          bgG.appendChild(drawSwimlaneLabel(svg, {
+            layer: band,
+            laneY: m.y,
+            actualH: h,
+            clipIdSuffix: `v${bandIx++}`,
+            stripWidth: VERTICAL_ROW_SWIMLANE_LABEL_W,
+          }));
+        }
+        svg.appendChild(bgG);
+      }
+    } else {
+      svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", String(totalH));
+      svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
+    }
+
+    renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFlatSteps, sortedIndices, illustrationPathKey);
+    return;
+  }
+
+  /** Horizontal swimlanes: full element drawing (including composites); orthogonal connectors between lanes. */
   const usedLayerIds = [...new Set(flatSteps.map((s, i) => getSwimlaneLayer(s.element, i, flatSteps)))];
   const usedLayers = typeof LAYERS !== 'undefined' ? LAYERS.filter(l => usedLayerIds.includes(l.id)) : [];
   if (usedLayers.length === 0) return;
 
-  const laneH = alignVertical ? LANE_H_MIN_VERTICAL : LANE_H_MIN;
-  const colGap = alignVertical ? SWIM_COL_GAP_VERTICAL : EL_GAP;
-  const topPad = alignVertical ? 6 : 20;
-  const bottomPad = alignVertical ? 12 : 40;
+  /** Spread swimlanes: composite illustration subs sit below the main box on diagonals (stay in-layer). */
+  const swimlaneCompositeSubsBelowDiagonal =
+    horizontalLaneLayout !== "compact" &&
+    !shouldHideCompositeIllustrations();
 
-  let positions;
-  let maxXCol = 0;
-  let totalH;
+  const swimlaneDiagHorizSpan = (() => {
+    const gapX = typeof COMPOSITE_H_GAP_VERTICAL === "number" ? COMPOSITE_H_GAP_VERTICAL : COMPOSITE_H_GAP;
+    return EL_W + gapX;
+  })();
+
+  const laneHeightsById = {};
+  for (const lid of usedLayerIds) {
+    let maxH = LANE_H_MIN;
+    flatSteps.forEach((step, i) => {
+      if (getSwimlaneLayer(step.element, i, flatSteps) !== lid) return;
+      // Use the same composite bbox math as rendering so lane bands always contain illustrated subs.
+      const top = compositeTopY(0, step.element, { alignVertical: false, swimlaneCompositeSubsBelowDiagonal });
+      const bottom = compositeBottomY(0, step.element, { alignVertical: false, swimlaneCompositeSubsBelowDiagonal });
+      const outerH = Math.max(EL_H, bottom - top);
+      maxH = Math.max(maxH, outerH);
+      const hOuter = horizontalLayoutStepOuterHeight(step.element, { swimlaneCompositeSubsBelowDiagonal });
+      // Main boxes share one row Y (see positions below). Lane must be tall enough: bottom = center - EL_H/2 + hOuter.
+      maxH = Math.max(maxH, 2 * hOuter - EL_H);
+    });
+    laneHeightsById[lid] = maxH;
+  }
+
+  const isCompactHorizontal = horizontalLaneLayout === "compact";
+  // Spread swimlanes: composite subs sit on a row below the main box and can extend EL_W+gapX to either side.
+  // Column step EL_W+colGap must clear the neighbor's illustrated sub (2*EL_W+gapX from this main's left edge),
+  // otherwise subs collide with the next column's main box (same-layer horizontal overlap).
+  const colGap = isCompactHorizontal
+    ? SWIMLANE_COMPACT_COL_GAP
+    : swimlaneCompositeSubsBelowDiagonal
+      ? Math.max(
+          EL_GAP,
+          EL_W +
+            (typeof COMPOSITE_H_GAP_VERTICAL === "number" ? COMPOSITE_H_GAP_VERTICAL : COMPOSITE_H_GAP) +
+            8
+        )
+      : EL_GAP;
+  const topPad = 20;
+  const bottomPad = 40;
+
   let laneMetrics = {};
   let currentY = topPad;
 
-  if (alignVertical) {
-    // Columns: stay in one column when the layer changes (vertical flow); only advance when
-    // re-entering a layer that already has a node in this column (e.g. App → Business → App).
-    // Same layer as previous → same column; elements are stacked inside the lane (handled below).
-    const cols = [];
-    let currentXCol = 0;
-    const occupied = new Set();
-    for (let i = 0; i < flatSteps.length; i++) {
-      const layerId = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
-      if (i > 0) {
-        const prevLayerId = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
-        if (layerId !== prevLayerId && occupied.has(`${currentXCol},${layerId}`)) currentXCol++;
+  usedLayers.forEach((layer) => {
+    const laneH = laneHeightsById[layer.id] ?? LANE_H_MIN;
+    laneMetrics[layer.id] = { y: currentY, h: laneH, center: currentY + (laneH / 2) };
+    currentY += laneH;
+  });
+
+  const totalH = currentY + bottomPad;
+  let maxXCol = 0;
+  /**
+   * Column assignment (horizontal swimlanes):
+   * - Spread: one column per path step (strict left-to-right); cross-layer hops always have horizontal
+   *   separation so connectors use H–V–H / “staircase” routing instead of stacking in one vertical column.
+   * - Compact: advance column within the same layer; on layer change, reuse the previous column only
+   *   while that column has fewer than two nodes — caps “towers” at two elements and otherwise increments.
+   */
+  const occupied = new Set();
+  const colByIndex = [];
+  /** Number of nodes already placed at each column index (compact stacking cap). */
+  const columnNodeCount = [];
+  const positions = flatSteps.map((step, i) => {
+    const layerId = getSwimlaneLayer(step.element, i, flatSteps);
+    const m = laneMetrics[layerId];
+    let col;
+    if (i === 0) {
+      col = 0;
+    } else if (!isCompactHorizontal) {
+      col = i;
+    } else {
+      const prevLayer = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
+      if (layerId === prevLayer) {
+        col = colByIndex[i - 1] + 1;
+      } else {
+        const prevCol = colByIndex[i - 1];
+        const usedInPrevCol = columnNodeCount[prevCol] || 0;
+        col = usedInPrevCol < 2 ? prevCol : prevCol + 1;
       }
-      cols.push(currentXCol);
-      if (currentXCol > maxXCol) maxXCol = currentXCol;
-      occupied.add(`${currentXCol},${layerId}`);
-    }
-
-    const groups = buildSwimlaneStackGroups(flatSteps, cols);
-    const layerMaxStackPx = {};
-    usedLayers.forEach((layer) => { layerMaxStackPx[layer.id] = EL_H; });
-    for (const g of groups) {
-      const n = g.end - g.start + 1;
-      const lid = getSwimlaneLayer(flatSteps[g.start].element, g.start, flatSteps);
-      const stackPx = n * EL_H + (n - 1) * SWIM_STACK_GAP;
-      layerMaxStackPx[lid] = Math.max(layerMaxStackPx[lid], stackPx);
-    }
-
-    currentY = topPad;
-    usedLayers.forEach((layer) => {
-      const h = Math.max(LANE_H_MIN_VERTICAL, layerMaxStackPx[layer.id] + 12);
-      laneMetrics[layer.id] = { y: currentY, h, center: currentY + h / 2 };
-      currentY += h;
-    });
-    totalH = currentY + bottomPad;
-
-    positions = [];
-    for (const g of groups) {
-      const lid = getSwimlaneLayer(flatSteps[g.start].element, g.start, flatSteps);
-      const m = laneMetrics[lid];
-      const n = g.end - g.start + 1;
-      const stackH = n * EL_H + (n - 1) * SWIM_STACK_GAP;
-      const startY = m.y + (m.h - stackH) / 2;
-      for (let k = 0, i = g.start; i <= g.end; i++, k++) {
-        const y = startY + k * (EL_H + SWIM_STACK_GAP);
-        const col = cols[i];
-        const x = LANE_LABEL_W + 40 + col * (EL_W + colGap);
-        positions[i] = { x, y, cy: y + EL_H / 2 };
+      while (occupied.has(`${col},${layerId}`)) {
+        col += 1;
       }
     }
-  } else {
-    usedLayers.forEach((layer) => {
-      laneMetrics[layer.id] = { y: currentY, h: laneH, center: currentY + (laneH / 2) };
-      currentY += laneH;
-    });
+    occupied.add(`${col},${layerId}`);
+    colByIndex[i] = col;
+    columnNodeCount[col] = (columnNodeCount[col] || 0) + 1;
+    if (col > maxXCol) maxXCol = col;
+    const y =
+      m.center - (EL_H / 2) + compositeMainTopDelta(step.element, { swimlaneCompositeSubsBelowDiagonal });
+    return { x: LANE_LABEL_W + 40 + col * (EL_W + colGap), y, cy: m.center };
+  });
 
-    totalH = currentY + bottomPad;
-    let currentXCol = 0;
-    const occupied = new Set();
-    positions = flatSteps.map((step, i) => {
-      const layerId = getSwimlaneLayer(step.element, i, flatSteps);
-      const m = laneMetrics[layerId];
-      if (i > 0) currentXCol++;
-      if (currentXCol > maxXCol) maxXCol = currentXCol;
-      occupied.add(`${currentXCol},${layerId}`);
-      return { x: LANE_LABEL_W + 40 + currentXCol * (EL_W + colGap), y: m.center - EL_H / 2, cy: m.center };
+  /** One shared connector Y per swimlane row so same-layer hops stay horizontal (composites otherwise shift per-node midY). */
+  const laneHorizY = new Map();
+  for (const layer of usedLayers) {
+    const lid = layer.id;
+    const mids = [];
+    for (let si = 0; si < flatSteps.length; si++) {
+      if (getSwimlaneLayer(flatSteps[si].element, si, flatSteps) !== lid) continue;
+      mids.push(layoutElementBBox(positions[si]).midY);
+    }
+    if (mids.length) {
+      laneHorizY.set(lid, mids.reduce((s, x) => s + x, 0) / mids.length);
+    }
+  }
+
+  // Compact path layout never draws composite corner subs (see shouldHideCompositeIllustrations); no flank reserve.
+  const compactCornerComposite = false;
+  const flankW = compactCornerComposite ? (COMPOSITE_H_GAP + EL_W) : 0;
+
+  // Compact lanes + composite subs: choose left vs right per composite so subs don't overlap other node boxes.
+  const compactCornerSideByIndex = new Map();
+  if (isCompactHorizontal && flankW > 0) {
+    const nodeRects = positions.map((p) => ({ x: p.x, y: p.y, w: EL_W, h: EL_H }));
+    const overlaps = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+    for (let i = 0; i < positions.length; i++) {
+      const el = flatSteps[i]?.element;
+      if (!COMPOSITE_PATTERNS[el]) continue;
+      const p = positions[i];
+      const leftRect = { x: p.x - flankW, y: p.y, w: EL_W, h: EL_H };
+      const rightRect = { x: p.x + EL_W + COMPOSITE_H_GAP, y: p.y, w: EL_W, h: EL_H };
+      const okLeft = !nodeRects.some((r, j) => j !== i && overlaps(leftRect, r));
+      const okRight = !nodeRects.some((r, j) => j !== i && overlaps(rightRect, r));
+      compactCornerSideByIndex.set(i, okLeft ? "left" : okRight ? "right" : "left");
+    }
+  }
+
+  // Ensure compact swimlanes are wide enough to contain composite illustration sub-boxes (which can extend left/right).
+  const compositeRightFlankW = flankW;
+  const compositeLeftFlankForBoundsW = flankW;
+  let furthestRight = 0;
+  let furthestLeft = Infinity;
+  for (let i = 0; i < positions.length; i++) {
+    const el = flatSteps[i]?.element;
+    const isComposite = !!COMPOSITE_PATTERNS[el];
+    if (swimlaneCompositeSubsBelowDiagonal && isComposite) {
+      furthestRight = Math.max(furthestRight, positions[i].x + EL_W + swimlaneDiagHorizSpan);
+      furthestLeft = Math.min(furthestLeft, positions[i].x - swimlaneDiagHorizSpan);
+      continue;
+    }
+    const side = compactCornerSideByIndex.get(i) || "left";
+    furthestRight = Math.max(
+      furthestRight,
+      positions[i].x + EL_W + (isComposite && side === "right" ? compositeRightFlankW : 0)
+    );
+    furthestLeft = Math.min(
+      furthestLeft,
+      positions[i].x - (isComposite && side === "left" ? compositeLeftFlankForBoundsW : 0)
+    );
+  }
+
+  const swimlaneWBase = (maxXCol + 1) * (EL_W + colGap) + LANE_LABEL_W + 80;
+  const pad = 40;
+  const minX = Number.isFinite(furthestLeft) ? Math.min(0, furthestLeft - pad) : 0;
+  const maxX = Math.max(swimlaneWBase, furthestRight + pad);
+  const swimlaneW = maxX - minX;
+  svg.setAttribute("viewBox", `${minX} 0 ${swimlaneW} ${totalH}`);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", String(totalH));
+
+  if (showLaneBands) {
+    usedLayers.forEach((layer) => {
+      const m = laneMetrics[layer.id];
+      svg.appendChild(svgEl("rect", { x: 0, y: m.y, width: "100%", height: m.h, fill: layer.color, stroke: layer.borderColor, opacity: "0.5" }));
+      svg.appendChild(drawSwimlaneLabel(svg, { layer, laneY: m.y, actualH: m.h }));
     });
   }
 
-  const swimlaneW = (maxXCol + 1) * (EL_W + colGap) + LANE_LABEL_W + 80 + (alignVertical ? 32 : 0);
-  svg.setAttribute("viewBox", `0 0 ${swimlaneW} ${totalH}`);
-  svg.setAttribute("width", "100%"); svg.setAttribute("height", String(totalH));
-  if (alignVertical) svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
-
-  usedLayers.forEach((layer) => {
-    const m = laneMetrics[layer.id];
-    svg.appendChild(svgEl("rect", { x: 0, y: m.y, width: "100%", height: m.h, fill: layer.color, stroke: layer.borderColor, opacity: "0.5" }));
-    svg.appendChild(drawSwimlaneLabel(svg, { layer, laneY: m.y, actualH: m.h }));
+  const hopArrowOpts = (crossLane) => ({
+    orthogonal: true,
+    crossLaneEdge: crossLane,
+    // Smooth Béziers cut through intermediate nodes; H–V–H + bus-X nudging avoids that.
+    smoothCrossLane: false,
+    orthogonalPin: isCompactHorizontal ? "source" : "mid",
   });
 
-  positions.forEach((pos, i) => svg.appendChild(drawElement(flatSteps[i].element, pos.x, pos.y, EL_W, EL_H, { swimlaneSimple: true })));
+  const swimlaneBusXByHop = new Map();
+  for (let hi = 1; hi < flatSteps.length; hi++) {
+    if (!flatSteps[hi]?.codes) continue;
+    const crossLane =
+      getSwimlaneLayer(flatSteps[hi - 1].element, hi - 1, flatSteps) !==
+      getSwimlaneLayer(flatSteps[hi].element, hi, flatSteps);
+    const a = positions[hi - 1];
+    const b = positions[hi];
+    const fromL = getSwimlaneLayer(flatSteps[hi - 1].element, hi - 1, flatSteps);
+    const toL = getSwimlaneLayer(flatSteps[hi].element, hi, flatSteps);
+    const alignedY = fromL === toL ? laneHorizY.get(fromL) : undefined;
+    const { x1, y1, x2, y2 } = horizontalSwimlaneHopPorts(
+      a,
+      b,
+      isCompactHorizontal,
+      flatSteps[hi - 1].element,
+      flatSteps[hi].element,
+      alignedY
+    );
+    if (crossLane && Math.abs(y1 - y2) >= 0.5 && Math.abs(x1 - x2) >= 0.5) {
+      swimlaneBusXByHop.set(
+        hi,
+        swimlaneOrthogonalBusXForHop(positions, flatSteps, hi, x1, y1, x2, y2, swimlaneCompositeSubsBelowDiagonal)
+      );
+    }
+  }
+
+  const swimlaneCompositePlacementByIndex = new Map();
+  if (swimlaneCompositeSubsBelowDiagonal) {
+    for (let pi = 0; pi < flatSteps.length; pi++) {
+      if (!COMPOSITE_PATTERNS[flatSteps[pi]?.element]) continue;
+      swimlaneCompositePlacementByIndex.set(
+        pi,
+        pickSwimlaneCompositeSubLayout(
+          pi,
+          positions,
+          flatSteps,
+          swimlaneBusXByHop,
+          swimlaneCompositeSubsBelowDiagonal
+        )
+      );
+    }
+  }
+
+  const compactLabelNudgesByHop = new Map();
+  if (isCompactHorizontal) {
+    const placed = [];
+    /** X-only: vertical nudges detached labels from the stroke (y1,y2) while the path did not move. */
+    const candidateOffsets = [
+      { x: 0, y: 0 },
+      { x: 14, y: 0 },
+      { x: 28, y: 0 },
+      { x: 42, y: 0 },
+      { x: 56, y: 0 },
+      { x: 70, y: 0 },
+      { x: -14, y: 0 },
+      { x: -28, y: 0 },
+    ];
+    const collides = (x, y) =>
+      placed.some((p) => Math.abs(x - p.x) < 95 && Math.abs(y - p.y) < 22);
+
+    const hops = [];
+    for (let i = 1; i < flatSteps.length; i++) {
+      const step = flatSteps[i];
+      if (!step?.codes) continue;
+      const a = positions[i - 1];
+      const b = positions[i];
+      const fromL = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
+      const toL = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
+      const alignedY = fromL === toL ? laneHorizY.get(fromL) : undefined;
+      const { x1, y1, x2, y2 } = horizontalSwimlaneHopPorts(a, b, true, flatSteps[i - 1].element, flatSteps[i].element, alignedY);
+      hops.push({
+        hop: i,
+        baseX: (x1 + x2) / 2,
+        baseY: (y1 + y2) / 2,
+      });
+    }
+
+    hops.sort((u, v) => (u.baseY - v.baseY) || (u.baseX - v.baseX) || (u.hop - v.hop));
+    for (const h of hops) {
+      let chosen = candidateOffsets[candidateOffsets.length - 1];
+      for (const c of candidateOffsets) {
+        if (!collides(h.baseX + c.x, h.baseY + c.y)) {
+          chosen = c;
+          break;
+        }
+      }
+      compactLabelNudgesByHop.set(h.hop, chosen);
+      placed.push({ x: h.baseX + chosen.x, y: h.baseY + chosen.y });
+    }
+  }
+
+  const swimlaneLabelObstacles = buildSwimlaneLabelObstacles(
+    positions,
+    flatSteps,
+    swimlaneCompositeSubsBelowDiagonal
+  );
+
+  positions.forEach((pos, i) => {
+    const illustrationSeed = `${illustrationPathKey}:${i}:${flatSteps[i].element}`;
+    const swimlaneExcludeAdjacentIllustrationSubs = (() => {
+      const ex = new Set();
+      if (i > 0) ex.add(flatSteps[i - 1].element);
+      if (i < flatSteps.length - 1) ex.add(flatSteps[i + 1].element);
+      return ex;
+    })();
+    svg.appendChild(drawElement(flatSteps[i].element, pos.x, pos.y, EL_W, EL_H, {
+      measureSvg: svg,
+      illustrationSeed,
+      hideCompositeIllustrations: shouldHideCompositeIllustrations(),
+      compactCornerSide: compactCornerSideByIndex.get(i) || "left",
+      swimlaneCompositeSubsBelowDiagonal: swimlaneCompositeSubsBelowDiagonal && !shouldHideCompositeIllustrations(),
+      swimlaneCompositePlacement: swimlaneCompositePlacementByIndex.get(i) ?? null,
+      swimlaneExcludeAdjacentIllustrationSubs,
+    }));
+  });
+
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
     if (!step.codes) continue;
     const a = positions[i - 1];
     const b = positions[i];
-    const aCx = a.x + EL_W / 2;
-    const bCx = b.x + EL_W / 2;
-    const sameColumn = Math.abs(a.x - b.x) < 0.5;
-    if (alignVertical && sameColumn) {
-      // Path order can run bottom→top; attach the nearest edges between lanes (not bottom→top through boxes).
-      const prevEl = flatSteps[i - 1].element;
-      const curEl = flatSteps[i].element;
-      const pComp = false;
-      const cComp = false;
-      const upward = a.y > b.y;
-      const x1 = aCx, x2 = bCx;
-      let y1; let y2;
-      if (upward) {
-        y1 = pComp ? a.y - COMPOSITE_V_OFF : a.y;
-        y2 = cComp ? b.y + COMPOSITE_V_OFF + EL_H : b.y + EL_H;
-      } else {
-        y1 = pComp ? a.y + COMPOSITE_V_OFF + EL_H : a.y + EL_H;
-        y2 = cComp ? b.y - COMPOSITE_V_OFF : b.y;
-      }
-      svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, { hopIndex: i, showBadges }));
-    } else {
-      svg.appendChild(drawArrow(a.x + EL_W, a.cy, b.x, b.cy, step.codes, step.isDirect, svg, { hopIndex: i, showBadges }));
-    }
+    const crossLane =
+      getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps) !==
+      getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
+    const fromL = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
+    const toL = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
+    const alignedY = fromL === toL ? laneHorizY.get(fromL) : undefined;
+    const { x1, y1, x2, y2 } = horizontalSwimlaneHopPorts(a, b, isCompactHorizontal, flatSteps[i - 1].element, flatSteps[i].element, alignedY);
+    const swimlaneOrthoBusMaxX = layoutElementBBox(b).right;
+    svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
+      hopIndex: i,
+      showBadges,
+      strokeOnly: true,
+      labelNudgeX: compactLabelNudgesByHop.get(i)?.x || 0,
+      labelNudgeY: compactLabelNudgesByHop.get(i)?.y || 0,
+      disableStraddleLeader: isCompactHorizontal,
+      matrixDirectCodes: step.matrixDirectCodes,
+      matrixDerivedCodes: step.matrixDerivedCodes,
+      swimlaneOrthogonalBusX: swimlaneBusXByHop.get(i) ?? null,
+      swimlaneOrthoBusMaxX,
+      swimlaneLabelObstacles,
+      ...hopArrowOpts(crossLane),
+    }));
+  }
+
+  // After visible strokes, before hop labels: raise aggregation illustration groups so dashes sit above
+  // relationship lines but below badges/labels (interactive pass follows).
+  svg.querySelectorAll(".composite-illustration").forEach((g) => {
+    svg.appendChild(g);
+  });
+
+  for (let i = 1; i < flatSteps.length; i++) {
+    const step = flatSteps[i];
+    if (!step.codes) continue;
+    const a = positions[i - 1];
+    const b = positions[i];
+    const crossLane =
+      getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps) !==
+      getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
+    const fromL2 = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
+    const toL2 = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
+    const alignedY2 = fromL2 === toL2 ? laneHorizY.get(fromL2) : undefined;
+    const { x1, y1, x2, y2 } = horizontalSwimlaneHopPorts(a, b, isCompactHorizontal, flatSteps[i - 1].element, flatSteps[i].element, alignedY2);
+    const swimlaneOrthoBusMaxX2 = layoutElementBBox(b).right;
+    svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
+      hopIndex: i,
+      showBadges,
+      interactiveOnly: true,
+      labelNudgeX: compactLabelNudgesByHop.get(i)?.x || 0,
+      labelNudgeY: compactLabelNudgesByHop.get(i)?.y || 0,
+      disableStraddleLeader: isCompactHorizontal,
+      matrixDirectCodes: step.matrixDirectCodes,
+      matrixDerivedCodes: step.matrixDerivedCodes,
+      swimlaneOrthogonalBusX: swimlaneBusXByHop.get(i) ?? null,
+      swimlaneOrthoBusMaxX: swimlaneOrthoBusMaxX2,
+      swimlaneLabelObstacles,
+      ...hopArrowOpts(crossLane),
+    }));
   }
 }
 
-function drawSwimlaneLabel(svg, { layer, laneY, actualH }) {
-  const clipId = `lane-label-clip-${layer.id}`;
+function drawSwimlaneLabel(svg, { layer, laneY, actualH, clipIdSuffix = "", stripWidth = LANE_LABEL_W } = {}) {
+  const clipId = clipIdSuffix ? `lane-label-clip-${layer.id}-${clipIdSuffix}` : `lane-label-clip-${layer.id}`;
   const defs = svg.querySelector("defs") || svg.appendChild(svgEl("defs", {}));
   const clipPath = svgEl("clipPath", { id: clipId });
-  clipPath.appendChild(svgEl("rect", { x: 0, y: laneY, width: LANE_LABEL_W, height: actualH }));
+  clipPath.appendChild(svgEl("rect", { x: 0, y: laneY, width: stripWidth, height: actualH }));
   defs.appendChild(clipPath);
 
   const labelG = svgEl("g", { "clip-path": `url(#${clipId})` });
-  const lines = wrapSvgTextLines(svg, layer.label, LANE_LABEL_W - 20, { fontSize: 12, fontWeight: "850" });
+  const lines = wrapSvgTextLines(svg, layer.label, stripWidth - 20, { fontSize: 12, fontWeight: "850" });
   const lineH = 14;
   const startY = laneY + actualH / 2 - (lines.length * lineH) / 2 + lineH / 2;
 
   lines.forEach((ln, i) => {
     labelG.appendChild(svgEl("text", { x: 10, y: startY + i * lineH, fill: layer.borderColor, "font-size": "12", "font-weight": "850", "dominant-baseline": "middle" }, ln));
+  });
+  return labelG;
+}
+
+function drawSwimlaneColumnLabel(svg, { layer, laneX, laneY, laneW, clipIdSuffix = "" } = {}) {
+  const clipId = clipIdSuffix ? `lane-column-label-clip-${layer.id}-${clipIdSuffix}` : `lane-column-label-clip-${layer.id}`;
+  const defs = svg.querySelector("defs") || svg.appendChild(svgEl("defs", {}));
+  const clipPath = svgEl("clipPath", { id: clipId });
+  clipPath.appendChild(svgEl("rect", { x: laneX, y: laneY, width: laneW, height: 34 }));
+  defs.appendChild(clipPath);
+
+  const labelG = svgEl("g", { "clip-path": `url(#${clipId})` });
+  const textMaxW = Math.min(laneW - 16, MAX_VERTICAL_LANE_WIDTH - 16);
+  const lines = wrapSvgTextLines(svg, layer.label, textMaxW, { fontSize: 11, fontWeight: "850", maxLines: 2 });
+  const lineH = 13;
+  const startY = laneY + 8 + lineH / 2;
+  lines.slice(0, 2).forEach((ln, i) => {
+    labelG.appendChild(svgEl("text", {
+      x: laneX + laneW / 2,
+      y: startY + i * lineH,
+      fill: layer.borderColor,
+      "font-size": "11",
+      "font-weight": "850",
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+    }, ln));
   });
   return labelG;
 }
@@ -1323,17 +3864,37 @@ function drawSwimlaneLabel(svg, { layer, laneY, actualH }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-function renderPath(container, segments, { mode = "compact", segmentPathIndex = 0, showBadges = true, alignVertical = false } = {}) {
+function renderPath(container, segments, {
+  mode = "compact",
+  segmentPathIndex = 0,
+  showBadges = true,
+  /** @deprecated use pathFlow */
+  alignVertical = false,
+  /** horizontal | vertical | compact — compact = layer-aligned tight orthogonal layout */
+  pathFlow = "horizontal",
+} = {}) {
   container.innerHTML = "";
   if (!segments || segments.length === 0) return;
   const flatSteps = flattenSegments(segments, segmentPathIndex);
   if (!flatSteps.length) return;
   const svg = svgEl("svg", { xmlns: SVG_NS });
   container.appendChild(svg);
-  if (mode === "swimlane") {
-    renderSwimlane(svg, flatSteps, { showBadges, alignVertical });
+  const illustrationPathKey = String(segmentPathIndex);
+  const flow = alignVertical ? "vertical" : pathFlow;
+  const useCompactLanes = flow === "compact";
+  const useVertical = flow === "vertical";
+  if (useVertical) {
+    renderSwimlane(svg, flatSteps, { showBadges, alignVertical: true, showLaneBands: mode === "swimlane", illustrationPathKey });
+  } else if (mode === "swimlane" || useCompactLanes) {
+    renderSwimlane(svg, flatSteps, {
+      showBadges,
+      alignVertical: false,
+      showLaneBands: mode === "swimlane",
+      horizontalLaneLayout: useCompactLanes ? "compact" : "spread",
+      illustrationPathKey,
+    });
   } else {
-    renderCompact(svg, flatSteps, { showBadges, alignVertical });
+    renderCompact(svg, flatSteps, { showBadges, illustrationPathKey });
   }
 }
 
@@ -1345,6 +3906,38 @@ function clearDiagram(container) {
 function getAspect(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName] ? ELEMENTS[elementName].aspect : "Composite"; }
 
 function getLayer(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName] ? ELEMENTS[elementName].layer : "Unknown"; }
+
+/**
+ * Human-readable segment title from waypoint ArchiMate layers (ELEMENTS registry).
+ * @param {{ from: string, to: string }} segment — segment endpoints (ArchiMate element names)
+ * @param {number} index — zero-based segment index
+ * @param {Record<string, { layer?: string }>|undefined} definitions — element registry; defaults to ELEMENTS
+ */
+function segmentEndpointLayerForLabel(elementName, peerName, definitions) {
+  const def = definitions?.[elementName];
+  const peerDef = definitions?.[peerName];
+  const layer = def?.layer ?? "Unknown";
+  const peerLayer = peerDef?.layer ?? "Unknown";
+  // Gap is registered as Implementation, but motivation-facing gap analysis segments read as Motivation-internal.
+  if (elementName === "Gap" && peerLayer === "Motivation") return "Motivation";
+  return layer;
+}
+
+function getSegmentSemanticLabel(segment, index, definitions) {
+  const defs = definitions ?? (typeof ELEMENTS !== "undefined" ? ELEMENTS : {});
+  const fromDef = defs[segment.from];
+  const toDef = defs[segment.to];
+  if (!fromDef || !toDef) {
+    return `Phase ${index + 1}: Path Segment`;
+  }
+  const fromLayer = segmentEndpointLayerForLabel(segment.from, segment.to, defs);
+  const toLayer = segmentEndpointLayerForLabel(segment.to, segment.from, defs);
+  if (fromLayer === toLayer) {
+    return `Phase ${index + 1}: Internal ${fromLayer} Leg`;
+  }
+  return `Phase ${index + 1}: ${fromLayer} to ${toLayer} Transition`;
+}
+
 function getAspectId(elementName) {
   const aspect = getAspect(elementName);
   return typeof ASPECTS !== 'undefined' && ASPECTS[aspect] ? ASPECTS[aspect].id : "composite";
@@ -1365,6 +3958,47 @@ function relationshipVerb(relName) {
   if (n.includes("assign")) return "is assigned to"; if (n.includes("access")) return "accesses";
   if (n.includes("aggregat")) return "aggregates"; if (n.includes("compos")) return "is composed of";
   return "relates to";
+}
+
+/**
+ * Layer-gradient sign for the student's overall search (first waypoint → last on this path).
+ * Compared to each hop to decide whether active (forward roleNames) or passive/inverse (backward)
+ * wording reads more naturally along the route while keeping graph traversal strictly directed.
+ */
+function layerGradientSignForElementPair(aEl, bEl) {
+  if (typeof getLayerRank !== "function") return 0;
+  return getLayerRank(bEl) - getLayerRank(aEl);
+}
+
+/**
+ * True when this hop's layer movement opposes the route's layer movement (both non-zero),
+ * so inverse role wording (target … backward … source) fits the query narrative better.
+ * Association (O) stays forward — inverse phrasing is often awkward for generic links.
+ */
+function hopNarrativeUsesBackwardRoles(fromEl, toEl, routeStartEl, routeEndEl, relCodeUpper) {
+  if (String(relCodeUpper || "O").toUpperCase() === "O") return false;
+  if (!routeStartEl || !routeEndEl) return false;
+  const route = layerGradientSignForElementPair(routeStartEl, routeEndEl);
+  const hop = layerGradientSignForElementPair(fromEl, toEl);
+  if (route === 0 || hop === 0) return false;
+  return Math.sign(route) !== Math.sign(hop);
+}
+
+/**
+ * Natural sentence for backward role text (relationships.js backward strings are fragments like "realized by").
+ */
+function hopJustificationSentenceForward(fromClause, forwardRole, toClause) {
+  const v = String(forwardRole || "").trim() || "relates to";
+  return `${fromClause} ${v} ${toClause}`;
+}
+
+function hopJustificationSentenceBackward(toClause, backwardRole, fromClause) {
+  const b = String(backwardRole || "").trim();
+  if (!b) return hopJustificationSentenceForward(fromClause, backwardRole, toClause);
+  if (/^(has\s|flows\s)/i.test(b)) {
+    return `${toClause} ${b} ${fromClause}`;
+  }
+  return `${toClause} is ${b} ${fromClause}`;
 }
 function metamodelRoleLabelForElement(elementName) {
   const role = ELEMENTS?.[elementName]?.metamodelRole ?? null;
@@ -1418,73 +4052,250 @@ function elementSummary(name) {
     </div>`;
 }
 
-function getRelationVisualSnippet(code, isDirect) {
+/**
+ * Inline marker defs for the explanation hop strip only. Uses currentColor so heads match
+ * the line and respond to .explain-edge-connector hover (global path-diagram markers are fixed #333/#fff).
+ */
+function snippetMarkerDefsHtml(UPPER, isDirect, suffix) {
+  const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
+  const d = isDirect ? "d" : "r";
+  const idEnd = `end-${UPPER}-${d}-snippet-${suffix}`;
+  const idStart = `start-${UPPER}-snippet-${suffix}`;
+  const parts = [];
+
+  if (style.endMarker === "arrow-open") {
+    parts.push(
+      `<marker id="${idEnd}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
+        `<polyline points="0 0, 8 4, 0 8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"/>` +
+      `</marker>`
+    );
+  } else if (style.endMarker === "arrow-filled") {
+    parts.push(
+      `<marker id="${idEnd}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
+        `<polygon points="0 0, 8 4, 0 8" fill="currentColor"/>` +
+      `</marker>`
+    );
+  } else if (style.endMarker === "triangle-open") {
+    parts.push(
+      `<marker id="${idEnd}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
+        `<polygon points="0 0, 8 4, 0 8" fill="currentColor"/>` +
+      `</marker>`
+    );
+  }
+
+  if (style.startMarker === "diamond-filled") {
+    parts.push(
+      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="0" refY="4" orient="auto">` +
+        `<polygon points="0 4, 4 0, 8 4, 4 8" fill="currentColor"/>` +
+      `</marker>`
+    );
+  } else if (style.startMarker === "diamond-open") {
+    parts.push(
+      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="0" refY="4" orient="auto">` +
+        `<polygon points="0 4, 4 0, 8 4, 4 8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"/>` +
+      `</marker>`
+    );
+  } else if (style.startMarker === "circle-filled") {
+    parts.push(
+      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="4" refY="4" orient="auto">` +
+        `<circle cx="4" cy="4" r="3.5" fill="currentColor"/>` +
+      `</marker>`
+    );
+  }
+
+  if (parts.length === 0) return "";
+  return `<defs>${parts.join("")}</defs>`;
+}
+
+function getRelationVisualSnippet(code, isDirect, hopIndexForIds, opts = {}) {
+  const compact = !!opts.compact;
   const UPPER = String(code || "O").toUpperCase();
   const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
   const isDash = style.line === "dashed";
-  const endMarker = style.endMarker !== "none" ? `url(#end-${UPPER}-${isDirect ? 'd' : 'r'})` : "";
-  const startMarker = style.startMarker !== "none" ? `url(#start-${UPPER})` : "";
-  return `<svg width="80" height="30" style="overflow:visible; margin: 0 15px;"><line x1="5" y1="15" x2="65" y2="15" stroke="#334155" stroke-width="2.5" stroke-dasharray="${isDash ? '5,3' : 'none'}" marker-end="${endMarker}" marker-start="${startMarker}" /></svg>`;
+  const d = isDirect ? "d" : "r";
+  const suffix = String(hopIndexForIds ?? "0");
+  const defs = snippetMarkerDefsHtml(UPPER, isDirect, suffix);
+  const endMarker = style.endMarker !== "none" ? `url(#end-${UPPER}-${d}-snippet-${suffix})` : "";
+  const startMarker = style.startMarker !== "none" ? `url(#start-${UPPER}-snippet-${suffix})` : "";
+  const w = compact ? 52 : 80;
+  const h = compact ? 20 : 30;
+  const margin = compact ? "0 4px" : "0 15px";
+  const cls =
+    "explain-edge-connector-svg" +
+    (compact ? " explain-edge-connector-svg--compact" : "");
+  const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
+  return `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">${defs}<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" /></svg>`;
 }
 
-function explainEdge(fromEl, toEl, activeCode, isDirect, hasChoices, isProvisional) {
-  const fromAspect = getAspect(fromEl); const toAspect = getAspect(toEl);
-  const rel = typeof window.RELATIONSHIPS !== 'undefined' ? window.RELATIONSHIPS[activeCode] : null;
-  const primaryRelName = rel?.name ?? activeCode;
+/** Neutral dotted connector for hops where no relationship has been chosen yet. */
+function getUndecidedRelationSnippet(opts = {}) {
+  const compact = !!opts.compact;
+  const w = compact ? 52 : 80;
+  const h = compact ? 20 : 30;
+  const margin = compact ? "0 4px" : "0 15px";
+  const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
+  const cls =
+    "explain-edge-connector-svg explain-edge-connector-svg--undecided" +
+    (compact ? " explain-edge-connector-svg--compact" : "");
+  return (
+    `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: #8b99af; flex-shrink:0;" aria-hidden="true">` +
+    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="3 5" stroke-linecap="round" /></svg>`
+  );
+}
 
-  const pill = (name) => {
-    const icon = typeof window.getElementMiniSvg === "function" ? window.getElementMiniSvg(name, 18) : "";
-    return `<div style="display: flex; align-items: center; gap: 8px; background: white; padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); font-weight: 700; color: #334155; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">${icon} ${name}</div>`;
+function normalizeExplainRigorPreset(v) {
+  const key = String(v || "academic").toLowerCase();
+  if (key === "academic" || key === "pragmatic" || key === "discovery" || key === "custom") return key;
+  return "academic";
+}
+
+function explainRigorPresetLabel(preset) {
+  const p = normalizeExplainRigorPreset(preset);
+  if (p === "academic") return "Academic";
+  if (p === "pragmatic") return "Pragmatic";
+  if (p === "discovery") return "Discovery";
+  return "Custom";
+}
+
+function resolvePrimaryCodeForTierUi(step, semanticHop, opts) {
+  const raw = opts?.resolvedPrimaryCode;
+  if (raw != null && String(raw).trim() !== "") {
+    return String(raw).toUpperCase();
+  }
+  if (semanticHop?.primaryCode != null && String(semanticHop.primaryCode).trim() !== "") {
+    return String(semanticHop.primaryCode).toUpperCase();
+  }
+  const list = Array.isArray(step?.codes) ? step.codes : [];
+  let fallback = "O";
+  for (const c of list) {
+    const u = String(c || "").toUpperCase();
+    if (!u) continue;
+    if (fallback === "O") fallback = u;
+    if (u !== "O") return u;
+  }
+  return fallback;
+}
+
+function classifyHopSemanticTierUi(step, semanticHop, opts) {
+  if (typeof classifyHopSemanticTier === "function") {
+    return classifyHopSemanticTier(step, semanticHop, opts);
+  }
+  const hasViolation = !!(semanticHop?.violation && semanticHop.violation !== "None");
+  const primaryUpper = resolvePrimaryCodeForTierUi(step, semanticHop, opts);
+  const isAssociationHop = step?.isAssociation === true || primaryUpper === "O";
+
+  if (hasViolation) {
+    return {
+      strength: "Informal",
+      title: "Semantic violation detected.",
+      reason: semanticHop?.violationLabel || semanticHop?.ruleLabel || "semantic rule exception",
+    };
+  }
+  if (isAssociationHop) {
+    return {
+      strength: "Informal",
+      title: "Generic Association (§5.2.4).",
+      reason: semanticHop?.ruleLabel || "a generic Association bridge (§5.2.4)",
+    };
+  }
+  if (!isActiveCodeDirectInMatrix(step, primaryUpper)) {
+    return {
+      strength: "Valid",
+      title: "Strictly derived per §5.7.",
+      reason: semanticHop?.ruleLabel || "§5.7 derivation rules",
+    };
+  }
+  return {
+    strength: "Strong",
+    title: "Direct or Structural connection.",
+    reason: semanticHop?.ruleLabel || "a direct Appendix B relationship",
   };
-
-  const visualHeader = `<div style="display: flex; align-items: center; justify-content: center; background: #f8fafc; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px dashed #cbd5e1;">${pill(fromEl)}${getRelationVisualSnippet(activeCode, isDirect)}${pill(toEl)}</div>`;
-
-  const keyFacts = `<div class="edge-kicker"><div class="edge-kicker-row" style="display:flex; justify-content:space-between; align-items:center;"><div class="edge-rel"><strong>${primaryRelName}</strong></div><div class="edge-tags"><span class="tag ${isDirect?'tag-direct':'tag-derived'}">${isDirect?'Direct':'Derived'}</span></div></div><div style="margin-top:12px; color:#475569; font-size:13.5px; line-height:1.5;"><strong>Justification:</strong> ${fromEl} ${relationshipVerb(primaryRelName)} ${toEl}.</div><ul class="edge-bullets" style="margin-top: 15px; color: #475569; font-size: 13px;"><li><strong>Metamodel check</strong>: <em>${fromAspect}</em> → <em>${toAspect}</em> <button class="mm-jump" type="button" data-mm-from="${encodeURIComponent(fromEl)}" data-mm-to="${encodeURIComponent(toEl)}" data-mm-rel="${encodeURIComponent(primaryRelName)}">Show on metamodel</button></li></ul></div>`;
-
-  return visualHeader + keyFacts + `<details class="explain-details" style="margin-top: 20px;"><summary>Spec Tables & Definitions</summary><div>${typeof renderAspectGrid === 'function' ? renderAspectGrid(fromAspect, toAspect, fromEl, toEl) : ''}${typeof renderElementConnections === 'function' ? renderElementConnections(fromEl, toEl) : ''}</div></details>`;
 }
 
-
-function explainEdge(fromEl, toEl, activeCode, isDirect, hasChoices, isProvisional) {
-  const fromAspect = getAspect(fromEl); const toAspect = getAspect(toEl);
-  const fromLayer = getLayer(fromEl); const toLayer = getLayer(toEl);
-  const ruleKey = getAspectRuleKey(fromEl, toEl); const layerRuleKey = getLayerRuleKey(fromEl, toEl);
-  
-  const aspectRule = typeof ASPECT_RULES !== 'undefined' ? ASPECT_RULES[ruleKey] : null;
-  const layerRule  = typeof LAYER_RULES !== 'undefined' ? LAYER_RULES[layerRuleKey] : null;
-  const rel = typeof RELATIONSHIPS !== 'undefined' ? RELATIONSHIPS[activeCode] : null;
-  const primaryRelName = rel?.name ?? activeCode;
-
-  const mmFrom = typeof metamodelRoleLabelForElement === 'function' ? metamodelRoleLabelForElement(fromEl) : {label: ""};
-  const mmTo = typeof metamodelRoleLabelForElement === 'function' ? metamodelRoleLabelForElement(toEl) : {label: ""};
-
-  const pill = (name) => {
-    let icon = typeof window.getElementMiniSvg === "function" ? window.getElementMiniSvg(name, 18).replace(/currentColor/g, "#334155").replace('<svg ', '<svg style="color: #334155; fill: none; opacity: 0.8;" ') : "";
-    return `<span style="display: inline-flex; align-items: center; gap: 6px; background: #ffffff; padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(51, 65, 85, 0.2); font-size: 12px; font-weight: 600; color: #334155;">${icon} ${name}</span>`;
-  };
-
-  const visualHeader = `<div style="display: flex; align-items: center; justify-content: center; background: #f8fafc; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px dashed #cbd5e1;">${pill(fromEl)}${getRelationVisualSnippet(activeCode, isDirect)}${pill(toEl)}</div>`;
-
-  const keyFacts = `
-    <div class="edge-kicker">
-      <div class="edge-kicker-row" style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="edge-rel"><strong>${primaryRelName}</strong> <cite>${rel?.section ?? ""}</cite></div>
-        <div class="edge-tags"><span class="tag ${isDirect?'tag-direct':'tag-derived'}">${isDirect?'Direct':'Derived'}</span><span class="edge-codes">[${activeCode}]</span></div>
-      </div>
-      <div style="margin-top:8px; color:var(--text-2); font-size:13px;"><strong>Justification:</strong> ${fromEl} ${relationshipVerb(primaryRelName)} ${toEl}.</div>
-      <ul class="edge-bullets" style="margin-top: 12px;">
-        <li><strong>Metamodel check</strong>: <em>${fromAspect}</em> → <em>${toAspect}</em> <button class="mm-jump" type="button" data-mm-from="${encodeURIComponent(fromEl)}" data-mm-to="${encodeURIComponent(toEl)}" data-mm-rel="${encodeURIComponent(primaryRelName)}">Show on metamodel</button></li>
-        ${mmFrom.label || mmTo.label ? `<li><strong>Metamodel roles</strong>: ${fromEl} = <em>${mmFrom.label ?? "—"}</em> → ${toEl} = <em>${mmTo.label ?? "—"}</em></li>` : ""}
-        ${layerRule ? `<li><strong>Layer pattern</strong>: ${layerRule.explanation} <cite>${layerRule.section}</cite></li>` : ""}
-      </ul>
-    </div>`;
-
-  const details = `<details class="explain-details" style="margin-top: 16px;"><summary>Spec Tables & Definitions</summary><div>${typeof renderAspectGrid === 'function' ? renderAspectGrid(fromAspect, toAspect, fromEl, toEl) : ''}${typeof renderElementConnections === 'function' ? renderElementConnections(fromEl, toEl) : ''}</div></details>`;
-
-  return visualHeader + keyFacts + details;
+/**
+ * Mapping-type suffix for the consolidated badge (pairs with Strong / Valid / Informal).
+ */
+function semanticBadgeMappingParenthetical(tier, hopStep, semanticHop, rigorPreset, resolvedPrimaryCode) {
+  if (tier.strength === "Strong") return "Direct";
+  if (tier.strength === "Valid") return "Derived";
+  const code = String(resolvedPrimaryCode || "").toUpperCase();
+  if (hopStep?.isAssociation || semanticHop?.rule === "Association" || code === "O") {
+    return "Generic";
+  }
+  const p = normalizeExplainRigorPreset(rigorPreset);
+  if (p === "discovery") return "Discovery";
+  return "Caution";
 }
 
-function explainEdge(fromEl, toEl, activeCode, isDirect, hasChoices, isProvisional) {
+function semanticStrengthBadgeHtml(step, semanticHop, rigorPreset = "academic", resolvedPrimaryCode) {
+  const tierOpts =
+    resolvedPrimaryCode != null && String(resolvedPrimaryCode).trim() !== ""
+      ? { resolvedPrimaryCode }
+      : undefined;
+  const tier = classifyHopSemanticTierUi(step, semanticHop, tierOpts);
+  const slug = String(tier.strength || "").toLowerCase();
+  const mapping = semanticBadgeMappingParenthetical(
+    tier,
+    step,
+    semanticHop,
+    rigorPreset,
+    resolvedPrimaryCode
+  );
+  const label = `${tier.strength} (${mapping})`;
+  const rule = tier.reason || "the active modeling rule";
+  const summary = `This hop is considered ${label} because it follows ${rule}.`;
+  const discoveryEmphasis =
+    tier.strength === "Informal" &&
+    normalizeExplainRigorPreset(rigorPreset) === "discovery" &&
+    mapping !== "Generic"
+      ? " semantic-strength-badge--discovery-emphasis"
+      : "";
+  const genericAssoc =
+    tier.strength === "Informal" && mapping === "Generic"
+      ? " semantic-strength-badge--generic-association"
+      : "";
+  return `<span class="semantic-strength-badge semantic-strength-badge--${slug}${discoveryEmphasis}${genericAssoc} explain-badge-tip" data-explain-tip="semantic-strength" data-semantic-strength="${escPathDiag(tier.strength)}" data-semantic-mapping="${escPathDiag(mapping)}" data-semantic-rule="${escPathDiag(rule)}" tabindex="0" role="note" aria-label="${escPathDiag(summary)}">${escPathDiag(label)}</span>`;
+}
+
+function mentorInsightText(semanticHop, activeCode, rigorPreset, step) {
+  const violation = semanticHop?.violation || "None";
+  if (violation === "V-Shape") {
+    return "Mentor Note: You are chaining an 'Upward' Serving link into a 'Downward' Serving link. While allowed in Discovery mode, this creates a weak logical connection between unrelated elements.";
+  }
+  if (violation === "MotivationDetour") {
+    return "Mentor Note: You are bridging a connection between two Core elements through a Motivation element. This is semantically loose.";
+  }
+  const p = normalizeExplainRigorPreset(rigorPreset);
+  const code = String(activeCode || "").toUpperCase();
+  if (p === "discovery" && (step?.isAssociation || code === "O")) {
+    return "Mentor Note: This hop uses a generic Association bridge. It can be useful for exploration, but it is semantically weaker than a specific Appendix B or §5.7 relationship.";
+  }
+  return "";
+}
+
+function explainEdge(
+  fromEl,
+  toEl,
+  activeCode,
+  isDirect,
+  hasChoices,
+  isProvisional,
+  hopIndex,
+  safeCodes,
+  architectNotesHtml = "",
+  matrixDirectCodes = null,
+  matrixDerivedCodes = null,
+  semanticHop = null,
+  hopStep = null,
+  rigorPreset = "academic",
+  narrativeOpts = null
+) {
+  const fromScenario = getScenarioDisplayName(fromEl);
+  const toScenario = getScenarioDisplayName(toEl);
+  const fromDisplay = fromScenario.display;
+  const toDisplay = toScenario.display;
+  const fromClause = fromScenario.isThematic ? sentenceCaseStart(withArticle(fromDisplay)) : fromDisplay;
+  const toClause = toScenario.isThematic ? withArticle(toDisplay) : toDisplay;
   const fromAspect = getAspect(fromEl);
   const toAspect   = getAspect(toEl);
   const fromLayer  = getLayer(fromEl);
@@ -1498,33 +4309,174 @@ function explainEdge(fromEl, toEl, activeCode, isDirect, hasChoices, isProvision
   const rel = RELATIONSHIPS[activeCode];
   const primaryRelName = rel?.name ?? activeCode;
   const dirRules = RELATIONSHIP_DIRECTIONALITY[activeCode];
+  const activeCodeUpper = String(activeCode || "O").toUpperCase();
+  const forwardRoleText = rel?.roleNames?.forward || relationshipVerb(primaryRelName);
+  const backwardRoleText = rel?.roleNames?.backward || forwardRoleText;
+  const useBackwardRoles =
+    !!narrativeOpts &&
+    !isProvisional &&
+    hopNarrativeUsesBackwardRoles(
+      fromEl,
+      toEl,
+      narrativeOpts.routeStartEl,
+      narrativeOpts.routeEndEl,
+      activeCodeUpper
+    );
+  const justificationMain = useBackwardRoles
+    ? hopJustificationSentenceBackward(toClause, backwardRoleText, fromClause)
+    : hopJustificationSentenceForward(fromClause, forwardRoleText, toClause);
 
-  const pill = (name) => {
-    const textColor = "#334155";
-    const icon = typeof window.getElementMiniSvg === "function" ? window.getElementMiniSvg(name, 18) : "";
-    return `<div style="display: flex; align-items: center; gap: 8px; background: white; padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); font-weight: 700; color: ${textColor}; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">${icon} ${name}</div>`;
-  };
+  // Relationship picker: when multiple options exist for a hop, always include Association (O).
+  // Association is universal (§5.2.4) and can be a pragmatic fallback even when it's not "ideal".
+  const codesForButtons = (() => {
+    const raw = Array.isArray(safeCodes) ? safeCodes : [];
+    const out = [];
+    const seen = new Set();
+    for (const c of raw) {
+      const u = String(c || "").toUpperCase();
+      if (!u) continue;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      out.push(u);
+    }
+    if (!seen.has("O")) out.push("O");
+    return out;
+  })();
+  let matrixDirectForUi = matrixDirectCodes ?? [];
+  let matrixDerivedForUi = matrixDerivedCodes ?? [];
+  if (typeof mergeMatrixRowForPair === "function") {
+    const row = mergeMatrixRowForPair(fromEl, toEl, true);
+    const md = (row.direct || []).map((c) => String(c).toUpperCase());
+    const mder = (row.derived || []).map((c) => String(c).toUpperCase());
+    if (md.length + mder.length > 0) {
+      matrixDirectForUi = md;
+      matrixDerivedForUi = mder;
+    }
+  }
+  const hopTier = pathStepWithCanonicalMatrixRow(hopStep, fromEl, toEl);
+  const chosenForUi =
+    hopIndex != null && typeof window !== "undefined" ? window.state?.userChoices?.[hopIndex] : undefined;
+  const choiceCommitted =
+    hopIndex != null &&
+    chosenForUi != null &&
+    chosenForUi !== "" &&
+    codesForButtons.some((c) => String(c).toUpperCase() === String(chosenForUi).toUpperCase());
+  const choiceButtons =
+    hasChoices && hopIndex != null && codesForButtons.length > 1
+      ? `<div class="edge-rel-choice-row" role="group" aria-label="Relationship options">
+          ${codesForButtons
+            .map((c) => {
+              const cStr = String(c || "O").toUpperCase();
+              const isAssoc = cStr === "O";
+              const name = RELATIONSHIPS[cStr]?.name || cStr;
+              const isSelected =
+                choiceCommitted && cStr.toUpperCase() === String(chosenForUi).toUpperCase();
+              const title = isAssoc
+                ? "Association (§5.2.4) is the most permissive (generic) relationship. Prefer a specific relationship type when it fits; use Association when it better matches the context."
+                : "";
+              const kindLabel = relChoiceMatrixKindLabel(cStr, matrixDirectForUi, matrixDerivedForUi);
+              const kindHtml = kindLabel
+                ? `<span class="edge-rel-choice-btn__kind">${escPathDiag(kindLabel)}</span>`
+                : "";
+              return `<button type="button" class="edge-rel-choice-btn${isAssoc ? " edge-rel-choice-btn--association" : ""}${isSelected ? " edge-rel-choice-btn--selected" : ""}" title="${escPathDiag(title)}" aria-pressed="${isSelected ? "true" : "false"}" onclick="event.stopPropagation(); window.setEdgeChoice(${hopIndex}, '${cStr}');"><span class="edge-rel-choice-btn__stack"><span class="edge-rel-choice-btn__label">${escPathDiag(name)}</span>${kindHtml}</span></button>`;
+            })
+            .join("")}
+        </div>`
+      : "";
 
-  const visualHeader = `<div style="display: flex; align-items: center; justify-content: center; background: #f8fafc; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px dashed #cbd5e1;">${pill(fromEl)}${getRelationVisualSnippet(activeCode, isDirect)}${pill(toEl)}</div>`;
+  const choicePrompt = hasChoices
+    ? `<div class="explain-edge-choice-prompt" role="region" aria-label="Relationship choice">
+        <p class="explain-edge-choice-prompt-text">Choose the relationship that best matches your modeling intent for this hop.</p>
+        ${choiceButtons}
+      </div>`
+    : "";
 
-  const keyFacts = `
-    <div class="edge-kicker">
-      <div class="edge-kicker-row" style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="edge-rel"><strong>${primaryRelName}</strong> <cite>${rel?.section ?? ""}</cite></div>
-        <div class="edge-tags"><span class="tag ${isDirect ? 'tag-direct' : 'tag-derived'}">${isDirect ? 'Direct' : 'Derived'}</span><span class="edge-codes">[${activeCode}]</span></div>
+  const mentorText = mentorInsightText(semanticHop, activeCodeUpper, rigorPreset, hopStep);
+  const mentorInsightInner = mentorText
+    ? `<div class="mentor-insight mentor-insight--formal" role="note">⚠️ ${escPathDiag(mentorText)}</div>`
+    : "";
+
+  const derivationInfo =
+    typeof DERIVATION_LOGIC_BY_CODE !== "undefined"
+      ? DERIVATION_LOGIC_BY_CODE[activeCodeUpper]
+      : null;
+  const choiceIsMatrixDerived =
+    activeCodeUpper !== "O" &&
+    !hopStep?.isAssociation &&
+    !!hopTier &&
+    !isActiveCodeDirectInMatrix(hopTier, activeCodeUpper);
+  const semanticLogicSentence = (() => {
+    if (semanticHop?.rule === "Derived" || choiceIsMatrixDerived) {
+      return derivationInfo?.studentText || "This is a Derived relationship allowed by §5.7 derivation rules.";
+    }
+    if (semanticHop?.rule === "Association" || activeCodeUpper === "O" || hopStep?.isAssociation) {
+      return "This uses a generic Association bridge under §5.2.4, which is semantically informal.";
+    }
+    return "This is a Direct relationship listed in Appendix B.";
+  })();
+  const violationSentence =
+    semanticHop?.violation && semanticHop.violation !== "None"
+      ? ` Mentor flag: ${semanticHop.violationExplain || semanticHop.violationLabel || "semantic rule exception detected."}`
+      : "";
+  const directCodesText = (matrixDirectForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
+  const derivedCodesText = (matrixDerivedForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
+  const derivationFormula =
+    derivationInfo?.formula
+    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
+      ? "§5.7 derivation chain inferred from this pair."
+      : "No derivation needed for a direct Appendix B hop.");
+  const derivationStudentText =
+    derivationInfo?.studentText
+    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
+      ? "This hop is accepted as a derived relation per §5.7."
+      : "This hop is direct, so derivation chain math is not required.");
+  const derivationLogicSection = `<details class="explain-derivation-logic">
+      <summary>Derivation Logic</summary>
+      <div class="explain-derivation-logic-body">
+        <div><strong>Rule math:</strong> ${escPathDiag(derivationFormula)}</div>
+        <div style="margin-top:6px">${escPathDiag(derivationStudentText)}</div>
+        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · direct: [${escPathDiag(directCodesText)}] · derived: [${escPathDiag(derivedCodesText)}]</div>
       </div>
-      <div style="margin-top:12px; color:var(--text-2); font-size:13.5px; line-height:1.5;"><strong>Justification:</strong> ${fromEl} ${relationshipVerb(primaryRelName)} ${toEl}.</div>
-      <ul class="edge-bullets" style="margin-top: 15px;">
+    </details>`;
+
+  const formalMetamodelBody = `
+      <p class="explain-formal-intro">${escPathDiag(semanticLogicSentence)}${violationSentence}</p>
+      ${mentorInsightInner}
+      <ul class="edge-bullets edge-bullets--formal">
         <li><strong>Metamodel check</strong>: <em>${fromAspect}</em> → <em>${toAspect}</em> <button class="mm-jump" type="button" data-mm-from="${encodeURIComponent(fromEl)}" data-mm-to="${encodeURIComponent(toEl)}" data-mm-rel="${encodeURIComponent(primaryRelName)}">Show on metamodel</button></li>
         ${mmFrom.label || mmTo.label ? `<li><strong>Metamodel roles</strong>: ${fromEl} = <em>${mmFrom.label ?? "—"}</em> → ${toEl} = <em>${mmTo.label ?? "—"}</em></li>` : ""}
-        ${dirRules ? `<li><strong>Direction</strong>: ${dirRules.rule} <cite>${dirRules.section}</cite></li>` : ""}
+        ${dirRules ? `<li><strong>Direction rule</strong>: ${dirRules.rule} <cite>${dirRules.section}</cite></li>` : ""}
         ${fromLayer !== toLayer && layerRule ? `<li><strong>Layer pattern</strong>: ${layerRule.explanation} <cite>${layerRule.section}</cite></li>` : ""}
       </ul>
+      ${derivationLogicSection}
+      <div class="explain-formal-defs">${renderAspectGrid(fromAspect, toAspect, fromEl, toEl)}</div>`;
+
+  const formalMetamodelAccordion = `<details class="explain-details explain-formal-metamodel">
+      <summary class="explain-formal-metamodel-summary">🔍 View Formal Metamodel Logic</summary>
+      <div class="explain-formal-metamodel-inner">${formalMetamodelBody}</div>
+    </details>`;
+
+  const keyFacts = isProvisional
+    ? `<div class="edge-kicker edge-kicker--undecided">
+      <p class="edge-kicker-undecided-text">Pick a relationship above. The justification, direction notes, and diagram will update to match your choice — none of the options is implied as the default.</p>
+      ${architectNotesHtml ? `<div class="edge-architect-notes edge-architect-notes--primary">${architectNotesHtml}</div>` : ""}
+    </div>`
+    : `
+    <div class="edge-kicker">
+      <div class="edge-kicker-row edge-kicker-row--rel-header">
+        <div class="edge-rel">
+          <strong>${primaryRelName}</strong>
+          <span class="edge-codes edge-codes--primary" title="Appendix B / matrix relationship code">[${activeCode}]</span>
+          ${semanticStrengthBadgeHtml(hopTier, semanticHop, rigorPreset, activeCode)}
+          <cite>${rel?.section ?? ""}</cite>
+        </div>
+      </div>
+      <p class="edge-justification-primary"><strong>Justification:</strong> ${justificationMain}.</p>
+      ${architectNotesHtml ? `<div class="edge-architect-notes edge-architect-notes--primary">${architectNotesHtml}</div>` : ""}
+      ${formalMetamodelAccordion}
     </div>`;
 
-  const details = `<details class="explain-details" style="margin-top: 20px;"><summary>Spec Tables & Definitions</summary><div>${renderAspectGrid(fromAspect, toAspect, fromEl, toEl)}${renderElementConnections(fromEl, toEl)}</div></details>`;
-
-  return visualHeader + keyFacts + details;
+  return choicePrompt + (isProvisional ? mentorInsightInner : "") + keyFacts;
 }
 
 
@@ -1573,16 +4525,35 @@ function extractWaypoints(segments) {
 }
 
 /**
+ * For multi-segment (waypoint) paths, the flat hop index where each segment’s chain begins.
+ * Used to insert section headings between “roads” (ordered segments).
+ */
+function segmentFirstHopIndices(segments, pathIndex = 0) {
+  const out = [];
+  let flatLen = 0;
+  for (let s = 0; s < segments.length; s++) {
+    const path = segments[s].paths[pathIndex] ?? segments[s].paths[0];
+    if (!path || path.length === 0) continue;
+    const added = s === 0 ? path.length : path.length - 1;
+    const firstHop = s === 0 ? 1 : flatLen;
+    out.push({ segmentIndex: s, firstHop, from: segments[s].from, to: segments[s].to });
+    flatLen += added;
+  }
+  return out;
+}
+
+/**
  * Determines the dominant relationship type in a path for the summary text.
  */
 function characterisePath(flatSteps) {
   const counts = {};
-  for (const step of flatSteps) {
-    if (!step.codes) continue;
-    for (const c of step.codes) {
-      const u = c.toUpperCase();
-      counts[u] = (counts[u] ?? 0) + 1;
-    }
+  for (let i = 1; i < flatSteps.length; i++) {
+    const step = flatSteps[i];
+    if (!step.codes || !step.codes.length) continue;
+    if (step.codes.length > 1 && !edgeChoiceCommittedForHop(i, step.codes)) continue;
+    const chosen = resolvedRelationshipCodeForHop(step, i);
+    const u = String(chosen).toUpperCase();
+    counts[u] = (counts[u] ?? 0) + 1;
   }
   const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
   if (!top) return "a mixed set of relationships";
@@ -1617,26 +4588,87 @@ function layerCrossingSentence(fromLayer, toLayer) {
   return `The path crosses from the <strong>${fromLayer}</strong> layer to <strong>${toLayer}</strong>.`;
 }
 
-function explainPath(segments, selectedPathIndex = 0, { constrained = true } = {}) {
+/** One-line layer hop for collapsed path narrative (no long prose). */
+function layerCrossingShort(fromLayer, toLayer) {
+  const rule = LAYER_RULES[`${fromLayer}→${toLayer}`];
+  if (rule) {
+    return `<strong>${fromLayer}</strong> → <strong>${toLayer}</strong> · <em>${rule.pattern}</em>`;
+  }
+  return `<strong>${fromLayer}</strong> → <strong>${toLayer}</strong>`;
+}
+
+function layerBadgeClassForExplain(layerLabel) {
+  switch (layerLabel) {
+    case "Business-Heavy":
+      return "path-badge--layer-business";
+    case "Application-Heavy":
+      return "path-badge--layer-application";
+    case "Tech/Physical-Heavy":
+      return "path-badge--layer-tech";
+    default:
+      return "path-badge--layer-fullstack";
+  }
+}
+
+function precisionBadgeClassForExplain(precisionLabel) {
+  return precisionLabel === "Executive Summary"
+    ? "path-badge--precision-executive"
+    : "path-badge--precision-ground";
+}
+
+/**
+ * Maps resolved ArchiMate layer to a CSS class suffix (see `.step-el--layer-*` in styles).
+ */
+function layerSlugForStepPill(layerName) {
+  switch (String(layerName || "")) {
+    case "Motivation": return "motivation";
+    case "Strategy": return "strategy";
+    case "Business": return "business";
+    case "Application": return "application";
+    case "Technology": return "technology";
+    case "Physical": return "physical";
+    case "Implementation & Migration": return "implementation";
+    case "Composite": return "composite";
+    default: return "unknown";
+  }
+}
+
+function explainPath(segments, selectedPathIndex = 0, { constrained = true, perspectiveMeta = null, perspectiveTitles = null, rigorPreset = "academic" } = {}) {
   try {
-    if (!segments || segments.length === 0) return "";
+    if (!segments || segments.length === 0) return { routeColumn: "", detailColumn: "" };
     const flatSteps = flattenSegments(segments, selectedPathIndex);
-    if (flatSteps.length === 0) return "";
+    if (flatSteps.length === 0) return { routeColumn: "", detailColumn: "" };
 
     const waypoints    = extractWaypoints(segments);
     const midpoints    = waypoints.slice(1, -1);
     const fromEl       = flatSteps[0].element;
     const toEl         = flatSteps[flatSteps.length - 1].element;
+    const fromScenario = getScenarioDisplayName(fromEl);
+    const toScenario = getScenarioDisplayName(toEl);
+    const fromDisplay = fromScenario.display;
+    const toDisplay = toScenario.display;
     const hopCount     = flatSteps.length - 1;
+    const pathCount = Math.max(
+      0,
+      ...segments.map((s) => (Array.isArray(s?.paths) ? s.paths.length : 0))
+    );
+    const rigorLabel = explainRigorPresetLabel(rigorPreset);
+    const rigorHint =
+      rigorLabel === "Academic"
+        ? "Switch to Discovery to see informal shortcuts."
+        : rigorLabel === "Discovery"
+          ? "Switch to Academic to hide informal shortcuts."
+          : "";
     const derivedCount = flatSteps.filter(s => s.isDirect === false).length;
     const transitions  = detectLayerTransitions(flatSteps);
     const pattern      = characterisePath(flatSteps);
-    const parts        = [];
+    const routeParts   = [];
+    const detailParts  = [];
 
     if (constrained && midpoints.length > 0) {
       const midList = midpoints.map(m => `<strong>${m}</strong>`).join(", ");
-      parts.push(`<div class="explain-waypoint-note">
-        Path constrained to pass through ${midList}. The navigator found a valid route satisfying this constraint.
+      routeParts.push(`<div class="explain-waypoint-note">
+        Path constrained to pass through ${midList}. ArchiTrek found a valid route satisfying this constraint.
       </div>`);
     }
 
@@ -1645,121 +4677,363 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true } = {
     metaLine += derivedCount > 0
       ? ` · <span class="tag tag-derived">${derivedCount} derived (§5.7)</span>`
       : ` · <span class="tag tag-direct">All direct (Appendix B)</span>`;
+    const educationalContrast = (() => {
+      if (hopCount < 2 || derivedCount > 0) return "";
+      if (typeof mergeMatrixRowForPair !== "function") return "";
+      const row = mergeMatrixRowForPair(fromEl, toEl, true);
+      if (!row?.derived?.length) return "";
+      const wcfg =
+        typeof normalizePathWeights === "function" && typeof window !== "undefined" && window.state
+          ? normalizePathWeights({
+              pathWeightDirect: window.state.searchPathWeightDirect,
+              pathWeightDerived: window.state.searchPathWeightDerived,
+              pathWeightAssociation: window.state.searchPathWeightAssociation,
+              pathWeightLayerSkip: window.state.searchPathWeightLayerSkip,
+            })
+          : null;
+      const totalWeight =
+        typeof pathTotalWeight === "function"
+          ? pathTotalWeight(flatSteps, wcfg || undefined)
+          : hopCount;
+      const derW = wcfg?.derived ?? 5;
+      if (!(totalWeight < derW)) return "";
+      return `Found a <strong>${hopCount}-hop Direct</strong> path (Total Weight: <strong>${totalWeight}</strong>). Preferred over a <strong>1-hop Derived</strong> shortcut (Weight: <strong>${derW}</strong>).`;
+    })();
 
-    const stepElementHtml = (elementName) => {
+    const stepElementHtml = (elementName, flatStepIndex, { preferCanonicalChip = false } = {}) => {
       const safeName = String(elementName ?? "");
-      const textColor = "#334155"; // Softer slate gray
-      const borderColor = "rgba(51, 65, 85, 0.2)"; // Light, transparent border
-      let icon = "";
-      if (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function") {
-        try { 
-          // Match icon color to text color
-          icon = window.getElementMiniSvg(safeName, 20)
-                  .replace(/currentColor/g, textColor)
-                  .replace('<svg ', `<svg style="color: ${textColor}; fill: none; opacity: 0.8;" `); 
-        } catch(e) {}
+      const scenario = getScenarioDisplayName(safeName);
+      const displayName = scenario.display;
+      const chipLabel = preferCanonicalChip ? safeName : displayName;
+      const resolvedLayer = getSwimlaneLayer(safeName, flatStepIndex, flatSteps);
+      const layerSlug = layerSlugForStepPill(resolvedLayer);
+
+      let iconSvg = "";
+      try {
+        if (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function") {
+          iconSvg = `<span class="step-el-icon" aria-hidden="true">${window.getElementMiniSvg(safeName, 18)}</span>`;
+        }
+      } catch (_) {
+        /* ignore */
       }
+
+      const aspect = getAspect(safeName);
+      const ariaExtra = scenario.isThematic
+        ? ` aria-label="${escPathDiag(`${displayName}, ArchiMate ${safeName}, ${aspect}, ${resolvedLayer}`)}"`
+        : ` aria-label="${escPathDiag(`ArchiMate ${safeName}, ${aspect}, ${resolvedLayer}`)}"`;
+      const scenarioTipRow = scenario.isThematic
+        ? `<span class="step-el-tip-row step-el-tip-row--scenario"><span class="step-el-tip-muted">Scenario label</span> <span class="step-el-tip-strong">${escPathDiag(displayName)}</span></span>`
+        : "";
+
       return `
-        <button type="button" class="step-el el-info-trigger" data-element="${encodeURIComponent(safeName)}"
-          title="Learn more (spec definition)"
-          style="display: inline-flex; align-items: center; gap: 8px; background: #ffffff !important; padding: 5px 12px; border-radius: 10px; border: 1px solid ${borderColor} !important; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); margin: 0 4px; cursor: pointer; font: inherit; color: inherit;">
-          <span style="flex-shrink: 0; display: flex; align-items: center;">${icon}</span>
-          <span class="step-el-name" style="color: ${textColor} !important; font-weight: 600 !important; font-size: 13px !important; letter-spacing: -0.01em; text-shadow: none !important;">
-            ${safeName}
+        <span class="step-el-tip-wrap">
+          <button type="button" class="step-el path-node-chip step-el--crumb el-info-trigger step-el--layer-${layerSlug}" data-element="${encodeURIComponent(safeName)}"${ariaExtra}>
+            ${iconSvg}
+            <span class="step-el-name">${escPathDiag(chipLabel)}</span>
+          </button>
+          <span class="step-el-tip" aria-hidden="true">
+            <span class="step-el-tip-inner">
+              <span class="step-el-tip-kicker">ArchiMate element</span>
+              <span class="step-el-tip-title">${escPathDiag(safeName)}</span>
+              <span class="step-el-tip-meta">${escPathDiag(aspect)} · ${escPathDiag(resolvedLayer)} layer</span>
+              ${scenarioTipRow}
+              <span class="step-el-tip-foot">Click for definition</span>
+            </span>
           </span>
-        </button>`;
+        </span>`;
+    };
+
+    /** Hop summary row: same interactive chips + tooltips as the path strip; stacked subline when the chip uses a scenario name. */
+    const hopSummaryEndpointHtml = (elementName, flatStepIndex, useThematicChipLabel) => {
+      const safeName = String(elementName ?? "");
+      const scenario = getScenarioDisplayName(safeName);
+      const displayName = scenario.display;
+      const chipLabel = useThematicChipLabel ? displayName : safeName;
+      const resolvedLayer = getSwimlaneLayer(safeName, flatStepIndex, flatSteps);
+      const layerSlug = layerSlugForStepPill(resolvedLayer);
+
+      let iconSvg = "";
+      try {
+        if (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function") {
+          iconSvg = `<span class="step-el-icon" aria-hidden="true">${window.getElementMiniSvg(safeName, 18)}</span>`;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+
+      const aspect = getAspect(safeName);
+      const ariaExtra = scenario.isThematic
+        ? ` aria-label="${escPathDiag(`${displayName}, ArchiMate ${safeName}, ${aspect}, ${resolvedLayer}`)}"`
+        : ` aria-label="${escPathDiag(`ArchiMate ${safeName}, ${aspect}, ${resolvedLayer}`)}"`;
+      const scenarioTipRow = scenario.isThematic
+        ? `<span class="step-el-tip-row step-el-tip-row--scenario"><span class="step-el-tip-muted">Scenario label</span> <span class="step-el-tip-strong">${escPathDiag(displayName)}</span></span>`
+        : "";
+      const subline = explainAbstractSublineFromScenario(scenario);
+
+      return `<span class="step-el-tip-wrap explain-hop-summary-endpoint">
+        <button type="button" class="step-el path-node-chip path-node-chip--stacked step-el--crumb el-info-trigger step-el--layer-${layerSlug}" data-element="${encodeURIComponent(safeName)}"${ariaExtra}>
+          <span class="path-node-chip-line path-node-chip-line--head">
+            ${iconSvg}
+            <span class="step-el-name">${escPathDiag(chipLabel)}</span>
+          </span>
+          ${subline}
+        </button>
+        <span class="step-el-tip" aria-hidden="true">
+          <span class="step-el-tip-inner">
+            <span class="step-el-tip-kicker">ArchiMate element</span>
+            <span class="step-el-tip-title">${escPathDiag(safeName)}</span>
+            <span class="step-el-tip-meta">${escPathDiag(aspect)} · ${escPathDiag(resolvedLayer)} layer</span>
+            ${scenarioTipRow}
+            <span class="step-el-tip-foot">Click for definition</span>
+          </span>
+        </span>
+      </span>`;
     };
 
     const strip = flatSteps
-      .map(s => stepElementHtml(s.element))
-      .join(`<span class="explain-strip-arrow" style="margin: 0 6px; color: var(--text-3, #94a3b8); font-weight: bold;">→</span>`);
+      .map((s, idx) => stepElementHtml(s.element, idx))
+      .join(`<span class="explain-strip-arrow path-node-arrow" aria-hidden="true">→</span>`);
 
-    parts.push(`<div class="explain-path-overview">
-      <div class="explain-summary">
-        <h3>${fromEl} → ${toEl}</h3>
+    const hasLayerTransitions = transitions.length > 0;
+    /** Keep this disclosure focused on layer/spec notes (route pills are shown in the header block). */
+    const pathNarrativeHtml = (() => {
+      if (!hasLayerTransitions) return "";
+
+      const summaryBits = ["How this path reads"];
+      if (hasLayerTransitions) {
+        summaryBits.push(
+          `${transitions.length} layer crossing${transitions.length !== 1 ? "s" : ""}`
+        );
+      }
+      const summaryLine = escPathDiag(summaryBits.filter(Boolean).join(" · "));
+
+      if (hasLayerTransitions) {
+        const shortItems = transitions.map(
+          (t) => `<li class="explain-path-reads-item">${layerCrossingShort(t.fromLayer, t.toLayer)}</li>`
+        );
+        const longItems = transitions.map(
+          (t) =>
+            `<li class="explain-path-reads-item explain-path-reads-item--long">${layerCrossingSentence(
+              t.fromLayer,
+              t.toLayer
+            )}</li>`
+        );
+
+        return `<details class="explain-path-reads">
+          <summary class="explain-path-reads-summary">${summaryLine}</summary>
+          <div class="explain-path-reads-body">
+            <ul class="explain-path-reads-list">${shortItems.join("")}</ul>
+            <details class="explain-path-reads-nested">
+              <summary>Full layer notes (spec-style)</summary>
+              <ul class="explain-path-reads-list explain-path-reads-list--long">${longItems.join("")}</ul>
+            </details>
+          </div>
+        </details>`;
+      }
+      return "";
+    })();
+
+    const routeHeaderPills = (() => {
+      if (!perspectiveMeta) return "";
+      const out = [];
+      if (perspectiveMeta.layerLabel) {
+        out.push(
+          `<span class="path-badge ${layerBadgeClassForExplain(perspectiveMeta.layerLabel)}">${escPathDiag(
+            perspectiveMeta.layerLabel
+          )}</span>`
+        );
+      }
+      if (perspectiveMeta.precisionLabel) {
+        out.push(
+          `<span class="path-badge ${precisionBadgeClassForExplain(perspectiveMeta.precisionLabel)}">${
+            perspectiveMeta.precisionLabel === "Executive Summary" ? "Simplified" : "Ground-Truth"
+          }</span>`
+        );
+      }
+      return out.length ? `<div class="explain-route-meta-pills">${out.join("")}</div>` : "";
+    })();
+
+    routeParts.push(`<div class="explain-element-rail" aria-label="Elements on this path">
         <div class="explain-element-strip explain-element-strip--in-overview">
           ${strip}
         </div>
+      </div>`);
+
+    detailParts.push(`<div class="explain-path-overview explain-path-overview--lead">
+      <div class="explain-summary">
+        <span class="panel-section-heading explain-route-eyebrow">Route ${selectedPathIndex + 1}</span>
+        <h2 class="explain-route-title">${fromDisplay} → ${toDisplay}</h2>
+        ${routeHeaderPills}
+        ${pathNarrativeHtml}
         <p class="explain-path-meta">${metaLine}</p>
+        ${educationalContrast ? `<p class="explain-path-purpose">${educationalContrast}</p>` : ""}
       </div>
     </div>`);
 
-    parts.push(`<details class="explain-element-defs" style="margin-bottom: 24px; background: var(--surface-2, #f8fafc); padding: 12px; border-radius: 8px; border: 1px solid var(--border-light, #e2e8f0);">
-      <summary style="outline: none;">Spec excerpts for elements on this path (${flatSteps.length})</summary>
-      <div style="margin-top: 12px;">`);
-    
+    detailParts.push(`<details class="explain-element-defs">
+      <summary>Spec excerpts for elements on this path (${flatSteps.length})</summary>
+      <div class="explain-element-defs-body">`);
     for (const step of flatSteps) {
-      parts.push(elementSummary(step.element));
+      detailParts.push(elementSummary(step.element));
     }
-    
-    parts.push(`</div></details>`);
+    detailParts.push(`</div></details>`);
 
-    parts.push(`<div class="explain-steps-section"><h4>Step-by-step justification</h4>`);
+    const segmentInfos = segmentFirstHopIndices(segments, selectedPathIndex);
+    const segmentHeadingByFirstHop = new Map();
+    for (const si of segmentInfos) {
+      segmentHeadingByFirstHop.set(si.firstHop, si);
+    }
+
+    detailParts.push(`<div class="explain-steps-section"><h4 class="panel-section-heading">Step-by-step justification</h4>`);
+
+    let segmentBandOpen = false;
 
     for (let i = 1; i < flatSteps.length; i++) {
       const prev = flatSteps[i - 1];
       const curr = flatSteps[i];
 
-      const transition = transitions.find(t => t.atStep === i);
-      if (transition) {
-        parts.push(`<div class="explain-layer-crossing">
-          ${layerCrossingSentence(transition.fromLayer, transition.toLayer)}
-        </div>`);
+      const segHead = segmentHeadingByFirstHop.get(i);
+      if (segHead) {
+        if (segmentBandOpen) {
+          detailParts.push(`</div></div>`);
+        }
+        segmentBandOpen = true;
+        const fromSegScenario = getScenarioDisplayName(segHead.from);
+        const toSegScenario = getScenarioDisplayName(segHead.to);
+        const sf = fromSegScenario.display;
+        const st = toSegScenario.display;
+        const segOrd = segHead.segmentIndex + 1;
+        const defsForSeg = typeof ELEMENTS !== "undefined" ? ELEMENTS : {};
+        const semanticTitle = escPathDiag(
+          getSegmentSemanticLabel(segHead, segHead.segmentIndex, defsForSeg)
+        );
+        detailParts.push(
+          `<div class="explain-segment-band" role="group" aria-label="Segment ${segOrd}: hops on this part of the route">
+            <div class="panel-segment-header">
+              <div class="panel-segment-header-eyebrow">
+                <h4 class="panel-section-heading panel-section-heading--segment panel-segment-semantic-title">${semanticTitle}</h4>
+              </div>
+              <div class="panel-segment-route" aria-label="Segment endpoints">
+                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked">
+                  <span class="path-node-chip-primary">${escPathDiag(sf)}</span>
+                  ${explainAbstractSublineFromScenario(fromSegScenario)}
+                </span>
+                <span class="panel-segment-route-arrow path-node-arrow" aria-hidden="true">→</span>
+                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked">
+                  <span class="path-node-chip-primary">${escPathDiag(st)}</span>
+                  ${explainAbstractSublineFromScenario(toSegScenario)}
+                </span>
+              </div>
+            </div>
+            <p class="explain-segment-hops-lead">Hops</p>
+            <div class="explain-segment-hops" role="group" aria-label="Hops in segment ${segOrd}">`
+        );
       }
 
       const isJunction = midpoints.includes(curr.element);
-      const waypointBadge = isJunction ? `<span class="tag tag-waypoint">Waypoint</span>` : "";
+      const waypointBadge = isJunction
+        ? `<span class="tag tag-waypoint explain-badge-tip" data-explain-tip="waypoint" tabindex="0" role="note">Waypoint</span>`
+        : "";
+      const weakAssoc =
+        !!curr.isAssociation && curr.element !== "Value" && curr.element !== "Meaning";
+      const weakBadge = weakAssoc
+        ? `<span class="tag tag-weak-link explain-badge-tip" data-explain-tip="association" tabindex="0" role="note">Generic link</span>`
+        : "";
 
       const safeCodes = curr.codes || [];
       const hasChoices = safeCodes.length > 1;
-      const chosenCode = typeof window !== 'undefined' && window.state?.userChoices?.[i];
-      const isProvisional = hasChoices && !chosenCode;
-      const activeCode = chosenCode ?? (safeCodes[0] ?? "O");
+      const activeCode = resolvedRelationshipCodeForHop(curr, i);
+      const isProvisional = hasChoices && !edgeChoiceCommittedForHop(i, safeCodes);
 
-      let headerConnector = `<span class="explain-arrow" aria-hidden="true">→</span>`;
-      
-      if (hasChoices) {
-          const options = safeCodes.map(c => {
-             const cStr = String(c || "O");
-             const name = RELATIONSHIPS[cStr.toUpperCase()]?.name || cStr;
-             const sel = cStr === activeCode ? "selected" : "";
-             return `<option value="${cStr}" ${sel}>${name}</option>`;
-          }).join("");
-          
-          headerConnector = `
-            <span class="explain-arrow" aria-hidden="true">→</span>
-            <select class="edge-choice-select" onchange="setEdgeChoice(${i}, this.value)" onclick="event.stopPropagation()">
-              ${options}
-            </select>
-            <span class="explain-arrow" aria-hidden="true">→</span>
-          `;
+      const illustrationPathKey = String(selectedPathIndex);
+      const architectNoteParts = [];
+      if (COMPOSITE_PATTERNS[prev.element]) {
+        architectNoteParts.push(
+          formatCompositeArchitectNote(prev.element, `${illustrationPathKey}:${i - 1}:${prev.element}`)
+        );
       }
+      if (COMPOSITE_PATTERNS[curr.element]) {
+        architectNoteParts.push(
+          formatCompositeArchitectNote(curr.element, `${illustrationPathKey}:${i}:${curr.element}`)
+        );
+      }
+      const architectNotesHtml = architectNoteParts.filter(Boolean).join(" ");
 
-      parts.push(`<div class="explain-edge-block">
-        <div class="explain-edge-title">
-          <span class="step-badge" style="${isProvisional ? 'background:#8b99af;border-color:#8b99af' : ''}" aria-label="Step ${i}">${i}</span>
-          ${waypointBadge}
-          ${stepElementHtml(prev.element)}
-          ${headerConnector}
-          ${stepElementHtml(curr.element)}
-        </div>
-        <div data-hop="${i}" data-from="${prev.element}" data-to="${curr.element}">
-          ${explainEdge(prev.element, curr.element, activeCode, curr.isDirect ?? true, hasChoices, isProvisional)}
-        </div>
+      const relHeaderName = isProvisional
+        ? "Relationship Pending"
+        : RELATIONSHIPS[String(activeCode || "O").toUpperCase()]?.name ?? String(activeCode);
+      const prevScenario = getScenarioDisplayName(prev.element);
+      const currScenario = getScenarioDisplayName(curr.element);
+      const prevDisp = prevScenario.display;
+      const currDisp = currScenario.display;
+      const domainKey = activeDomainContextKey();
+      const showThematicRoute =
+        domainKey !== "abstract" && (prevDisp !== prev.element || currDisp !== curr.element);
+      const actionRequiredTag = isProvisional
+        ? `<span class="tag tag-action-required">Action Required</span>`
+        : "";
+      const summaryCodeHtml = isProvisional
+        ? ""
+        : ` <span class="edge-codes edge-codes--primary explain-hop-summary-code" title="Matrix relationship code">[${escPathDiag(String(activeCode || "O").toUpperCase())}]</span>`;
+      const headerSnippet = isProvisional
+        ? getUndecidedRelationSnippet({ compact: true })
+        : getRelationVisualSnippet(activeCode, isActiveCodeDirectInMatrix(curr, activeCode), i, { compact: true });
+      const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(prev.element, i - 1, showThematicRoute)}<span class="explain-hop-summary-connector explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}</span>${hopSummaryEndpointHtml(curr.element, i, showThematicRoute)}</span>`;
+
+      detailParts.push(`<div class="explain-edge-block explain-hop-shell">
+        <details class="explain-hop-justification">
+          <summary class="explain-hop-summary">
+            <span class="explain-hop-summary-main">
+              <span class="step-badge${isProvisional ? " step-badge--provisional" : ""}" aria-label="Hop ${i} (same number as on the diagram)" title="Hop ${i}">${i}</span>
+              <span class="explain-hop-summary-body">
+                <div class="explain-hop-summary-top">
+                  <h3 class="explain-hop-summary-rel">${escPathDiag(relHeaderName)}${summaryCodeHtml}</h3>
+                  <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}</div>
+                </div>
+                ${routeCaptionHtml}
+              </span>
+            </span>
+          </summary>
+          <div class="explain-hop-expanded">
+            <div data-hop="${i}" data-from="${prev.element}" data-to="${curr.element}">
+              ${explainEdge(
+                prev.element,
+                curr.element,
+                activeCode,
+                isActiveCodeDirectInMatrix(curr, activeCode),
+                hasChoices,
+                isProvisional,
+                hasChoices ? i : undefined,
+                hasChoices ? safeCodes : undefined,
+                architectNotesHtml,
+                curr.matrixDirectCodes,
+                curr.matrixDerivedCodes,
+                curr.semanticHop || null,
+                curr,
+                rigorPreset,
+                { routeStartEl: fromEl, routeEndEl: toEl }
+              )}
+            </div>
+          </div>
+        </details>
       </div>`);
     }
 
-    parts.push(`</div>`);
+    if (segmentBandOpen) {
+      detailParts.push(`</div></div>`);
+    }
 
-    const uniqueCodes = [...new Set(
-      flatSteps.slice(1).map((s, idx) => {
-        const hopIdx = idx + 1;
-        const chosen = typeof window !== 'undefined' && window.state?.userChoices?.[hopIdx] 
-                       ? window.state.userChoices[hopIdx] 
-                       : (s.codes && s.codes[0]) ?? "O";
-        return String(chosen).toUpperCase();
-      })
-    )];
+    detailParts.push(`</div>`);
+
+    const uniqueCodes = [
+      ...new Set(
+        flatSteps.slice(1).flatMap((s, idx) => {
+          const hopIdx = idx + 1;
+          if (s.codes?.length > 1 && !edgeChoiceCommittedForHop(hopIdx, s.codes)) return [];
+          return [String(resolvedRelationshipCodeForHop(s, hopIdx)).toUpperCase()];
+        })
+      ),
+    ];
     
     const citations = uniqueCodes
       .map(c => RELATIONSHIPS[c])
@@ -1767,22 +5041,409 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true } = {
       .map(r => `${r.name} (${r.section})`)
       .join(" · ");
 
-    parts.push(`<div class="explain-closing">
+    detailParts.push(`<div class="explain-closing">
       <strong>Spec references:</strong> Appendix B (Normative) · ${citations}
       ${derivedCount > 0 ? "· §5.7 Derivation Rules" : ""}
+      <div class="explain-rigor-summary">Found ${pathCount} path${pathCount === 1 ? "" : "s"} using ${escPathDiag(rigorLabel)} Rigor.${rigorHint ? ` (${escPathDiag(rigorHint)})` : ""}</div>
     </div>`);
 
-    return parts.join("\n");
+    return {
+      routeColumn: routeParts.join("\n"),
+      detailColumn: detailParts.join("\n"),
+    };
     
   } catch (err) {
     console.error("Fatal error inside explainPath:", err);
-    return `<div style="padding: 20px; color: red; background: #fee2e2; border-radius: 8px;">
+    return {
+      routeColumn: "",
+      detailColumn: `<div style="padding: 20px; color: red; background: #fee2e2; border-radius: 8px;">
       <strong>Error generating explanation:</strong> ${err.message}. Check console for details.
-    </div>`;
+    </div>`,
+    };
   }
 }
 
-function explainNoPath(fromEl, toEl, reason = "unknown") {
+function escPathDiag(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderViewpointBlockedPanel({ viewpointName = "current", viewpointKey = null } = {}) {
+  const vp = escPathDiag(viewpointName || "current");
+  const hint =
+    viewpointKey && viewpointKey !== "layered"
+      ? `Selected viewpoint key: <strong>${escPathDiag(String(viewpointKey))}</strong>.`
+      : "";
+  return `<div class="path-dead-end" role="status" aria-live="polite">
+    <div class="path-dead-end__icon-wrap" aria-hidden="true">
+      <svg class="path-dead-end__svg" width="64" height="64" viewBox="0 0 64 64" focusable="false">
+        <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.5"/>
+        <path d="M18 20h28v24H18z" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.55"/>
+        <path d="M24 28h16M24 34h10" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" opacity="0.6"/>
+      </svg>
+    </div>
+    <h2 class="path-dead-end__title">No path inside this viewpoint — but the full metamodel can connect</h2>
+    <div class="path-dead-end__lesson">
+      <p class="path-dead-end__body">With <strong>${vp}</strong> selected, the search only uses that viewpoint’s allowed element types and the matrix links between them. The tool checked the full Appendix B graph separately: a route exists there, so the failure is due to this viewpoint’s scope — for example an endpoint outside the palette, intermediates you are not allowed to use here, or relationship types this viewpoint excludes.</p>
+      ${hint ? `<p class="path-dead-end__context">${hint}</p>` : ""}
+    </div>
+    <div class="path-dead-end__actions path-dead-end__actions--buttons" role="group" aria-label="Expand search scope">
+      <div class="path-dead-end__action-block path-dead-end__action-block--permissive">
+        <div class="path-dead-end__btn-row">
+          <button type="button" class="path-dead-end__btn path-dead-end__btn--choice" onclick="window.expandPathfindingToFullMetamodel?.()">Expand search to full metamodel</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/**
+ * Educational empty state for the diagram when UCS finds no path under current constraints.
+ * @param {string} sourceName
+ * @param {string} targetName
+ * @param {{ includeDerived?: boolean, allowAssociationFallback?: boolean, selectionMode?: string, pickedCount?: number, waypointChainLabel?: string, failingSegmentOrdinal?: number, segmentTotal?: number, viewpointStrict?: boolean, viewpointName?: string, viewpointFromInGraph?: boolean, viewpointToInGraph?: boolean }} [opts]
+ */
+function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
+  const e = escPathDiag;
+  const src = sourceName ? String(sourceName).trim() : "";
+  const tgt = targetName ? String(targetName).trim() : "";
+  const srcE = e(src || "—");
+  const tgtE = e(tgt || "—");
+  const includeDerived = !!opts.includeDerived;
+  const allowAssoc = !!opts.allowAssociationFallback;
+  const modeSet = opts.selectionMode === "set";
+  const nPick = typeof opts.pickedCount === "number" ? opts.pickedCount : 0;
+  const vpStrict = !!opts.viewpointStrict && opts.viewpointName;
+  const vName = vpStrict ? e(String(opts.viewpointName)) : "";
+  const vFromOk = opts.viewpointFromInGraph !== false;
+  const vToOk = opts.viewpointToInGraph !== false;
+  let viewpointNote = "";
+  if (vpStrict) {
+    if (!vFromOk && !vToOk) {
+      viewpointNote = `<p class="path-dead-end__context path-dead-end__context--viewpoint">Viewpoint <strong>${vName}</strong> is active. Neither <strong>${srcE}</strong> nor <strong>${tgtE}</strong> is in this viewpoint’s element palette, so they are not part of the pathfinding graph under this filter.</p>`;
+    } else if (!vFromOk) {
+      viewpointNote = `<p class="path-dead-end__context path-dead-end__context--viewpoint">Viewpoint <strong>${vName}</strong> is active. <strong>${srcE}</strong> is not in this viewpoint’s element palette.</p>`;
+    } else if (!vToOk) {
+      viewpointNote = `<p class="path-dead-end__context path-dead-end__context--viewpoint">Viewpoint <strong>${vName}</strong> is active. <strong>${tgtE}</strong> is not in this viewpoint’s element palette.</p>`;
+    } else {
+      viewpointNote = `<p class="path-dead-end__context path-dead-end__context--viewpoint">Viewpoint <strong>${vName}</strong> is active: the search only follows element types and Appendix B links allowed for that scope. There is no route between these points under that restriction — either no permitted chain exists in this subgraph, or the metamodel would need intermediates or relationship types this viewpoint does not include.</p>`;
+    }
+  }
+  const multiNote =
+    modeSet && nPick > 2
+      ? `<p class="path-dead-end__context">Your connect set includes several elements; this message uses the <strong>first</strong> and <strong>last</strong> points in the list as endpoints for the narrative.</p>`
+      : "";
+
+  const compassSvg = `<svg class="path-dead-end__svg" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+    <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.5"/>
+    <circle cx="32" cy="32" r="4" fill="currentColor" opacity="0.35"/>
+    <path d="M32 8 L36 28 L32 32 L28 28 Z" fill="currentColor" opacity="0.55"/>
+    <path d="M56 32 L36 36 L32 32 L36 28 Z" fill="currentColor" opacity="0.38"/>
+    <path d="M32 56 L28 36 L32 32 L36 36 Z" fill="currentColor" opacity="0.38"/>
+    <path d="M8 32 L28 28 L32 32 L28 36 Z" fill="currentColor" opacity="0.38"/>
+  </svg>`;
+
+  const derivedDisabled = includeDerived ? " disabled" : "";
+  const assocDisabled = allowAssoc ? " disabled" : "";
+
+  const bothOn = includeDerived && allowAssoc;
+  const exhaustedNote = bothOn
+    ? `<p class="path-dead-end__exhausted">Derived relations and Association fallback are already enabled. If there is still no route, use <strong>Options</strong> to raise hop limits or search effort, widen the viewpoint, or change endpoints.</p>`
+    : "";
+
+  const derivedHint =
+    "Derived relations collapse multiple technical layers into a single line, operating at a higher level of abstraction for business stakeholders.";
+  const assocHint =
+    "Associations are the weakest form of relationship, useful for early-stage planning or capturing undocumented “tribal knowledge”.";
+  const rationaleText =
+    "Direct (Appendix B) relationships form the “ground truth” of your architecture. Prefer them when you need rigor and verifiability; derived links can be helpful to simplify the story, but they intentionally abstract away detail.";
+
+  const titleText = includeDerived
+    ? "No Architectural Path Found"
+    : "No Strict Architectural Path Found";
+  const whySummaryText = includeDerived
+    ? "Why prefer direct (ground-truth) routing?"
+    : "Why prefer strict (ground-truth) routing?";
+  const bodyText = includeDerived
+    ? `Under your current rules, there is no verifiable path between <strong>${srcE}</strong> and <strong>${tgtE}</strong>.`
+    : `Under strict ArchiMate rules, there is no verifiable, direct structural or behavioral link between <strong>${srcE}</strong> and <strong>${tgtE}</strong>.`;
+
+  const orderedCtx =
+    opts.selectionMode === "ordered" && opts.waypointChainLabel
+      ? `<p class="path-dead-end__context">Ordered path <strong>${e(opts.waypointChainLabel)}</strong>: the first hop that cannot be bridged with your current options is <strong>${srcE} → ${tgtE}</strong>${typeof opts.failingSegmentOrdinal === "number" && typeof opts.segmentTotal === "number" ? ` (segment ${opts.failingSegmentOrdinal} of ${opts.segmentTotal})` : ""}.</p>`
+      : "";
+
+  return `<div class="path-dead-end" role="status" aria-live="polite">
+    <div class="path-dead-end__icon-wrap">${compassSvg}</div>
+    <h2 class="path-dead-end__title">${e(titleText)}</h2>
+    <div class="path-dead-end__lesson">
+      ${viewpointNote}
+      <p class="path-dead-end__body">${bodyText}</p>
+      ${orderedCtx}
+      ${multiNote}
+      <details class="path-dead-end__disclosure path-dead-end__disclosure--why">
+        <summary class="path-dead-end__disclosure-sum">${e(whySummaryText)}</summary>
+        <p class="path-dead-end__disclosure-body">${e(rationaleText)}</p>
+      </details>
+    </div>
+    <p class="path-dead-end__scale" role="note">Nothing here is pre-selected. If you widen the search, <strong>derived relations</strong> stay closer to the spec (specific relationship types, including §5.7). <strong>Association</strong> is the most permissive: generic §5.2.4 links when no specific chain wins.</p>
+    <p class="path-dead-end__temp-note">The buttons below run <strong>one relaxed Find Path</strong>. Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> and Association fallback) are <strong>not</strong> changed—open Options only if you want that permanently.</p>
+    <div class="path-dead-end__actions path-dead-end__actions--buttons" role="group" aria-label="Widen path search">
+      <div class="path-dead-end__action-block">
+        <div class="path-dead-end__tier">
+          <span class="path-dead-end__tier-badge">Stricter widening</span>
+          <span class="path-dead-end__tier-text">Still normative—Appendix B types plus §5.7 derivation</span>
+        </div>
+        <div class="path-dead-end__btn-row">
+          <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled)window.tryRelaxPathDerived()">🔍 Search with Derived Relations</button>
+          ${includeDerived ? `<span class="path-dead-end__pill" aria-hidden="true">On</span>` : ""}
+        </div>
+        <details class="path-dead-end__disclosure path-dead-end__disclosure--cta">
+          <summary class="path-dead-end__disclosure-sum path-dead-end__disclosure-sum--help">What does this do?</summary>
+          <p class="path-dead-end__disclosure-body">${e(derivedHint)}</p>
+        </details>
+      </div>
+      <div class="path-dead-end__action-block path-dead-end__action-block--permissive">
+        <div class="path-dead-end__tier">
+          <span class="path-dead-end__tier-badge path-dead-end__tier-badge--wide">Most permissive</span>
+          <span class="path-dead-end__tier-text">Generic Association when needed (penalized in scoring)</span>
+        </div>
+        <div class="path-dead-end__btn-row">
+          <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${assocDisabled} onclick="if(!this.disabled)window.tryRelaxPathAssociation()">🤝 Search with Informal Associations</button>
+          ${allowAssoc ? `<span class="path-dead-end__pill" aria-hidden="true">On</span>` : ""}
+        </div>
+        <details class="path-dead-end__disclosure path-dead-end__disclosure--cta">
+          <summary class="path-dead-end__disclosure-sum path-dead-end__disclosure-sum--help">What does this do?</summary>
+          <p class="path-dead-end__disclosure-body">${e(assocHint)}</p>
+        </details>
+      </div>
+    </div>
+    ${exhaustedNote}
+  </div>`;
+}
+
+function algorithmDetailsPanelInitiallyOpen() {
+  try {
+    return sessionStorage.getItem("archimateAlgorithmDetailsOpen") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Numbered actions when probes show derived / association would fix the query.
+ * @param {{ derivedWouldHelp: boolean, associationWouldHelp: boolean, includeDerived: boolean, allowAssociationFallback: boolean }|null|undefined} hints
+ * @returns {string}
+ */
+function renderPathRelaxationActionSteps(hints) {
+  if (!hints || (!hints.derivedWouldHelp && !hints.associationWouldHelp)) return "";
+
+  const parts = [];
+  parts.push(`<ol class="path-failure-suggestions__steps path-search-next__actions">`);
+
+  if (hints.derivedWouldHelp) {
+    parts.push(`<li class="path-failure-suggestions__step">
+      <div class="path-failure-suggestions__step-body">
+        <strong>1. Indirect (derived) relationships</strong>
+        <span class="path-failure-suggestions__step-desc">Include §5.7 derived links from Appendix B (shown in lowercase in the tables). This is still “specific” relationships, not generic Association.</span>
+        <button type="button" class="path-relax-btn" onclick="tryRelaxPathDerived()">Enable + Derived and search again</button>
+      </div>
+    </li>`);
+  }
+
+  if (hints.associationWouldHelp) {
+    const stepNum = hints.derivedWouldHelp ? "2" : "1";
+    const extra =
+      hints.derivedWouldHelp && !hints.includeDerived
+        ? " (You can also use step 1 first — it may find a stricter chain.)"
+        : "";
+    parts.push(`<li class="path-failure-suggestions__step">
+      <div class="path-failure-suggestions__step-body">
+        <strong>${stepNum}. Association fallback</strong>
+        <span class="path-failure-suggestions__step-desc">Allow §5.2.4 Association as a last resort when no Appendix B chain exists under your settings. Penalized hops are highlighted in the explanation.${extra}</span>
+        <button type="button" class="path-relax-btn path-relax-btn--secondary" onclick="tryRelaxPathAssociation()">Allow Association fallback and search again</button>
+      </div>
+    </li>`);
+  }
+
+  parts.push(`</ol>`);
+  return parts.join("\n");
+}
+
+/**
+ * Full no-path diagnostics: what search ran + next options (probed + general).
+ * @param {{
+ *   mode: string,
+ *   includeDerived: boolean,
+ *   allowAssociationFallback: boolean,
+ *   maxDepth: number,
+ *   maxPaths: number,
+ *   maxStates: number,
+ *   searchEffort: string,
+ *   viewpointShortLabel: string,
+ *   viewpointStrict?: boolean,
+ *   waypointChainDescription: string,
+ * }} payload
+ * @param {{ derivedWouldHelp?: boolean, associationWouldHelp?: boolean, includeDerived?: boolean }|null|undefined} hints
+ */
+function renderPathSearchDiagnostics(payload, hints) {
+  const e = escPathDiag;
+  const effortLabel =
+    payload.searchEffort === "fast"
+      ? "Fast"
+      : payload.searchEffort === "thorough"
+        ? "Thorough"
+        : "Balanced";
+  const modeLabel =
+    payload.mode === "set"
+      ? "Connect set (unordered points — tool picks a chain)"
+      : "Ordered (your Start → Via → End order)";
+  const relLine = payload.includeDerived
+    ? "+ Derived — graph includes Appendix B direct (uppercase) and §5.7 derived (lowercase) edges."
+    : "Direct only — graph includes only explicit Appendix B uppercase relationships.";
+  const assocLine = payload.allowAssociationFallback
+    ? "Fallback ON — penalized §5.2.4 Association hops are allowed when they win on total weight; they are flagged in the explanation."
+    : `Fallback OFF — cheapest routes that rely only on penalized Association (weight ${payload.pathWeightAssociation} per hop, except into Value/Meaning) are rejected.`;
+
+  const panelOpen = algorithmDetailsPanelInitiallyOpen();
+  const btnTitle = panelOpen ? "Hide Routing Math" : "Show Routing Math";
+  const toggleSvg = `<svg class="algorithm-details-toggle__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+  const parts = [];
+  parts.push(`<div class="connect-set-note-tech path-search-report" role="note">`);
+  parts.push(`<div class="path-search-report__head-row">`);
+  parts.push(`<div class="path-search-report__head"><strong>Strongest Legal Chain search</strong></div>`);
+  const btnAria =
+    panelOpen ? "Hide routing math details" : "Show routing math details";
+  parts.push(
+    `<button type="button" class="algorithm-details-toggle" title="${e(btnTitle)}" aria-label="${e(btnAria)}" aria-expanded="${panelOpen ? "true" : "false"}" onclick="window.toggleAlgorithmDetailsPanel(event)">${toggleSvg}</button>`
+  );
+  parts.push(`</div>`);
+  const strictVp = !!payload.viewpointStrict && !!payload.viewpointKey;
+  parts.push(
+    strictVp
+      ? `<div class="path-search-report__outcome"><strong>Outcome</strong> No complete route under <strong>${e(payload.viewpointShortLabel)}</strong>: the search graph is limited to this viewpoint’s element palette and the matrix links between those types. That can fail because an endpoint is outside the palette, or because no allowed chain exists (including when intermediates or links fall outside this viewpoint), within hop and exploration limits.</div>`
+      : `<div class="path-search-report__outcome"><strong>Outcome</strong> No complete route: at least one segment had no path under these rules within the hop and exploration limits.</div>`
+  );
+  parts.push(`<div class="algorithm-debug-panel${panelOpen ? " show" : ""}">`);
+  parts.push(
+    `<div class="path-search-report__line"><strong>Algorithm</strong> Weighted uniform-cost search (UCS) ranks valid syntactic chains on the directed adjacency graph built from Appendix B${payload.includeDerived ? ", §5.7 derived edges," : ""} and universal §5.2.4 Association arcs (hop costs: direct=<strong>${payload.pathWeightDirect}</strong>, derived=<strong>${payload.pathWeightDerived}</strong>, association=<strong>${payload.pathWeightAssociation}</strong>, layer-skip=<strong>${payload.pathWeightLayerSkip}</strong>).</div>`
+  );
+  parts.push(`<div class="path-search-report__line"><strong>Path mode</strong> ${e(modeLabel)}</div>`);
+  parts.push(`<div class="path-search-report__line"><strong>Relationships</strong> ${relLine}</div>`);
+  parts.push(`<div class="path-search-report__line"><strong>Association</strong> ${assocLine}</div>`);
+  parts.push(
+    `<div class="path-search-report__line"><strong>Limits</strong> Max <strong>${payload.maxDepth}</strong> hops per segment · up to <strong>${payload.maxPaths}</strong> route alternatives per segment · <strong>${effortLabel}</strong> effort (~<strong>${Number(payload.maxStates).toLocaleString()}</strong> edge relaxations budget per segment).</div>`
+  );
+  parts.push(`<div class="path-search-report__line"><strong>Viewpoint</strong> ${e(payload.viewpointShortLabel)}</div>`);
+  parts.push(`<div class="path-search-report__line"><strong>Query</strong> ${e(payload.waypointChainDescription)}</div>`);
+  parts.push(
+    `<span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses your option weights: <strong>${payload.pathWeightDirect}</strong> per direct Appendix B hop, <strong>${payload.pathWeightDerived}</strong> per derived hop, <strong>${payload.pathWeightAssociation}</strong> per Association hop, <strong>${payload.pathWeightLayerSkip}</strong> per layer-skipping hop.</span>`
+  );
+  parts.push(`</div>`);
+  parts.push(`</div>`);
+
+  const probeHelped = !!(hints && (hints.derivedWouldHelp || hints.associationWouldHelp));
+
+  parts.push(`<div class="path-search-next path-failure-suggestions" role="region" aria-label="Expand path search">`);
+  parts.push(`<h4 class="path-search-next__title path-failure-suggestions__title">Next options to expand the search</h4>`);
+  if (strictVp) {
+    parts.push(
+      `<p class="path-search-next__viewpoint-lead">A strict viewpoint is not “wrong” — it intentionally hides types and links. If the connection you need is outside <strong>${e(payload.viewpointShortLabel)}</strong>, switch to <strong>All elements</strong> (Layered) or use <strong>Expand search to full metamodel</strong> when offered.</p>`
+    );
+  }
+
+  const already = [];
+  if (payload.includeDerived) already.push("+ Derived");
+  if (payload.allowAssociationFallback) already.push("Association fallback");
+  if (already.length) {
+    parts.push(`<p class="path-search-next__already"><strong>Already enabled:</strong> ${already.join(" · ")}.</p>`);
+  }
+
+  parts.push(
+    `<p class="path-failure-suggestions__note path-search-next__note">Many pairs connect without Association — Appendix B often links layers through intermediate element types. If a path appears with fallback off, it uses those normative relationships.</p>`
+  );
+
+  if (probeHelped) {
+    parts.push(
+      `<p class="path-search-next__probe"><strong>Automatic check:</strong> With the same hop limits and effort, widening the rules below would connect this query.</p>`
+    );
+    parts.push(renderPathRelaxationActionSteps(hints));
+  } else {
+    parts.push(
+      `<p class="path-search-next__probe"><strong>Automatic check:</strong> With current hop limits and effort, enabling only + Derived or Association fallback did not reveal a route — try the general levers below or change endpoints.</p>`
+    );
+  }
+
+  parts.push(`<p class="path-search-next__generic-title"><strong>General levers</strong> (in Options unless noted)</p>`);
+  parts.push(`<ul class="path-search-next__generic">`);
+  if (!payload.includeDerived) {
+    parts.push(
+      `<li>Turn on <strong>+ Derived</strong> for §5.7 indirect links${probeHelped ? " (see button above if the tool detected this would help)." : "."}</li>`
+    );
+  }
+  if (!payload.allowAssociationFallback) {
+    parts.push(
+      `<li>Turn on <strong>Allow Association fallback</strong> for generic §5.2.4 bridges when no specific chain exists${probeHelped ? " (see button above if applicable)." : "."}</li>`
+    );
+  }
+  if (payload.maxDepth < 12) {
+    parts.push(
+      `<li>Raise <strong>max hops per segment</strong> (currently ${payload.maxDepth}) if a longer chain might exist.</li>`
+    );
+  }
+  if (payload.searchEffort !== "thorough") {
+    parts.push(
+      `<li>Set search effort to <strong>Thorough</strong> for a larger exploration budget on dense graphs.</li>`
+    );
+  }
+  if (payload.viewpointKey) {
+    parts.push(
+      `<li>Switch viewpoint to <strong>All elements</strong> if intermediates might be outside the current palette.</li>`
+    );
+  }
+  if (payload.mode === "ordered" && payload.waypointCount === 2) {
+    parts.push(`<li>Add an <strong>intermediate waypoint</strong> to split one long segment into two shorter searches.</li>`);
+  }
+  if (payload.mode === "set" && payload.connectSetDistinctCount >= 2) {
+    parts.push(
+      `<li>In <strong>Connect set</strong>, fewer points or a different combination can change whether a Hamiltonian-style chain exists within depth limits.</li>`
+    );
+  }
+  parts.push(`</ul>`);
+  parts.push(`</div>`);
+
+  return parts.join("\n");
+}
+
+/**
+ * @deprecated Prefer renderPathSearchDiagnostics; kept for any direct callers.
+ */
+function renderPathFailureSuggestions(hints) {
+  if (!hints || (!hints.derivedWouldHelp && !hints.associationWouldHelp)) return "";
+  const parts = [];
+  parts.push(`<div class="path-failure-suggestions" role="region" aria-label="Widen path search">`);
+  parts.push(`<h4 class="path-failure-suggestions__title">Widen the search</h4>`);
+  parts.push(
+    `<p class="path-failure-suggestions__lead">No route matched your <strong>current</strong> rules.</p>`
+  );
+  parts.push(renderPathRelaxationActionSteps(hints));
+  parts.push(`</div>`);
+  return parts.join("\n");
+}
+
+function explainNoPath(fromEl, toEl, reason = "unknown", opts = {}) {
+  const {
+    failingSegmentIndex = null,
+    waypointChain = null,
+    totalSegments = null,
+    selectionMode = "set",
+  } = opts;
+
   const fromAspect = getAspect(fromEl);
   const toAspect   = getAspect(toEl);
   const fromLayer  = getLayer(fromEl);
@@ -1795,8 +5456,23 @@ function explainNoPath(fromEl, toEl, reason = "unknown") {
   parts.push(`
     <div class="explain-no-path">
       <h3>No valid path found</h3>
-      <p><strong>${fromEl}</strong> → <strong>${toEl}</strong></p>
+      <p><strong>${escPathDiag(fromEl)}</strong> → <strong>${escPathDiag(toEl)}</strong></p>
     </div>`);
+
+  if (
+    selectionMode === "ordered" &&
+    Array.isArray(waypointChain) &&
+    waypointChain.length >= 2
+  ) {
+    const chain = waypointChain.map((n) => escPathDiag(n)).join(" → ");
+    const segTxt =
+      failingSegmentIndex != null && typeof totalSegments === "number" && totalSegments > 0
+        ? ` <em>(segment ${failingSegmentIndex + 1} of ${totalSegments})</em>`
+        : "";
+    parts.push(
+      `<p class="explain-no-path-ordered">In <strong>Ordered</strong> mode the tool walks your chain in sequence: <strong>${chain}</strong>. Appendix B relationships are <strong>directed</strong> (tail → head). The first hop that cannot be completed under your current search rules is <strong>${escPathDiag(fromEl)} → ${escPathDiag(toEl)}</strong>${segTxt}.</p>`
+    );
+  }
 
   parts.push(elementSummary(fromEl));
   parts.push(elementSummary(toEl));
@@ -1804,9 +5480,8 @@ function explainNoPath(fromEl, toEl, reason = "unknown") {
   if (reason === "viewpoint") {
     parts.push(`
       <div class="explain-reason">
-        <strong>Reason: Viewpoint filter active</strong><br/>
-        One or both of these elements is outside the currently selected viewpoint's
-        element palette. Disable the viewpoint filter to search across all elements.
+        <strong>Reason: Limited by the active viewpoint</strong><br/>
+        The tool found a route in the full Appendix B graph, but not when restricted to the selected viewpoint’s element types and allowed matrix links. That usually means an endpoint is outside the viewpoint palette, or every chain would need intermediates or relationship types this viewpoint does not include. Switch to <strong>All elements</strong> (Layered) or expand the search to the full metamodel to see a path without that filter.
       </div>`);
     return parts.join("\n");
   }
@@ -1815,8 +5490,8 @@ function explainNoPath(fromEl, toEl, reason = "unknown") {
     parts.push(`
       <div class="explain-reason">
         <strong>Reason: No path within ${4} hops</strong><br/>
-        These elements may be connected via a longer path, but the navigator
-        limits search depth to 4 hops per segment for clarity. Consider adding
+        These elements may be connected via a longer path, but ArchiTrek
+        limits each segment to 4 hops for clarity. Consider adding
         an intermediate waypoint to break the path into shorter segments.
       </div>`);
     return parts.join("\n");
@@ -1843,95 +5518,38 @@ function explainNoPath(fromEl, toEl, reason = "unknown") {
         <em>${fromAspect}</em> (${fromLayer}) → <em>${toAspect}</em> (${toLayer}):
         While these aspects are not inherently incompatible, Appendix B does not
         define a direct or derived relationship between <strong>${fromEl}</strong>
-        and <strong>${toEl}</strong> within the current search depth and filters.
+        and <strong>${toEl}</strong> under the current hop limit and filters.
         <br/><br/>
         Try:
         <ul>
           <li>Adding a waypoint to break the path into two segments</li>
-          <li>Enabling + Derived in the control panel (Appendix B)</li>
+          <li>Setting <strong>Direct vs +Derived</strong> to <strong>+ Derived</strong> (§5.7 edges in the graph)</li>
+          <li>Using a looser <strong>Semantic rigor</strong> preset (e.g. Discovery) or enabling Association in <strong>Advanced options → Advanced Logic Overrides</strong> (§5.2.4 — flagged as a weak link in results)</li>
           <li>Disabling the viewpoint filter</li>
         </ul>
       </div>`);
   }
 
   parts.push(renderAspectGrid(fromAspect, toAspect, fromEl, toEl));
-  parts.push(renderElementConnections(fromEl, toEl));
 
   return parts.join("\n");
 }
 
-function renderElementConnections(fromEl, toEl) {
-  if (typeof MATRIX === 'undefined') return '';
-
-  const codeLabel = (codes) => codes
-    .map(c => `<code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:10px">${c}</code>`)
-    .join(' ');
-
-  const fromEdges = MATRIX.filter(e => e.from === fromEl && e.direct.length > 0);
-  const fromByLayer = {};
-  fromEdges.forEach(e => {
-    const layer = ELEMENTS[e.to]?.layer || 'Other';
-    if (!fromByLayer[layer]) fromByLayer[layer] = [];
-    fromByLayer[layer].push(e);
-  });
-
-  const toEdges = MATRIX.filter(e => e.to === toEl && e.direct.length > 0);
-  const toByLayer = {};
-  toEdges.forEach(e => {
-    const layer = ELEMENTS[e.from]?.layer || 'Other';
-    if (!toByLayer[layer]) toByLayer[layer] = [];
-    toByLayer[layer].push(e);
-  });
-
-  const LAYER_COLORS = {
-    Motivation:'#dcdcff', Strategy:'#e8d4b8', Business:'#f5e87a',
-    Application:'#a8d4a8', Technology:'#a0c4e8', Physical:'#d4c8a0',
-    Implementation:'#e8b8b8', Composite:'#e0e0e0',
-  };
-
-  const renderLayerGroup = (label, byLayer, directionLabel) => {
-    if (Object.keys(byLayer).length === 0) {
-      return `<p style="font-size:12px;color:var(--text-3);font-style:italic;margin:4px 0">
-        No direct relationships from ${label} (Appendix B).
-        Only Association (O) may be permitted — excluded from pathfinding.
-      </p>`;
+/** Two-line direct / derived for the highlighted aspect cell (exact element pair in MATRIX). */
+function formatMatrixCodesForHopCell(fromEl, toEl) {
+  if (!fromEl || !toEl || typeof MATRIX === "undefined") return null;
+  for (let i = 0; i < MATRIX.length; i++) {
+    const row = MATRIX[i];
+    if (row.from === fromEl && row.to === toEl) {
+      const d = (row.direct || []).length ? (row.direct || []).join(", ") : "—";
+      const der = (row.derived || []).length ? (row.derived || []).join(", ") : "—";
+      return `<span class="aspect-cell-hop-matrix">
+        <span class="aspect-cell-hop-matrix__row"><span class="aspect-cell-hop-matrix__lab">direct</span> ${d}</span>
+        <span class="aspect-cell-hop-matrix__row"><span class="aspect-cell-hop-matrix__lab">derived</span> ${der}</span>
+      </span>`;
     }
-    return Object.entries(byLayer).map(([layer, edges]) => {
-      const bg = LAYER_COLORS[layer] || '#f0f0f0';
-      return `<div style="margin:4px 0">
-        <span style="display:inline-block;background:${bg};padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;margin-right:6px">${layer}</span>
-        ${edges.map(e => {
-          const target = directionLabel === 'from' ? e.to : e.from;
-          return `<span style="font-size:11px">${target} ${codeLabel(e.direct)}</span>`;
-        }).join(' &nbsp; ')}
-      </div>`;
-    }).join('');
-  };
-
-  return `
-    <div style="margin-top:16px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
-      <div style="padding:8px 12px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-2)">
-        Appendix B — Direct relationships (from the scanned tables)
-      </div>
-
-      <div style="padding:10px 12px;border-bottom:1px solid var(--border-light)">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px">
-          FROM <strong>${fromEl}</strong>
-          <span style="font-weight:400;color:var(--text-3)"> · ${ELEMENTS[fromEl]?.layer} · ${ELEMENTS[fromEl]?.aspect}</span>
-          — outgoing direct relationships:
-        </div>
-        ${renderLayerGroup(fromEl, fromByLayer, 'from')}
-      </div>
-
-      <div style="padding:10px 12px">
-        <div style="font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:6px">
-          TO <strong>${toEl}</strong>
-          <span style="font-weight:400;color:var(--text-3)"> · ${ELEMENTS[toEl]?.layer} · ${ELEMENTS[toEl]?.aspect}</span>
-          — elements with a direct path in:
-        </div>
-        ${renderLayerGroup(toEl, toByLayer, 'to')}
-      </div>
-    </div>`;
+  }
+  return null;
 }
 
 function renderAspectGrid(highlightFrom, highlightTo, fromElName = "", toElName = "") {
@@ -1944,6 +5562,7 @@ function renderAspectGrid(highlightFrom, highlightTo, fromElName = "", toElName 
     { code: "V", name: "Serving" },
     { code: "A", name: "Access" },
     { code: "N", name: "Influence" },
+    { code: "O", name: "Association" },
     { code: "T", name: "Triggering" },
     { code: "F", name: "Flow" },
     { code: "C", name: "Composition" },
@@ -1960,8 +5579,8 @@ function renderAspectGrid(highlightFrom, highlightTo, fromElName = "", toElName 
       <div class="aspect-grid-header">
         <h4>ArchiMate Metamodel — Aspect Compatibility</h4>
         <div class="aspect-grid-sub">
-          Shows which aspect-to-aspect connections the metamodel permits.
-          <span class="aspect-grid-source">Source: §4.2, Appendix B.</span>
+          Typical aspect-level patterns (§4.2). Exact letters for a hop follow the normative matrix for that element pair and may differ.
+          <span class="aspect-grid-source">Source: §4.2</span>
         </div>
         ${(fromElName || toElName) ? `
           <div style="margin-top:6px;font-size:12px;color:var(--text-2)">
@@ -2003,9 +5622,13 @@ function renderAspectGrid(highlightFrom, highlightTo, fromElName = "", toElName 
         isHighlight ? "cell-highlight" : "",
         isValid     ? "cell-valid"     : "cell-invalid",
       ].filter(Boolean).join(" ");
-      const cellContent = isValid
-        ? `<span class="aspect-cell-codes">${(rule.naturalCodes.join(", ") || "✓")}</span>`
-        : `<span class="aspect-cell-x" aria-label="Not permitted">✗</span>`;
+      const hopMatrix =
+        isHighlight && fromElName && toElName ? formatMatrixCodesForHopCell(fromElName, toElName) : null;
+      const cellContent = hopMatrix
+        ? hopMatrix
+        : isValid
+          ? `<span class="aspect-cell-codes">${(rule.naturalCodes.join(", ") || "✓")}</span>`
+          : `<span class="aspect-cell-x" aria-label="Not permitted">✗</span>`;
       const title = rule?.explanation ?? "";
       html += `<td class="${cellClass}" title="${title}">${cellContent}</td>`;
     }
@@ -2022,229 +5645,6 @@ function renderAspectGrid(highlightFrom, highlightTo, fromElName = "", toElName 
   return html;
 }
 
-// === ui/metamodelDiagram.js ===
-/**
- * ui/metamodelDiagram.js
- * ArchiMate Path Navigator — Metamodel Diagram
- */
-
-const W = 680;   // total SVG width
-const H = 520;   // total SVG height (extra space for element names below boxes)
-
-const BOXES = {
-  "external-behavior": {
-    id: "box-ext-behavior",
-    x: 220, y: 40, w: 180, h: 80,
-    label: ["External Behavior Element", "(Service)"],
-    italic: true,
-  },
-  "external-active": {
-    id: "box-ext-active",
-    x: 460, y: 40, w: 180, h: 80,
-    label: ["External Active Structure", "Element (Interface)"],
-    italic: true,
-  },
-  "passive": {
-    id: "box-passive",
-    x: 20, y: 160, w: 160, h: 80,
-    label: ["Passive Structure", "Element"],
-    italic: true,
-  },
-  "internal-behavior": {
-    id: "box-int-behavior",
-    x: 220, y: 200, w: 180, h: 80,
-    label: ["Internal Behavior", "Element"],
-    italic: true,
-  },
-  "internal-active": {
-    id: "box-int-active",
-    x: 460, y: 200, w: 180, h: 80,
-    label: ["Internal Active Structure", "Element"],
-    italic: true,
-  },
-  "event": {
-    id: "box-event",
-    x: 220, y: 360, w: 180, h: 80,
-    label: ["Event"],
-    italic: true,
-  },
-};
-
-const ARROWS = [
-  {
-    id: "arr-extbeh-extact",
-    roles: ["external-behavior", "external-active"],
-    label: "assigned to",
-    path: `M460,80 L400,80`,
-    labelX: 428, labelY: 70,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-extact-extbeh",
-    roles: ["external-active", "external-behavior"],
-    label: "serves",
-    path: `M460,100 L400,100`,
-    labelX: 424, labelY: 115,
-    markerEnd: "none", markerStart: "none",
-    bidirectional: false,
-    customPath: `M460,95 L400,95`,
-    belowLabel: true,
-  },
-  {
-    id: "arr-extact-intact",
-    roles: ["external-active", "internal-active"],
-    label: "composed of",
-    path: `M550,120 L550,200`,
-    labelX: 558, labelY: 165,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intact-extact",
-    roles: ["internal-active", "external-active"],
-    label: "serves",
-    path: `M530,200 L530,120`,
-    labelX: 486, labelY: 165,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intact-intbeh",
-    roles: ["internal-active", "internal-behavior"],
-    label: "assigned to",
-    path: `M460,240 L400,240`,
-    labelX: 408, labelY: 258,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intbeh-extbeh",
-    roles: ["internal-behavior", "external-behavior"],
-    label: "realizes",
-    path: `M310,200 L310,120`,
-    labelX: 284, labelY: 160,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-extbeh-intact",
-    roles: ["external-behavior", "internal-active"],
-    label: "serves",
-    path: `M400,90 Q440,90 440,200`,
-    labelX: 448, labelY: 140,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  // Forward counterpart to “serves” above (e.g. Business Role → Business Service = Assignment in §4.2).
-  {
-    id: "arr-intact-extbeh",
-    roles: ["internal-active", "external-behavior"],
-    label: "assigned to",
-    path: `M550,200 Q380,150 310,120`,
-    labelX: 412, labelY: 168,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intbeh-passive",
-    roles: ["internal-behavior", "passive"],
-    label: "accesses",
-    path: `M220,240 L180,240 L180,200`,
-    labelX: 130, labelY: 228,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-extbeh-passive",
-    roles: ["external-behavior", "passive"],
-    label: "accesses",
-    path: `M220,80 L100,80 L100,160`,
-    labelX: 50, labelY: 115,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intbeh-self",
-    roles: ["internal-behavior", "internal-behavior"],
-    label: "triggers / flows to",
-    path: `M260,200 C220,180 200,220 240,230 L260,230`,
-    labelX: 148, labelY: 230,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-extbeh-self",
-    roles: ["external-behavior", "external-behavior"],
-    label: "triggers / flows to",
-    path: `M300,40 C260,20 240,60 270,70 L290,70`,
-    labelX: 330, labelY: 34,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intbeh-extbeh-agg",
-    roles: ["internal-behavior", "external-behavior"],
-    label: "aggregates /\ncomposed of",
-    path: `M330,200 L330,120`,
-    labelX: 356, labelY: 168,
-    markerEnd: "diamond", markerStart: "none",
-  },
-  {
-    id: "arr-extbeh-passive-tf",
-    roles: ["external-behavior", "passive"],
-    label: "triggers /\nflows to",
-    path: `M220,70 L100,70 L100,160`,
-    labelX: 42, labelY: 108,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-event-intbeh",
-    roles: ["event", "internal-behavior"],
-    label: "triggers / flows to",
-    path: `M310,360 L310,280`,
-    labelX: 318, labelY: 325,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intbeh-event",
-    roles: ["internal-behavior", "event"],
-    label: "triggers / flows to",
-    path: `M290,280 L290,360`,
-    labelX: 220, labelY: 325,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-event-self",
-    roles: ["event", "event"],
-    label: "triggers / flows to",
-    path: `M300,440 C260,460 240,420 270,410 L290,410`,
-    labelX: 290, labelY: 470,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-intact-event",
-    roles: ["internal-active", "event"],
-    label: "assigned to",
-    path: `M460,280 L460,340 L400,400`,
-    labelX: 448, labelY: 320,
-    markerEnd: "arrow", markerStart: "none",
-  },
-  {
-    id: "arr-passive-event",
-    roles: ["passive", "event"],
-    label: "triggers / flows to",
-    path: `M100,240 L100,400 L220,400`,
-    labelX: 42, labelY: 330,
-    markerEnd: "arrow", markerStart: "none",
-  },
-];
-
-const COLORS = {
-  boxFill:        "#ffffff",
-  boxStroke:      "#111111",
-  boxStrokeW:     2,
-  arrowStroke:    "#333333",
-  arrowStrokeW:   1.5,
-  labelFill:      "#333333",
-  labelFont:      "11px 'Georgia', serif",
-  validFill:      "#6ee7b7",
-  validStroke:    "#047857",
-  invalidFill:    "#ffd4d4",
-  invalidStroke:  "#cc1111",
-  validArrow:     "#1a8a1a",
-  invalidArrow:   "#cc1111",
-  neutralArrow:   "#cccccc",
-};
 
 function el(tag, attrs) {
   const e = document.createElementNS(SVG_NS, tag);
@@ -2254,21 +5654,33 @@ function el(tag, attrs) {
 
 function makeArrowMarker(id, color) {
   const marker = el("marker", {
-    id, markerWidth: "10", markerHeight: "7",
-    refX: "10", refY: "3.5", orient: "auto",
+    id,
+    markerWidth: "8",
+    markerHeight: "8",
+    markerUnits: "strokeWidth",
+    refX: "8",
+    refY: "4",
+    orient: "auto",
+    viewBox: "0 0 8 8",
   });
-  const poly = el("polygon", { points: "0 0, 10 3.5, 0 7", fill: color });
+  const poly = el("polygon", { points: "0 0, 8 4, 0 8", fill: color });
   marker.appendChild(poly);
   return marker;
 }
 
 function makeDiamondMarker(id, color) {
   const marker = el("marker", {
-    id, markerWidth: "12", markerHeight: "8",
-    refX: "12", refY: "4", orient: "auto",
+    id,
+    markerWidth: "8",
+    markerHeight: "8",
+    markerUnits: "strokeWidth",
+    refX: "8",
+    refY: "4",
+    orient: "auto",
+    viewBox: "0 0 8 8",
   });
   const poly = el("polygon", {
-    points: "0 4, 6 0, 12 4, 6 8",
+    points: "0 4, 4 0, 8 4, 4 8",
     fill: "none", stroke: color, "stroke-width": "1.2",
   });
   marker.appendChild(poly);
@@ -2300,39 +5712,10 @@ function renderMetamodelDiagram(container) {
   defs.appendChild(makeArrowMarker("mm-arrow-neutral", COLORS.neutralArrow));
   svg.appendChild(defs);
 
-  for (const arrow of ARROWS) {
-    const g = el("g", { id: arrow.id, class: "mm-arrow" });
-    const pathEl = el("path", {
-      d: arrow.path,
-      stroke: COLORS.arrowStroke,
-      "stroke-width": COLORS.arrowStrokeW,
-      fill: "none",
-      "marker-end": arrow.markerEnd === "arrow"   ? "url(#mm-arrow-default)"   :
-                    arrow.markerEnd === "diamond"  ? "url(#mm-diamond-default)" : "",
-    });
-    g.appendChild(pathEl);
-
-    const lines = arrow.label.split("\n");
-    lines.forEach((line, i) => {
-      const t = el("text", {
-        x: arrow.labelX,
-        y: arrow.labelY + i * 13,
-        "text-anchor": "middle",
-        "font-size": "9.5",
-        "font-family": "Georgia, serif",
-        fill: COLORS.labelFill,
-        "paint-order": "stroke",
-        stroke: "#ffffff",
-        "stroke-width": "3",
-        "stroke-linejoin": "round",
-      });
-      t.textContent = line;
-      g.appendChild(t);
-    });
-
-    svg.appendChild(g);
-    _arrowEls[arrow.id] = g;
-  }
+  // Layers: boxes first, then arrows/labels on top so arrow heads are not hidden
+  // behind filled rectangles (common when an arrow points “into” a box).
+  const boxLayer = el("g", { id: "mm-layer-boxes" });
+  const arrowLayer = el("g", { id: "mm-layer-arrows" });
 
   for (const [role, box] of Object.entries(BOXES)) {
     const g = el("g", { id: box.id, class: "mm-box", "data-role": role });
@@ -2365,9 +5748,46 @@ function renderMetamodelDiagram(container) {
       g.appendChild(t);
     });
 
-    svg.appendChild(g);
+    boxLayer.appendChild(g);
     _boxEls[role] = g;
   }
+
+  for (const arrow of ARROWS) {
+    const g = el("g", { id: arrow.id, class: "mm-arrow" });
+    const pathEl = el("path", {
+      d: arrow.path,
+      stroke: COLORS.arrowStroke,
+      "stroke-width": COLORS.arrowStrokeW,
+      fill: "none",
+      "marker-end": arrow.markerEnd === "arrow"   ? "url(#mm-arrow-default)"   :
+                    arrow.markerEnd === "diamond"  ? "url(#mm-diamond-default)" : "",
+    });
+    g.appendChild(pathEl);
+
+    const lines = arrow.label.split("\n");
+    lines.forEach((line, i) => {
+      const t = el("text", {
+        x: arrow.labelX,
+        y: arrow.labelY + i * 13,
+        "text-anchor": "middle",
+        "font-size": "9.5",
+        "font-family": "Georgia, serif",
+        fill: COLORS.labelFill,
+        "paint-order": "stroke",
+        stroke: "#ffffff",
+        "stroke-width": "3",
+        "stroke-linejoin": "round",
+      });
+      t.textContent = line;
+      g.appendChild(t);
+    });
+
+    arrowLayer.appendChild(g);
+    _arrowEls[arrow.id] = g;
+  }
+
+  svg.appendChild(boxLayer);
+  svg.appendChild(arrowLayer);
 
   container.appendChild(svg);
 }
@@ -2702,3 +6122,7 @@ function getMetamodelBoxKey(role) {
   };
   return MAP[role] ?? null;
 }
+
+window.resolvedRelationshipCodeForHop = resolvedRelationshipCodeForHop;
+window.edgeChoiceCommittedForHop = edgeChoiceCommittedForHop;
+window.relationshipPickerCodesFromMatrixCodes = relationshipPickerCodesFromMatrixCodes;

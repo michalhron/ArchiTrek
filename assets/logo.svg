@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" width="200" height="40">
+  <!-- Cliff mark: blunt side profile + strata + descent (white on transparent) -->
+  <g transform="translate(0, 3)" fill="none">
+    <!-- Rock mass: vertical face left, blunt stepped top, craggy base -->
+    <path
+      d="M 0 29 L 0 9 L 5 5 L 16 3 L 23 11 L 26 20 L 23 29 Z"
+      fill="rgba(255,255,255,0.14)"
+      stroke="#ffffff"
+      stroke-width="1.5"
+      stroke-linejoin="round"
+    />
+    <!-- Strata / ledges (read as rock layers) -->
+    <path d="M 1 16 L 10 14.5 L 20 17" stroke="rgba(255,255,255,0.55)" stroke-width="1.15" stroke-linecap="round"/>
+    <path d="M 2 22 L 12 20.5 L 22 23.5" stroke="rgba(255,255,255,0.4)" stroke-width="1" stroke-linecap="round"/>
+    <!-- Descent along the face -->
+    <path d="M 11 6 L 12.5 24" stroke="#ffffff" stroke-width="2" stroke-dasharray="2.5 2.5" stroke-linecap="round"/>
+    <polygon points="9.5,21.5 15.5,21.5 12.5,27.5" fill="#ffffff" stroke="none"/>
+  </g>
+
+  <text x="34" y="24" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="800" fill="#ffffff">Archi</text>
+  <text x="92" y="24" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="800" fill="#ffffff">Trek</text>
+
+  <text x="36" y="36" font-family="system-ui, -apple-system, sans-serif" font-size="9" font-weight="500" fill="rgba(255,255,255,0.68)" letter-spacing="0.5">ARCHIMATE STUDY ENGINE</text>
+</svg>

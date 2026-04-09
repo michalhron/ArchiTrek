@@ -1,0 +1,27 @@
+# ArchiTrek — optional HTTP→HTTPS redirect (Apache with mod_rewrite).
+# If your host uses nginx only, turn on HTTPS + redirect in the hosting panel; this file is ignored.
+# Deploy this file into your app folder (e.g. /www/ArchiTrek/).
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Do not redirect if already HTTPS (direct TLS or behind a proxy that sets X-Forwarded-Proto)
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# HSTS: only when Apache knows the connection is TLS (may not fire behind some proxies)
+<IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+</IfModule>
+
+# Reduce “stale JS/CSS” issues after deploys (shared hosting/CDN caches vary).
+# You can loosen this later (e.g. long cache + filename hashing) once releases stabilize.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html)$">
+    Header set Cache-Control "no-store, max-age=0"
+  </FilesMatch>
+  <FilesMatch "\.(js|css|svg|png|jpg|jpeg|webp|gif|ico)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>

@@ -4,6 +4,7 @@
 // We use window.state to ensure the HTML dropdowns can see it
 window.state = {
   mode:           'compact',
+  /** When true, pathfinding also includes §5.7 derived (lowercase) relationships for simplified routing options. */
   includeDerived: true,
   selectionMode:  'set',
   viewpoint:      null,
@@ -19,6 +20,8 @@ window.state = {
   lastAutoOrderMetrics: null,
   loading: true,
   showBadges: true,
+  /** When true, show illustrated composite sub-components (boxes around composites). */
+  showCompositeSubs: true,
   /** Path geometry: horizontal (strip or spread swimlanes) → vertical stack → compact orthogonal lanes. */
   pathFlow: "horizontal",
   userChoices: {},
@@ -32,24 +35,118 @@ window.state = {
   searchMaxPaths: 5,
   /** Expansion budget preset: fast | balanced | thorough → maxStates in pathfinder. */
   searchEffort: "balanced",
-  /** 'bfs' = breadth-first (shortest hops first); 'dfs' = depth-first (deep branches first). — Path search uses weighted UCS; strategy is kept for diagnostics only. */
-  searchStrategy: "bfs",
+  /** UCS cost per direct Appendix B hop (integer 1–500). */
+  searchPathWeightDirect: 1,
+  /** UCS cost per §5.7 derived hop. */
+  searchPathWeightDerived: 5,
+  /** UCS cost per §5.2.4 Association hop. */
+  searchPathWeightAssociation: 100,
+  /** UCS surcharge for hops that skip intermediate core layers. */
+  searchPathWeightLayerSkip: 15,
+  /** UCS cost surcharge for Discovery-mode semantic violations on a hop. */
+  searchPathWeightViolation: 50,
+  /** Semantic rigor preset: academic | pragmatic | discovery | custom. */
+  searchRigorPreset: "academic",
+  /** Strict semantic gate: disallow Core→Core detours through Motivation/Strategy. */
+  restrictCoreToCore: true,
+  /** Strict semantic gate: enforce trajectory grammar (V-shape blocker). */
+  enforceGrammar: true,
+  /** When grammar is on, treat Realization as directional trajectory carrier. */
+  strictRealization: true,
+  /** Perspective grouping classifier: exclusive | dominant-share */
+  perspectiveClassMode: "exclusive",
+  /** Dominant-share classifier threshold in percent (50–90). */
+  perspectiveDominantSharePct: 50,
   /** Allow §5.2.4 Association bridges when no strict Appendix B chain exists (penalized unless target is Value/Meaning). */
   allowAssociationFallback: false,
+  /** Thematic context for labels and perspective storytelling copy. */
+  domainContext: "abstract",
   /** Set after last successful findPath when any segment used penalized Association. */
   lastPathIsFallback: false,
   /** When last search found no path: which relaxations would help (from probePathRelaxations / probeSetRelaxations). */
   pathFailureHints: null,
+  /** Last search outcome from pathfinder: ok | no_path | BLOCKED_BY_VIEWPOINT. */
+  lastPathSearchStatus: null,
+  /** After a successful path from a one-shot relax CTA: which rules were temporarily used (Options stay strict). */
+  lastPathTemporaryRelaxation: null,
+  /** Snapshot while findPath runs with relaxed rules from overlay/diagnostics; restored after search completes. */
+  _relaxOneShotRestore: null,
+  /** One-shot override: run next search on a full metamodel graph regardless of active viewpoint. */
+  _pathfindFullMetamodelOnce: false,
+  /** When true, perspective recommendations are computed on full metamodel (outside active viewpoint). */
+  _perspectiveSuggestFullMetamodel: false,
+  /** Monotonic id for async path searches; used to ignore stale results. */
+  _findRunId: 0,
+  /** Last find run id for which the path-failure modal was shown (avoid duplicate modals per search). */
+  _pathFailModalShownForRunId: null,
+  /** True while an async findPath run is in flight. */
+  _finding: false,
+  /** requestAnimationFrame gate to avoid redundant renderResults calls in one tick. */
+  _renderScheduled: false,
 };
 
 // Create a shortcut so the rest of this file's code doesn't break
 const state = window.state;
+
+// ── Optional analytics (Umami) ───────────────────────────────────────────────
+function trackEvent(name, data) {
+  try {
+    const fn = window.umami && typeof window.umami.track === "function" ? window.umami.track : null;
+    if (!fn) return;
+    fn(name, data && typeof data === "object" ? data : undefined);
+  } catch (_) {
+    // Analytics must never break the app.
+  }
+}
+
+/**
+ * Schedule a single renderResults() on the next animation frame.
+ * Prevents double-rendering cascades when multiple UI actions update state in one tick.
+ */
+function scheduleRenderResults() {
+  if (state._renderScheduled) return;
+  state._renderScheduled = true;
+  requestAnimationFrame(() => {
+    state._renderScheduled = false;
+    renderResults();
+  });
+}
+
+/**
+ * Minimal explicit action layer: funnels expensive operations (findPath/render) through a single queue point.
+ * This makes it harder for UI + engine to drift out-of-sync and avoids stale async search results overwriting newer ones.
+ */
+window.dispatch = function dispatch(action) {
+  const a = action && typeof action === "object" ? action : { type: String(action || "") };
+  switch (a.type) {
+    case "FIND_PATH": {
+      // Bump run id so any in-flight async callbacks can be ignored if they complete later.
+      state._findRunId = (state._findRunId | 0) + 1;
+      // Preserve existing global entrypoint for onclick handlers, but pass run context via state.
+      window.findPath?.({ runId: state._findRunId, reason: a.reason || "" });
+      return;
+    }
+    case "RENDER_RESULTS": {
+      scheduleRenderResults();
+      return;
+    }
+    default:
+      // no-op for now (future actions can be added here)
+      return;
+  }
+};
 
 const SEARCH_EFFORT_MAX_STATES = {
   fast: 8000,
   balanced: 25000,
   thorough: 100000,
 };
+
+const SEARCH_RIGOR_PRESETS = Object.freeze({
+  academic:   { restrictCoreToCore: true,  enforceGrammar: true,  allowAssociationFallback: false, strictRealization: true  },
+  pragmatic:  { restrictCoreToCore: true,  enforceGrammar: false, allowAssociationFallback: true,  strictRealization: false },
+  discovery:  { restrictCoreToCore: false, enforceGrammar: false, allowAssociationFallback: true,  strictRealization: false },
+});
 
 function clampSearchDepth(n) {
   const x = Math.round(Number(n));
@@ -67,22 +164,100 @@ function normalizeSearchEffort(v) {
   return v === "fast" || v === "thorough" ? v : "balanced";
 }
 
-function normalizeSearchStrategy(v) {
-  return v === "dfs" ? "dfs" : "bfs";
+function normalizeSearchRigorPreset(v) {
+  const k = String(v || "academic").toLowerCase();
+  if (k === "academic" || k === "pragmatic" || k === "discovery" || k === "custom") return k;
+  return "academic";
+}
+
+function clampSearchPathWeight(n, def) {
+  const x = Math.round(Number(n));
+  if (!Number.isFinite(x)) return def;
+  return Math.max(1, Math.min(500, x));
+}
+
+function isPresetSemanticMatch(presetKey) {
+  const p = SEARCH_RIGOR_PRESETS[presetKey];
+  if (!p) return false;
+  return !!state.restrictCoreToCore === !!p.restrictCoreToCore
+    && !!state.enforceGrammar === !!p.enforceGrammar
+    && !!state.allowAssociationFallback === !!p.allowAssociationFallback
+    && !!state.strictRealization === !!p.strictRealization;
+}
+
+function applySearchRigorPresetToState(presetKey) {
+  const p = SEARCH_RIGOR_PRESETS[presetKey];
+  if (!p) return;
+  state.searchRigorPreset = presetKey;
+  state.restrictCoreToCore = !!p.restrictCoreToCore;
+  state.enforceGrammar = !!p.enforceGrammar;
+  state.allowAssociationFallback = !!p.allowAssociationFallback;
+  state.strictRealization = !!p.strictRealization;
+}
+
+function normalizePerspectiveClassMode(v) {
+  return v === "dominant-share" ? "dominant-share" : "exclusive";
+}
+
+function clampPerspectiveDominantSharePct(n) {
+  const x = Math.round(Number(n));
+  if (!Number.isFinite(x)) return 50;
+  return Math.max(50, Math.min(90, x));
+}
+
+function normalizeDomainContext(v) {
+  const k = String(v || "abstract");
+  if (typeof SCENARIOS !== "undefined" && SCENARIOS && Object.prototype.hasOwnProperty.call(SCENARIOS, k)) {
+    return k;
+  }
+  return "abstract";
+}
+
+function resolveViewpointSearchContext({ forceFullMetamodel = false } = {}) {
+  const selectedKey = state.viewpoint ? String(state.viewpoint) : null;
+  if (forceFullMetamodel || !selectedKey) {
+    return { viewpointKey: null, viewpointStrict: false, allowedRelationshipCodes: null };
+  }
+  const vp = typeof VIEWPOINTS !== "undefined" ? VIEWPOINTS?.[selectedKey] : null;
+  const viewpointStrict = !!(vp && !vp.allElements);
+  const allowedRelationshipCodes =
+    viewpointStrict && typeof getViewpointRelationshipAllowance === "function"
+      ? getViewpointRelationshipAllowance(selectedKey)
+      : null;
+  return {
+    viewpointKey: selectedKey,
+    viewpointStrict,
+    allowedRelationshipCodes: allowedRelationshipCodes instanceof Set ? allowedRelationshipCodes : null,
+  };
 }
 
 /** Options passed to findPaths / findBestChainForSet (pathfinder.js). */
-function getSearchPathOptions() {
+function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
   const effort = normalizeSearchEffort(state.searchEffort);
   const maxStates = SEARCH_EFFORT_MAX_STATES[effort] ?? SEARCH_EFFORT_MAX_STATES.balanced;
+  const perspectiveMode = normalizePerspectiveClassMode(state.perspectiveClassMode);
+  const dominantSharePct = clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct);
+  const vpCtx = resolveViewpointSearchContext({ forceFullMetamodel });
   return {
     maxDepth: clampSearchDepth(state.searchMaxDepth),
     maxPaths: clampSearchMaxPaths(state.searchMaxPaths),
     maxStates,
-    strategy: normalizeSearchStrategy(state.searchStrategy),
+    pathWeightDirect: clampSearchPathWeight(state.searchPathWeightDirect, 1),
+    pathWeightDerived: clampSearchPathWeight(state.searchPathWeightDerived, 5),
+    pathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
+    pathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
+    pathViolationPenalty: clampSearchPathWeight(state.searchPathWeightViolation, 50),
     /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
     allowAssociationFallback: !!state.allowAssociationFallback,
+    restrictCoreToCore: !!state.restrictCoreToCore,
+    enforceGrammar: !!state.enforceGrammar,
+    strictRealization: !!state.strictRealization,
+    perspectiveClassMode: perspectiveMode,
+    perspectiveDominantShare: dominantSharePct / 100,
+    viewpointKey: vpCtx.viewpointKey,
+    viewpointStrict: vpCtx.viewpointStrict,
+    allowedRelationshipCodes: vpCtx.allowedRelationshipCodes,
   };
 }
 
@@ -90,12 +265,38 @@ function applySearchOptionsToUI() {
   const d = document.getElementById("search-max-depth");
   const p = document.getElementById("search-max-paths");
   const e = document.getElementById("search-effort");
-  const s = document.getElementById("search-strategy");
+  const wd = document.getElementById("search-weight-direct");
+  const wder = document.getElementById("search-weight-derived");
+  const wa = document.getElementById("search-weight-association");
+  const wls = document.getElementById("search-weight-layer-skip");
+  const wv = document.getElementById("search-weight-violation");
+  const srp = document.getElementById("search-rigor-preset");
+  const rc = document.getElementById("restrict-core-to-core");
+  const eg = document.getElementById("enforce-grammar");
+  const str = document.getElementById("strict-realization");
+  const pcm = document.getElementById("perspective-class-mode");
+  const pcs = document.getElementById("perspective-dominant-share");
   const af = document.getElementById("allow-association-fallback");
   if (d) d.value = String(clampSearchDepth(state.searchMaxDepth));
   if (p) p.value = String(clampSearchMaxPaths(state.searchMaxPaths));
   if (e) e.value = normalizeSearchEffort(state.searchEffort);
-  if (s) s.value = normalizeSearchStrategy(state.searchStrategy);
+  if (wd) wd.value = String(clampSearchPathWeight(state.searchPathWeightDirect, 1));
+  if (wder) wder.value = String(clampSearchPathWeight(state.searchPathWeightDerived, 5));
+  if (wa) wa.value = String(clampSearchPathWeight(state.searchPathWeightAssociation, 100));
+  if (wls) wls.value = String(clampSearchPathWeight(state.searchPathWeightLayerSkip, 15));
+  if (wv) wv.value = String(clampSearchPathWeight(state.searchPathWeightViolation, 50));
+  if (srp) srp.value = normalizeSearchRigorPreset(state.searchRigorPreset);
+  if (rc) rc.checked = !!state.restrictCoreToCore;
+  if (eg) eg.checked = !!state.enforceGrammar;
+  if (str) {
+    str.checked = !!state.strictRealization;
+    str.disabled = !state.enforceGrammar;
+  }
+  if (pcm) pcm.value = normalizePerspectiveClassMode(state.perspectiveClassMode);
+  if (pcs) {
+    pcs.value = String(clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct));
+    pcs.disabled = normalizePerspectiveClassMode(state.perspectiveClassMode) !== "dominant-share";
+  }
   if (af) af.checked = !!state.allowAssociationFallback;
 }
 
@@ -103,38 +304,165 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   const d = document.getElementById("search-max-depth");
   const p = document.getElementById("search-max-paths");
   const e = document.getElementById("search-effort");
-  const s = document.getElementById("search-strategy");
+  const wd = document.getElementById("search-weight-direct");
+  const wder = document.getElementById("search-weight-derived");
+  const wa = document.getElementById("search-weight-association");
+  const wls = document.getElementById("search-weight-layer-skip");
+  const wv = document.getElementById("search-weight-violation");
+  const rc = document.getElementById("restrict-core-to-core");
+  const eg = document.getElementById("enforce-grammar");
+  const str = document.getElementById("strict-realization");
+  const pcm = document.getElementById("perspective-class-mode");
+  const pcs = document.getElementById("perspective-dominant-share");
   if (d) state.searchMaxDepth = clampSearchDepth(d.value);
   if (p) state.searchMaxPaths = clampSearchMaxPaths(p.value);
   if (e) state.searchEffort = normalizeSearchEffort(e.value);
-  if (s) state.searchStrategy = normalizeSearchStrategy(s.value);
+  if (wd) state.searchPathWeightDirect = clampSearchPathWeight(wd.value, 1);
+  if (wder) state.searchPathWeightDerived = clampSearchPathWeight(wder.value, 5);
+  if (wa) state.searchPathWeightAssociation = clampSearchPathWeight(wa.value, 100);
+  if (wls) state.searchPathWeightLayerSkip = clampSearchPathWeight(wls.value, 15);
+  if (wv) state.searchPathWeightViolation = clampSearchPathWeight(wv.value, 50);
+  if (rc) state.restrictCoreToCore = !!rc.checked;
+  if (eg) state.enforceGrammar = !!eg.checked;
+  if (str) state.strictRealization = !!str.checked;
+  if (pcm) state.perspectiveClassMode = normalizePerspectiveClassMode(pcm.value);
+  if (pcs) state.perspectiveDominantSharePct = clampPerspectiveDominantSharePct(pcs.value);
+  if (!state.enforceGrammar) state.strictRealization = false;
+  const preset = normalizeSearchRigorPreset(state.searchRigorPreset);
+  if (preset !== "custom" && !isPresetSemanticMatch(preset)) {
+    state.searchRigorPreset = "custom";
+  }
+  applySearchOptionsToUI();
   updatePathOptionsTriggerSummary();
   schedulePersistSession();
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "search-options-change" });
+};
+
+window.onSearchRigorPresetChange = function onSearchRigorPresetChange() {
+  const sel = document.getElementById("search-rigor-preset");
+  const next = normalizeSearchRigorPreset(sel?.value || state.searchRigorPreset);
+  if (next !== "custom") {
+    applySearchRigorPresetToState(next);
+  } else {
+    state.searchRigorPreset = "custom";
+  }
+  state.lastPathTemporaryRelaxation = null;
+  applySearchOptionsToUI();
+  updatePathOptionsTriggerSummary();
+  schedulePersistSession();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "search-rigor-preset-change" });
+  const rgm = document.getElementById("rigor-guide-modal");
+  if (rgm && rgm.style.display === "flex") syncRigorGuideModalHighlight();
 };
 
 window.onAssociationFallbackChange = function onAssociationFallbackChange() {
   const af = document.getElementById("allow-association-fallback");
   state.allowAssociationFallback = !!(af && af.checked);
+  const preset = normalizeSearchRigorPreset(state.searchRigorPreset);
+  if (preset !== "custom" && !isPresetSemanticMatch(preset)) {
+    state.searchRigorPreset = "custom";
+  }
+  state.lastPathTemporaryRelaxation = null;
+  applySearchOptionsToUI();
   updatePathOptionsTriggerSummary();
   schedulePersistSession();
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "association-fallback-change" });
 };
 
-/** Enable + Derived and re-run path search (from “widen search” panel). */
+window.onDomainContextChange = function onDomainContextChange(nextValue = undefined) {
+  const prev = state.domainContext;
+  const sideSel = document.getElementById("domain-context-select");
+  const topSel = document.getElementById("domain-context-top-select");
+  const candidate =
+    nextValue !== undefined
+      ? nextValue
+      : sideSel?.value || topSel?.value || state.domainContext;
+  state.domainContext = normalizeDomainContext(candidate);
+  syncDomainContextSelectors();
+  schedulePersistSession();
+  if (state.segments?.length) {
+    window.dispatch({ type: "RENDER_RESULTS" });
+  }
+  if (prev !== state.domainContext) {
+    maybeShowThemeSplash(state.domainContext);
+  }
+};
+
+function syncDerivedToggleFromState() {
+  document.getElementById("btn-direct")?.classList.toggle("active", !state.includeDerived);
+  document.getElementById("btn-derived")?.classList.toggle("active", state.includeDerived);
+}
+
+/**
+ * Restore Direct/Derived + Association Options after a one-shot relaxed findPath (overlay / widen-search CTAs).
+ */
+function applyRelaxOneShotRestore() {
+  const snap = state._relaxOneShotRestore;
+  if (!snap) return;
+  state.includeDerived = snap.includeDerived;
+  state.allowAssociationFallback = snap.allowAssociationFallback;
+  state._relaxOneShotRestore = null;
+  syncDerivedToggleFromState();
+  const af = document.getElementById("allow-association-fallback");
+  if (af) af.checked = !!state.allowAssociationFallback;
+  rebuildGraph();
+  updatePathOptionsTriggerSummary();
+}
+
+/** One-time +Derived search from no-path UI / diagnostics — does not permanently enable +Derived in Options. */
 window.tryRelaxPathDerived = function tryRelaxPathDerived() {
-  setDerived(true);
-  findPath();
+  state._relaxOneShotRestore = {
+    includeDerived: state.includeDerived,
+    allowAssociationFallback: state.allowAssociationFallback,
+    relaxMode: "derived",
+  };
+  state.includeDerived = true;
+  syncDerivedToggleFromState();
+  rebuildGraph();
+  window.dispatch({ type: "FIND_PATH", reason: "one-shot-relax-derived" });
 };
 
-/** Turn on Association fallback and re-run path search. */
+/** One-time Association fallback from no-path UI / diagnostics — does not permanently enable it in Options. */
 window.tryRelaxPathAssociation = function tryRelaxPathAssociation() {
+  state._relaxOneShotRestore = {
+    includeDerived: state.includeDerived,
+    allowAssociationFallback: state.allowAssociationFallback,
+    relaxMode: "association",
+  };
   state.allowAssociationFallback = true;
   const el = document.getElementById("allow-association-fallback");
   if (el) el.checked = true;
-  updatePathOptionsTriggerSummary();
-  schedulePersistSession();
-  findPath();
+  rebuildGraph();
+  window.dispatch({ type: "FIND_PATH", reason: "one-shot-relax-association" });
+};
+
+/** One-time full metamodel search when strict viewpoint scope blocks all paths. */
+window.expandPathfindingToFullMetamodel = function expandPathfindingToFullMetamodel() {
+  state._pathfindFullMetamodelOnce = true;
+  window.dispatch({ type: "FIND_PATH", reason: "one-shot-expand-full-metamodel" });
+};
+
+/** Turn on Association fallback and re-run path search. */
+window.toggleAlgorithmDetailsPanel = function toggleAlgorithmDetailsPanel(ev) {
+  if (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+  const btn = ev?.currentTarget;
+  if (!btn || btn.nodeName !== "BUTTON") return;
+  const root = btn.closest(".connect-set-note-tech, .path-search-report");
+  const panel = root?.querySelector(".algorithm-debug-panel");
+  if (!panel) return;
+  const open = panel.classList.toggle("show");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.title = open ? "Hide Routing Math" : "Show Routing Math";
+  btn.setAttribute(
+    "aria-label",
+    open ? "Hide routing math details" : "Show routing math details"
+  );
+  try {
+    sessionStorage.setItem("archimateAlgorithmDetailsOpen", open ? "1" : "0");
+  } catch (_) {}
 };
 
 function computeAndSetPathFailureHints(hasNoPath, picked, orderedWaypointElements) {
@@ -161,9 +489,36 @@ function computeAndSetPathFailureHints(hasNoPath, picked, orderedWaypointElement
   }
 }
 
+/**
+ * When a strict (non–all-elements) viewpoint is active, whether endpoints participate in the routed graph.
+ * @param {string} narrFrom
+ * @param {string} narrTo
+ * @returns {{ strict: false } | { strict: true, name: string, key: string, fromInGraph: boolean, toInGraph: boolean }}
+ */
+function getStrictViewpointFailureContext(narrFrom, narrTo) {
+  const vpCtx = resolveViewpointSearchContext({ forceFullMetamodel: false });
+  if (!vpCtx.viewpointStrict) return { strict: false };
+  const key = state.viewpoint ? String(state.viewpoint) : "";
+  const name =
+    key && typeof VIEWPOINTS !== "undefined" && VIEWPOINTS[key]
+      ? VIEWPOINTS[key].name || key
+      : key || "selected viewpoint";
+  const g = state.graph;
+  const fn = narrFrom ? String(narrFrom) : "";
+  const tn = narrTo ? String(narrTo) : "";
+  return {
+    strict: true,
+    name,
+    key,
+    fromInGraph: !!(g && g.has(fn)),
+    toInGraph: !!(g && g.has(tn)),
+  };
+}
+
 /** Snapshot of path search settings for no-path diagnostics (matches connect-set tech box style). */
 function buildPathSearchReportPayload() {
   const so = getSearchPathOptions();
+  const vpCtx = resolveViewpointSearchContext({ forceFullMetamodel: false });
   const vpSel = document.getElementById("viewpoint-select");
   const viewpointKey = vpSel && vpSel.value ? String(vpSel.value) : "";
   let viewpointShort = "All elements";
@@ -188,9 +543,14 @@ function buildPathSearchReportPayload() {
     maxDepth: so.maxDepth,
     maxPaths: so.maxPaths,
     maxStates: so.maxStates,
+    pathWeightDirect: so.pathWeightDirect,
+    pathWeightDerived: so.pathWeightDerived,
+    pathWeightAssociation: so.pathWeightAssociation,
+    pathWeightLayerSkip: so.pathWeightLayerSkip,
     searchEffort: normalizeSearchEffort(state.searchEffort),
     viewpointKey,
     viewpointShortLabel: viewpointShort,
+    viewpointStrict: !!vpCtx.viewpointStrict,
     waypointChainDescription,
     waypointCount: names.length,
     connectSetDistinctCount: distinct.length,
@@ -201,9 +561,9 @@ function isLayoutTop() {
   return document.getElementById("app-layout")?.classList.contains("layout-top");
 }
 
-/** Top bar: full Appendix B palette (no viewpoint filter). Sidebar: respects viewpoint. */
+/** Pathfinding and picker palette both respect the active viewpoint in all layouts. */
 function effectiveAllowedElements() {
-  return isLayoutTop() ? null : state.allowedElements;
+  return state.allowedElements;
 }
 
 /** Explains why §4.2 shows both “assigned to” and “serves” between Internal Active and External Behavior. */
@@ -278,8 +638,159 @@ const WELCOME_LS = "archimate-welcome-seen";
 const LOCAL_PREFS_CONSENT_LS = "archimate-local-prefs-consent";
 /** Once set, quick examples stay collapsed with 0–1 picks until the user opens them again. */
 const QUICK_EXAMPLES_VETERAN_LS = "archimate-quick-examples-veteran";
-const SESSION_SNAPSHOT_LS = "archimate-session-v1";
-const SESSION_SNAPSHOT_VERSION = 1;
+const SESSION_SNAPSHOT_LS = "archimate-session-v2";
+const SESSION_SNAPSHOT_VERSION = 2;
+
+// ── One-time per-theme splash (cookie) ───────────────────────────────────────
+const THEME_SPLASH_COOKIE_PREFIX = "archimate-theme-splash-seen-";
+const THEME_SPLASH_MAX_AGE_S = 60 * 60 * 24 * 365 * 2; // 2 years
+
+function getCookie(name) {
+  try {
+    const raw = document.cookie || "";
+    const parts = raw.split(";").map((p) => p.trim());
+    for (const p of parts) {
+      if (!p) continue;
+      const i = p.indexOf("=");
+      const k = i === -1 ? p : p.slice(0, i);
+      if (k === name) return i === -1 ? "" : decodeURIComponent(p.slice(i + 1));
+    }
+  } catch (_) {}
+  return null;
+}
+
+function setCookie(name, value, { maxAgeSeconds } = {}) {
+  try {
+    const enc = encodeURIComponent(value == null ? "" : String(value));
+    let s = `${name}=${enc}; Path=/; SameSite=Lax`;
+    if (typeof maxAgeSeconds === "number" && Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0) {
+      s += `; Max-Age=${Math.floor(maxAgeSeconds)}`;
+    }
+    if (location.protocol === "https:") s += "; Secure";
+    document.cookie = s;
+  } catch (_) {}
+}
+
+function themeSplashCookieName(domainContext) {
+  return `${THEME_SPLASH_COOKIE_PREFIX}${normalizeDomainContext(domainContext)}`;
+}
+
+function hasSeenThemeSplash(domainContext) {
+  const key = themeSplashCookieName(domainContext);
+  return getCookie(key) === "1";
+}
+
+function markSeenThemeSplash(domainContext) {
+  const key = themeSplashCookieName(domainContext);
+  setCookie(key, "1", { maxAgeSeconds: THEME_SPLASH_MAX_AGE_S });
+}
+
+function themeDisplayName(domainContext) {
+  const k = normalizeDomainContext(domainContext);
+  if (k === "circus") return "the Circus";
+  if (k === "hospital") return "the Hospital";
+  if (k === "death_star") return "the Death Star";
+  if (k === "rebel_alliance") return "Star Wars Rebels";
+  if (k === "abstract") return "Abstract";
+  return k;
+}
+
+function buildThemeSplashHtml(domainContext) {
+  const name = themeDisplayName(domainContext);
+  const isAbstract = normalizeDomainContext(domainContext) === "abstract";
+  const lead = isAbstract
+    ? `This is the default theme: the app uses neutral labels in explanations.`
+    : `This theme changes the <strong>scenario labels</strong> and flavor text (not the underlying ArchiMate rules).`;
+  const tip = `ArchiMate relationships are defined in the spec, but it can be <strong>tedious</strong> to search the tables and verify what connects to what. Even when tools help you draw links, it’s not always obvious which chains are allowed — this glossary helps you interpret the route groups and badges the app uses to organize alternatives.`;
+  const glossary =
+    typeof buildPathLabelsModalHtml === "function"
+      ? buildPathLabelsModalHtml()
+      : `<p class="theme-splash-note">Glossary is unavailable (UI not initialized yet).</p>`;
+  return `
+    <p class="theme-splash-intro"><strong>Welcome to ${escapeHtml(name)}.</strong> ${lead}</p>
+    <div class="theme-splash-note">${tip}</div>
+    <div class="theme-splash-glossary">
+      <div class="control-label" style="margin-bottom:6px">What do these labels mean?</div>
+      ${glossary}
+    </div>
+  `;
+}
+
+let themeSplashOpenFor = null;
+
+let scrollLockCount = 0;
+let scrollLockTop = 0;
+
+function lockBodyScroll() {
+  scrollLockCount++;
+  if (scrollLockCount !== 1) return;
+  try {
+    scrollLockTop = window.scrollY || 0;
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollLockTop}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.width = "100%";
+  } catch (_) {}
+}
+
+function unlockBodyScroll() {
+  if (scrollLockCount > 0) scrollLockCount--;
+  if (scrollLockCount !== 0) return;
+  try {
+    const top = scrollLockTop || 0;
+    document.body.style.position = "";
+    document.body.style.top = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.width = "";
+    window.scrollTo(0, top);
+    scrollLockTop = 0;
+  } catch (_) {}
+}
+
+function openThemeSplashModal(domainContext) {
+  const modal = document.getElementById("theme-splash-modal");
+  const body = document.getElementById("theme-splash-body");
+  const title = document.getElementById("theme-splash-title");
+  const dismissForever = document.getElementById("theme-splash-dismiss-forever");
+  if (!modal || !body) return;
+
+  themeSplashOpenFor = normalizeDomainContext(domainContext);
+  if (title) title.textContent = `Welcome to ${themeDisplayName(domainContext)}`;
+  body.innerHTML = buildThemeSplashHtml(domainContext);
+
+  lockBodyScroll();
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+
+  if (dismissForever) {
+    dismissForever.onclick = () => {
+      markSeenThemeSplash(domainContext);
+      closeThemeSplashModal();
+    };
+  }
+}
+
+function closeThemeSplashModal() {
+  const modal = document.getElementById("theme-splash-modal");
+  if (!modal) return;
+  if (themeSplashOpenFor) {
+    markSeenThemeSplash(themeSplashOpenFor);
+    themeSplashOpenFor = null;
+  }
+  unlockBodyScroll();
+  modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function maybeShowThemeSplash(domainContext) {
+  const k = normalizeDomainContext(domainContext);
+  // Only show for the “story” themes (not Abstract).
+  if (k === "abstract") return;
+  if (hasSeenThemeSplash(k)) return;
+  openThemeSplashModal(k);
+}
 
 let persistSessionTimer = null;
 
@@ -314,6 +825,11 @@ function schedulePersistSession() {
 function gatherSessionSnapshot() {
   const vpSel = document.getElementById("viewpoint-select");
   const viewpoint = vpSel && vpSel.value ? vpSel.value : "";
+  const domainSideSel = document.getElementById("domain-context-select");
+  const domainTopSel = document.getElementById("domain-context-top-select");
+  const domainContext = normalizeDomainContext(
+    domainSideSel?.value || domainTopSel?.value || state.domainContext
+  );
   const wps = (state.waypoints || []).map((wp) => ({
     layer: wp?.layer ?? null,
     element: wp?.element ?? null,
@@ -330,7 +846,9 @@ function gatherSessionSnapshot() {
     mode: state.mode === "swimlane" ? "swimlane" : "compact",
     pathFlow: PATH_FLOW_ORDER.includes(state.pathFlow) ? state.pathFlow : "horizontal",
     showBadges: state.showBadges !== false,
+    showCompositeSubs: state.showCompositeSubs !== false,
     forceShowQuickExamples: !!state.forceShowQuickExamples,
+    domainContext,
     viewpoint: viewpoint || null,
     waypoints: wps,
     hadPath,
@@ -339,7 +857,17 @@ function gatherSessionSnapshot() {
     searchMaxDepth: clampSearchDepth(state.searchMaxDepth),
     searchMaxPaths: clampSearchMaxPaths(state.searchMaxPaths),
     searchEffort: normalizeSearchEffort(state.searchEffort),
-    searchStrategy: normalizeSearchStrategy(state.searchStrategy),
+    searchPathWeightDirect: clampSearchPathWeight(state.searchPathWeightDirect, 1),
+    searchPathWeightDerived: clampSearchPathWeight(state.searchPathWeightDerived, 5),
+    searchPathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
+    searchPathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
+    searchPathWeightViolation: clampSearchPathWeight(state.searchPathWeightViolation, 50),
+    searchRigorPreset: normalizeSearchRigorPreset(state.searchRigorPreset),
+    restrictCoreToCore: !!state.restrictCoreToCore,
+    enforceGrammar: !!state.enforceGrammar,
+    strictRealization: !!state.strictRealization,
+    perspectiveClassMode: normalizePerspectiveClassMode(state.perspectiveClassMode),
+    perspectiveDominantSharePct: clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct),
     allowAssociationFallback: !!state.allowAssociationFallback,
   };
 }
@@ -383,6 +911,9 @@ function restoreSessionSnapshot() {
       setMode(data.mode);
     }
 
+    state.domainContext = normalizeDomainContext(data.domainContext);
+    syncDomainContextSelectors();
+
     if (data.pathFlow === "horizontal" || data.pathFlow === "vertical" || data.pathFlow === "compact") {
       state.pathFlow = data.pathFlow;
       try {
@@ -400,6 +931,12 @@ function restoreSessionSnapshot() {
       }
     }
 
+    if (typeof data.showCompositeSubs === "boolean") {
+      state.showCompositeSubs = data.showCompositeSubs;
+      const cb = document.getElementById("toggle-composite-subs");
+      if (cb) cb.checked = state.showCompositeSubs !== false;
+    }
+
     if (typeof data.forceShowQuickExamples === "boolean") {
       state.forceShowQuickExamples = data.forceShowQuickExamples;
     }
@@ -413,11 +950,44 @@ function restoreSessionSnapshot() {
     if (data.searchEffort === "fast" || data.searchEffort === "balanced" || data.searchEffort === "thorough") {
       state.searchEffort = data.searchEffort;
     }
-    if (data.searchStrategy === "bfs" || data.searchStrategy === "dfs") {
-      state.searchStrategy = data.searchStrategy;
+    if (typeof data.searchPathWeightDirect === "number" && Number.isFinite(data.searchPathWeightDirect)) {
+      state.searchPathWeightDirect = clampSearchPathWeight(data.searchPathWeightDirect, 1);
+    }
+    if (typeof data.searchPathWeightDerived === "number" && Number.isFinite(data.searchPathWeightDerived)) {
+      state.searchPathWeightDerived = clampSearchPathWeight(data.searchPathWeightDerived, 5);
+    }
+    if (typeof data.searchPathWeightAssociation === "number" && Number.isFinite(data.searchPathWeightAssociation)) {
+      state.searchPathWeightAssociation = clampSearchPathWeight(data.searchPathWeightAssociation, 100);
+    }
+    if (typeof data.searchPathWeightLayerSkip === "number" && Number.isFinite(data.searchPathWeightLayerSkip)) {
+      state.searchPathWeightLayerSkip = clampSearchPathWeight(data.searchPathWeightLayerSkip, 15);
+    }
+    if (typeof data.searchPathWeightViolation === "number" && Number.isFinite(data.searchPathWeightViolation)) {
+      state.searchPathWeightViolation = clampSearchPathWeight(data.searchPathWeightViolation, 50);
+    }
+    if (typeof data.restrictCoreToCore === "boolean") {
+      state.restrictCoreToCore = data.restrictCoreToCore;
+    }
+    if (typeof data.enforceGrammar === "boolean") {
+      state.enforceGrammar = data.enforceGrammar;
+    }
+    if (typeof data.strictRealization === "boolean") {
+      state.strictRealization = data.strictRealization;
+    }
+    if (typeof data.searchRigorPreset === "string") {
+      state.searchRigorPreset = normalizeSearchRigorPreset(data.searchRigorPreset);
+    }
+    if (typeof data.perspectiveClassMode === "string") {
+      state.perspectiveClassMode = normalizePerspectiveClassMode(data.perspectiveClassMode);
+    }
+    if (typeof data.perspectiveDominantSharePct === "number" && Number.isFinite(data.perspectiveDominantSharePct)) {
+      state.perspectiveDominantSharePct = clampPerspectiveDominantSharePct(data.perspectiveDominantSharePct);
     }
     if (typeof data.allowAssociationFallback === "boolean") {
       state.allowAssociationFallback = data.allowAssociationFallback;
+    }
+    if (state.searchRigorPreset !== "custom" && SEARCH_RIGOR_PRESETS[state.searchRigorPreset]) {
+      applySearchRigorPresetToState(state.searchRigorPreset);
     }
     applySearchOptionsToUI();
 
@@ -459,7 +1029,7 @@ function restoreSessionSnapshot() {
           ? data.activePathIdx
           : 0;
       window.__pendingSessionExtras = { userChoices: uc, activePathIdx: ac };
-      findPath();
+      window.dispatch({ type: "FIND_PATH", reason: "restore-session" });
     }
   } catch (e) {
     console.warn("restoreSessionSnapshot failed", e);
@@ -566,6 +1136,62 @@ function readLayoutPrefs() {
 
 let pathOptionsEscHandler = null;
 let pathOptionsViewportCleanup = null;
+let pathChromeEscHandler = null;
+let pathChromeViewportCleanup = null;
+
+function syncDomainContextSelectors() {
+  const value = normalizeDomainContext(state.domainContext);
+  const side = document.getElementById("domain-context-select");
+  const top = document.getElementById("domain-context-top-select");
+  if (side) side.value = value;
+  if (top) top.value = value;
+}
+
+function buildDomainContextOptions() {
+  if (typeof SCENARIOS === "undefined" || !SCENARIOS || typeof SCENARIOS !== "object") return [];
+  const entries = Object.entries(SCENARIOS)
+    .filter(([k, v]) => k && v && typeof v === "object")
+    .map(([k, v]) => {
+      const label = typeof v.label === "string" && v.label.trim() ? v.label.trim() : k;
+      return { key: k, label };
+    });
+
+  const abstract = entries.filter((e) => e.key === "abstract");
+  const rest = entries.filter((e) => e.key !== "abstract").sort((a, b) => a.label.localeCompare(b.label));
+  return [...abstract, ...rest];
+}
+
+function repopulateDomainContextSelectorsFromScenarios() {
+  const side = document.getElementById("domain-context-select");
+  const top = document.getElementById("domain-context-top-select");
+  if (!side && !top) return;
+
+  const opts = buildDomainContextOptions();
+  if (!opts.length) return;
+
+  const current = normalizeDomainContext(state.domainContext);
+  const makeOption = (o) => {
+    const opt = document.createElement("option");
+    opt.value = o.key;
+    opt.textContent = o.label;
+    return opt;
+  };
+
+  const applyTo = (sel) => {
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = "";
+    for (const o of opts) sel.appendChild(makeOption(o));
+    // Preserve current state selection if possible; otherwise preserve previous select value; otherwise default.
+    sel.value = current;
+    if (sel.value !== current && keep) sel.value = keep;
+    if (!sel.value) sel.value = current;
+  };
+
+  applyTo(side);
+  applyTo(top);
+  syncDomainContextSelectors();
+}
 
 function updatePathOptionsTriggerSummary() {
   const el = document.getElementById("path-options-trigger-label");
@@ -581,7 +1207,12 @@ function updatePathOptionsTriggerSummary() {
   const rel = state.includeDerived ? "+ Derived" : "Direct";
   const mode = state.selectionMode === "set" ? "Connect set" : "Ordered";
   const so = getSearchPathOptions();
-  const strat = so.strategy === "dfs" ? "DFS" : "BFS";
+  const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
+  const pMode = normalizePerspectiveClassMode(state.perspectiveClassMode);
+  const pLabel =
+    pMode === "dominant-share"
+      ? `dominant ${clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct)}%`
+      : "exclusive";
   const eff =
     normalizeSearchEffort(state.searchEffort) === "fast"
       ? "fast search"
@@ -589,7 +1220,9 @@ function updatePathOptionsTriggerSummary() {
         ? "thorough search"
         : "balanced search";
   const af = state.allowAssociationFallback ? "Assoc fallback on" : "Assoc fallback off";
-  trigger.title = `Current: ${rel} · ${mode} · ${vpShort} · Up to ${so.maxDepth} hops · ${so.maxPaths} alts · ${eff} · ${strat} · ${af}`;
+  const rigor = normalizeSearchRigorPreset(state.searchRigorPreset);
+  const sem = `Semantics: ${so.restrictCoreToCore ? "core-prune on" : "core-prune off"}, ${so.enforceGrammar ? "grammar on" : "grammar off"}, ${so.strictRealization ? "R strict" : "R neutral"}`;
+  trigger.title = `Current: ${rel} · ${mode} · ${vpShort} · Up to ${so.maxDepth} hops · ${so.maxPaths} alts · ${eff} · ${costs} · Rigor: ${rigor} · ${sem} · Perspective: ${pLabel} · ${af}`;
 }
 
 function closePathOptionsOverlay() {
@@ -615,9 +1248,36 @@ function closePathOptionsOverlay() {
   }
 }
 
+function closePathChromeOverlay() {
+  if (pathChromeViewportCleanup) {
+    pathChromeViewportCleanup();
+    pathChromeViewportCleanup = null;
+  }
+  if (pathChromeEscHandler) {
+    document.removeEventListener("keydown", pathChromeEscHandler);
+    pathChromeEscHandler = null;
+  }
+  const overlay = document.getElementById("path-chrome-overlay");
+  const panel = document.getElementById("path-chrome-body-host");
+  const root = document.getElementById("path-chrome-collapsible");
+  const trigger = document.getElementById("path-chrome-trigger");
+  if (panel && root && !root.contains(panel)) {
+    root.appendChild(panel);
+  }
+  if (panel) panel.hidden = true;
+  if (trigger) trigger.setAttribute("aria-expanded", "false");
+  if (overlay) {
+    overlay.classList.remove("open");
+    overlay.innerHTML = "";
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.onclick = null;
+  }
+}
+
 function openPathOptionsOverlay(anchorEl) {
   if (!anchorEl) return;
   teardownPickerOverlay();
+  closePathChromeOverlay();
   closePathOptionsOverlay();
   const overlay = document.getElementById("path-options-overlay");
   const body = document.getElementById("sidebar-controls-body");
@@ -672,6 +1332,66 @@ function openPathOptionsOverlay(anchorEl) {
 }
 
 window.openPathOptionsOverlay = openPathOptionsOverlay;
+window.openPathChromeOverlay = openPathChromeOverlay;
+
+function openPathChromeOverlay(anchorEl) {
+  if (!anchorEl) return;
+  teardownPickerOverlay();
+  closePathOptionsOverlay();
+  closePathChromeOverlay();
+  const overlay = document.getElementById("path-chrome-overlay");
+  const panel = document.getElementById("path-chrome-body-host");
+  const trigger = document.getElementById("path-chrome-trigger");
+  if (!overlay || !panel) return;
+
+  panel.hidden = false;
+  if (trigger) trigger.setAttribute("aria-expanded", "true");
+  overlay.classList.add("open");
+  overlay.setAttribute("aria-hidden", "false");
+  overlay.onclick = (e) => {
+    if (e.target === overlay) closePathChromeOverlay();
+  };
+
+  const onEsc = (e) => {
+    if (e.key === "Escape") closePathChromeOverlay();
+  };
+  pathChromeEscHandler = onEsc;
+  document.addEventListener("keydown", onEsc);
+
+  const pop = document.createElement("div");
+  pop.className = "picker-popover path-chrome-popover";
+
+  const header = document.createElement("div");
+  header.className = "picker-popover-header";
+  header.innerHTML = `<div class="picker-title">Interface options</div>`;
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "picker-close";
+  closeBtn.textContent = "Close";
+  closeBtn.onclick = () => closePathChromeOverlay();
+  header.appendChild(closeBtn);
+
+  const popBody = document.createElement("div");
+  popBody.className = "picker-popover-body path-chrome-popover-body";
+  popBody.appendChild(panel);
+
+  pop.appendChild(header);
+  pop.appendChild(popBody);
+  overlay.appendChild(pop);
+
+  const onViewportChange = () => fitPickerPopoverInViewport(anchorEl, pop);
+  window.addEventListener("resize", onViewportChange);
+  window.addEventListener("scroll", onViewportChange, true);
+  pathChromeViewportCleanup = () => {
+    window.removeEventListener("resize", onViewportChange);
+    window.removeEventListener("scroll", onViewportChange, true);
+  };
+
+  requestAnimationFrame(() => {
+    fitPickerPopoverInViewport(anchorEl, pop);
+    requestAnimationFrame(() => fitPickerPopoverInViewport(anchorEl, pop));
+  });
+}
 
 function applySidebarControlsCollapse() {
   const body = document.getElementById("sidebar-controls-body");
@@ -706,13 +1426,10 @@ function initPathChromeCollapsible() {
   const trigger = document.getElementById("path-chrome-trigger");
   const panel = document.getElementById("path-chrome-body-host");
   if (!root || !trigger || !panel) return;
-  function setOpen(open) {
-    root.classList.toggle("is-expanded", open);
-    panel.hidden = !open;
-    trigger.setAttribute("aria-expanded", open ? "true" : "false");
-  }
-  setOpen(false);
-  trigger.addEventListener("click", () => setOpen(!!panel.hidden));
+  root.classList.remove("is-expanded");
+  panel.hidden = true;
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.addEventListener("click", () => openPathChromeOverlay(trigger));
 }
 
 function initPathOptionsOverlay() {
@@ -742,6 +1459,7 @@ function applyLayoutChrome() {
 
   if (bSide) bSide.classList.toggle("active", mode === "sidebar");
   if (bTop) bTop.classList.toggle("active", mode === "top");
+  syncInterfaceLayoutModeButtons();
 
   const topBarCollapse = document.getElementById("btn-topbar-collapse");
 
@@ -764,18 +1482,16 @@ function applyLayoutChrome() {
   if (headerShowBtn) {
     headerShowBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
     if (collapsed) {
-      headerShowBtn.title =
-        mode === "top" ? "Show path options and waypoints (top bar)" : "Show path options and waypoints (sidebar)";
+      headerShowBtn.title = mode === "top" ? "Edit path (top bar)" : "Edit path (sidebar)";
       headerShowBtn.setAttribute(
         "aria-label",
-        mode === "top" ? "Show control bar" : "Show control panel"
+        mode === "top" ? "Edit path (open control bar)" : "Edit path (open control panel)"
       );
     } else {
-      headerShowBtn.title =
-        mode === "top" ? "Hide path options and waypoints (top bar)" : "Hide path options and waypoints (sidebar)";
+      headerShowBtn.title = mode === "top" ? "Hide edit path (top bar)" : "Hide edit path (sidebar)";
       headerShowBtn.setAttribute(
         "aria-label",
-        mode === "top" ? "Hide control bar" : "Hide control panel"
+        mode === "top" ? "Hide edit path (close control bar)" : "Hide edit path (close control panel)"
       );
     }
   }
@@ -801,6 +1517,22 @@ function applyLayoutChrome() {
   }
 
   applySidebarControlsCollapse();
+  updateDiagramEmptyChrome();
+}
+
+function syncInterfaceLayoutModeButtons() {
+  const bH = document.getElementById("btn-interface-horizontal");
+  const bV = document.getElementById("btn-interface-vertical");
+  if (!bH && !bV) return;
+
+  const chrome = readLayoutPrefs();
+  const results = readResultsLayoutMode();
+
+  const isHorizontal = chrome.mode === "top" && results === "stack";
+  const isVertical = chrome.mode === "sidebar" && results === "side";
+
+  if (bH) bH.classList.toggle("active", isHorizontal);
+  if (bV) bV.classList.toggle("active", isVertical);
 }
 
 function persistLayoutPrefs(patch) {
@@ -811,6 +1543,25 @@ function persistLayoutPrefs(patch) {
   localStorage.setItem(LAYOUT_LS.topH, String(next.topH));
   localStorage.setItem(LAYOUT_LS.collapsed, next.collapsed ? "1" : "0");
   applyLayoutChrome();
+}
+
+function updateDiagramEmptyChrome() {
+  const emptyEl = document.getElementById("diagram-empty");
+  if (!emptyEl) return;
+
+  const toolbar = document.getElementById("diagram-toolbar");
+  const viewport = document.getElementById("diagram-viewport-wrap");
+  const startBtn = document.getElementById("diagram-empty-start-btn");
+
+  const emptyVisible = getComputedStyle(emptyEl).display !== "none";
+  if (toolbar) toolbar.hidden = emptyVisible;
+  if (viewport) viewport.hidden = emptyVisible;
+
+  // Only show the "Start editing" CTA when the controls are hidden.
+  if (startBtn) {
+    const { collapsed } = readLayoutPrefs();
+    startBtn.hidden = !emptyVisible || !collapsed;
+  }
 }
 
 window.setChromeLayout = function setChromeLayout(mode) {
@@ -828,6 +1579,22 @@ window.setChromeLayout = function setChromeLayout(mode) {
 window.togglePanelCollapsed = function togglePanelCollapsed() {
   const { collapsed } = readLayoutPrefs();
   persistLayoutPrefs({ collapsed: !collapsed });
+};
+
+window.startEditingFromEmpty = function startEditingFromEmpty() {
+  const prefs = readLayoutPrefs();
+  if (prefs?.collapsed) persistLayoutPrefs({ collapsed: false });
+  // Make sure users immediately see what to do next.
+  state.forceShowQuickExamples = true;
+  updateQuickExamplesVisibility();
+  schedulePersistSession();
+  updateDiagramEmptyChrome();
+
+  // Focus the first picker trigger if it exists (helps when chrome was hidden).
+  setTimeout(() => {
+    const first = document.querySelector("#waypoint-chain .element-trigger");
+    if (first && typeof first.focus === "function") first.focus();
+  }, 0);
 };
 
 function initLayoutChrome() {
@@ -1025,6 +1792,8 @@ function applyResultsLayoutMode(mode) {
   const panel = document.getElementById("results-panel");
   const handle = document.getElementById("results-split-resize");
   const btn = document.getElementById("btn-results-layout");
+  const bBelow = document.getElementById("btn-details-below");
+  const bBeside = document.getElementById("btn-details-beside");
   if (!panel) return;
   const side = mode === "side";
   panel.classList.toggle("results-layout--side", side);
@@ -1035,6 +1804,9 @@ function applyResultsLayoutMode(mode) {
       ? "Put path tabs and explanations back under the diagram"
       : "Put path tabs and explanations to the right of the diagram";
   }
+  if (bBelow) bBelow.classList.toggle("active", !side);
+  if (bBeside) bBeside.classList.toggle("active", side);
+  syncInterfaceLayoutModeButtons();
   if (handle) {
     handle.setAttribute("aria-orientation", side ? "vertical" : "horizontal");
     handle.setAttribute(
@@ -1045,7 +1817,7 @@ function applyResultsLayoutMode(mode) {
     );
   }
   applyPathFlowFromStorage();
-  if (state.segments) renderResults();
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
 }
 
 function getPathFlowStorageKey() {
@@ -1098,6 +1870,14 @@ function buildFeedbackContextBody() {
   const viewpointLabel =
     vpVal && vpOpt ? String(vpOpt.textContent || "").trim() : vpVal ? vpVal : "All elements";
 
+  const domainKey = normalizeDomainContext(state.domainContext);
+  let domainHuman = domainKey;
+  if (typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[domainKey]) {
+    const s = SCENARIOS[domainKey];
+    const bits = [s.label, s.name].filter(Boolean);
+    domainHuman = bits.length ? `${bits.join(" · ")} (key: ${domainKey})` : domainKey;
+  }
+
   const layout = readLayoutPrefs();
   const chromeLabel = layout.mode === "top" ? "Top bar" : "Sidebar";
   const resultsMode = readResultsLayoutMode();
@@ -1107,6 +1887,14 @@ function buildFeedbackContextBody() {
         ? "Beside diagram (split)"
         : "Beside requested (narrow viewport — stacked)"
       : "Stacked below diagram";
+
+  const so = getSearchPathOptions();
+  let searchSnap = null;
+  try {
+    searchSnap = buildPathSearchReportPayload();
+  } catch (_) {
+    searchSnap = null;
+  }
 
   lines.push("--- Auto-filled context (please keep) ---");
   lines.push(`When: ${new Date().toISOString()}`);
@@ -1121,6 +1909,7 @@ function buildFeedbackContextBody() {
     }`
   );
   lines.push(`User agent: ${typeof navigator !== "undefined" ? navigator.userAgent : ""}`);
+  lines.push(`- App loading / busy: ${state.loading ? "yes" : "no"}`);
 
   lines.push("");
   lines.push("Layout / chrome:");
@@ -1139,25 +1928,69 @@ function buildFeedbackContextBody() {
   }
 
   lines.push("");
-  lines.push("Options:");
-  lines.push(`- Relationships: ${state.includeDerived ? "+ Derived" : "Direct only"}`);
-  lines.push(`- Association fallback: ${state.allowAssociationFallback ? "on" : "off"}`);
-  lines.push(`- Path mode: ${state.selectionMode === "set" ? "Connect set" : "Ordered"}`);
-  lines.push(`- Viewpoint filter: ${viewpointLabel}`);
-  const so = getSearchPathOptions();
+  lines.push("Scenario & viewpoint (how the app was used):");
+  lines.push(`- Domain / storytelling context: ${domainHuman}`);
   lines.push(
-    `- Path search: weighted UCS, max ${so.maxDepth} hops/segment, ${so.maxPaths} alternatives, effort ${normalizeSearchEffort(state.searchEffort)}, association fallback ${state.allowAssociationFallback ? "on" : "off"}`
+    `- Viewpoint (dropdown): ${viewpointLabel}${vpVal ? ` (key: ${vpVal})` : ""}`
   );
+  const paletteRestricted =
+    vpVal &&
+    typeof VIEWPOINTS !== "undefined" &&
+    VIEWPOINTS[vpVal] &&
+    !VIEWPOINTS[vpVal].allElements;
+  lines.push(
+    `- Element palette: ${
+      paletteRestricted
+        ? "restricted to elements allowed by the selected viewpoint"
+        : "full Appendix B (All elements or a viewpoint that allows all elements)"
+    }`
+  );
+  if (searchSnap) {
+    lines.push(`- Waypoint chain summary: ${searchSnap.waypointChainDescription}`);
+    lines.push(
+      `- Path mode: ${searchSnap.mode === "set" ? "Connect set" : "Ordered waypoints"} · picked element slots: ${searchSnap.waypointCount} · distinct elements (connect set): ${searchSnap.connectSetDistinctCount}`
+    );
+  } else {
+    lines.push(`- Path mode: ${state.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`);
+  }
+
+  lines.push("");
+  lines.push("Pathfinder & graph settings:");
+  lines.push(`- Relationships: ${state.includeDerived ? "+ Derived" : "Direct only"}`);
+  lines.push(`- Association fallback (§5.2.4 bridges): ${state.allowAssociationFallback ? "on" : "off"}`);
+  lines.push(
+    `- Weighted UCS: direct=${so.pathWeightDirect} · derived=${so.pathWeightDerived} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
+  );
+  lines.push(
+    `- Semantic rigor: preset=${normalizeSearchRigorPreset(state.searchRigorPreset)} · corePrune=${so.restrictCoreToCore} · grammar=${so.enforceGrammar} · strictRealization=${so.strictRealization}`
+  );
+  const pcm = so.perspectiveClassMode || normalizePerspectiveClassMode(state.perspectiveClassMode);
+  const domPct =
+    pcm === "dominant-share"
+      ? Math.round((so.perspectiveDominantShare != null ? so.perspectiveDominantShare : clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct) / 100) * 100)
+      : null;
+  lines.push(
+    `- Perspective grouping: ${pcm}${domPct != null ? ` · dominant-share threshold ${domPct}%` : ""}`
+  );
+  lines.push(
+    `- Limits: max ${so.maxDepth} hops/segment · ${so.maxPaths} route alternatives · expansion budget ${normalizeSearchEffort(state.searchEffort)} (maxStates≈${so.maxStates})`
+  );
+  if (searchSnap) {
+    lines.push(
+      `- Snapshot flags: includeDerived=${searchSnap.includeDerived} · allowAssociationFallback=${searchSnap.allowAssociationFallback}`
+    );
+  }
 
   lines.push("");
   lines.push("Diagram view:");
   lines.push(`- Mode: ${state.mode === "swimlane" ? "Swimlanes" : "Compact"}`);
   lines.push(`- Path layout: ${state.pathFlow}`);
   lines.push(`- Step numbers on arrows: ${state.showBadges ? "on" : "off"}`);
+  lines.push(`- Composite sub-component illustrations: ${state.showCompositeSubs !== false ? "on" : "off"}`);
   lines.push(`- Quick examples pinned: ${state.forceShowQuickExamples ? "yes" : "no"}`);
 
   lines.push("");
-  lines.push("Waypoints (what you were connecting):");
+  lines.push("Waypoints (layer → element per slot):");
   const wps = state.waypoints || [];
   if (!wps.length) {
     lines.push("- (none)");
@@ -1168,29 +2001,64 @@ function buildFeedbackContextBody() {
       lines.push(`- ${i + 1}. ${layer} → ${el}`);
     });
   }
+  if (state.selectionMode === "set" && state.lastAutoOrderInput?.length) {
+    lines.push(
+      `- Connect-set solver input (unordered names): ${state.lastAutoOrderInput.filter(Boolean).join(", ")}`
+    );
+  }
 
   lines.push("");
-  lines.push("Path finder / results:");
+  lines.push("Path finder / last run:");
+  if (state.lastPathSearchStatus) {
+    lines.push(`- Last search status: ${state.lastPathSearchStatus}`);
+  }
+  if (state.lastPathTemporaryRelaxation && typeof state.lastPathTemporaryRelaxation === "object") {
+    lines.push(`- Last successful path used temporary relax (one-shot CTA): ${JSON.stringify(state.lastPathTemporaryRelaxation)}`);
+  }
+  if (state._perspectiveSuggestFullMetamodel) {
+    lines.push("- Perspective “add elements” suggestions: expanded to full metamodel (outside strict viewpoint)");
+  }
   const gSize = state.graph && typeof state.graph.size === "number" ? state.graph.size : null;
   lines.push(`- Graph size (nodes): ${gSize != null ? gSize : "—"}`);
   const segs = state.segments;
-  if (!segs || !segs.length) {
-    lines.push("- No search results in memory (clear or not run yet).");
+  const hasNoPath =
+    !Array.isArray(segs) ||
+    segs.length === 0 ||
+    segs.some((s) => !s.paths || s.paths.length === 0);
+  const hasAnyPath = Array.isArray(segs) && segs.length > 0 && !hasNoPath;
+
+  if (!Array.isArray(segs)) {
+    lines.push("- Segments: (none — cleared or find not run yet).");
+  } else if (segs.length === 0) {
+    lines.push("- Segments: [] (last connect-set search found no valid chain).");
   } else {
-    const hasAnyPath = !segs.some((s) => !s.paths || s.paths.length === 0);
     lines.push(`- Segments: ${segs.length}`);
     lines.push(`- Any complete route: ${hasAnyPath ? "yes" : "no"}`);
+    if (hasAnyPath) {
+      lines.push(
+        `- Last successful path used Association fallback (penalized hop): ${state.lastPathIsFallback ? "yes" : "no"}`
+      );
+    }
     lines.push(`- Active alternative tab: ${(state.activePathIdx ?? 0) + 1}`);
     if (state.selectionMode === "set" && state.lastAutoOrderResult?.length) {
       lines.push(`- Auto-ordered chain: ${state.lastAutoOrderResult.join(" → ")}`);
       const m = state.lastAutoOrderMetrics;
       if (m && Number.isFinite(m.totalScore)) {
-        const so = getSearchPathOptions();
         lines.push(
           `- Connect-set metrics: weighted cost ${m.totalScore} · ${m.pointCount} points · ${m.orderingExact ? "exact" : "heuristic"} ordering · max ${so.maxDepth} hops/segment`
         );
       }
     }
+  }
+  if (hasNoPath && state.pathFailureHints && typeof state.pathFailureHints === "object") {
+    lines.push(
+      `- No-path probe (would Derived / Association help?): ${JSON.stringify(state.pathFailureHints)}`
+    );
+  }
+  const uc = state.userChoices && typeof state.userChoices === "object" ? state.userChoices : {};
+  const ucKeys = Object.keys(uc);
+  if (ucKeys.length) {
+    lines.push(`- Ambiguous-hop disambiguation (userChoices): ${JSON.stringify(uc)}`);
   }
 
   const mm = state.mmLast;
@@ -1245,6 +2113,52 @@ window.openFeedbackModal = function openFeedbackModal() {
 
 window.closeFeedbackModal = function closeFeedbackModal() {
   const modal = document.getElementById("feedback-modal");
+  if (!modal) return;
+  modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+};
+
+function syncRigorGuideModalHighlight() {
+  const preset = normalizeSearchRigorPreset(state.searchRigorPreset);
+  document.querySelectorAll(".rigor-guide-table tbody tr[data-rigor-preset]").forEach((tr) => {
+    const key = tr.getAttribute("data-rigor-preset");
+    const active = key === preset && preset !== "custom";
+    tr.classList.toggle("rigor-guide-highlight", active);
+  });
+}
+
+window.openRigorGuideModal = function openRigorGuideModal() {
+  syncRigorGuideModalHighlight();
+  const modal = document.getElementById("rigor-guide-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+  const card = modal.querySelector(".rigor-guide-modal-card");
+  requestAnimationFrame(() => {
+    if (card && typeof card.focus === "function") card.focus();
+  });
+};
+
+window.closeRigorGuideModal = function closeRigorGuideModal() {
+  const modal = document.getElementById("rigor-guide-modal");
+  if (!modal) return;
+  modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+};
+
+window.openSearchDepthGuideModal = function openSearchDepthGuideModal() {
+  const modal = document.getElementById("search-depth-guide-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+  const card = modal.querySelector(".rigor-guide-modal-card");
+  requestAnimationFrame(() => {
+    if (card && typeof card.focus === "function") card.focus();
+  });
+};
+
+window.closeSearchDepthGuideModal = function closeSearchDepthGuideModal() {
+  const modal = document.getElementById("search-depth-guide-modal");
   if (!modal) return;
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
@@ -1307,6 +2221,7 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
       "Email sending is not set up yet. Add your Web3Forms access key in config/feedback-config.js, or use Copy report.",
       true
     );
+    trackEvent("feedback_submit", { ok: false, reason: "missing_web3forms_key" });
     return;
   }
 
@@ -1353,9 +2268,11 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
       "Sent. Thank you — if you left a reply address, you may get a follow-up there.",
       false
     );
+    trackEvent("feedback_submit", { ok: true });
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     setFeedbackStatus(m, true);
+    trackEvent("feedback_submit", { ok: false, reason: "network_or_api_error" });
   } finally {
     if (sendBtn) {
       sendBtn.disabled = false;
@@ -1371,6 +2288,33 @@ window.toggleResultsLayout = function toggleResultsLayout() {
   const panel = document.getElementById("results-panel");
   const cur = panel?.classList.contains("results-layout--side") ? "side" : "stack";
   applyResultsLayoutMode(cur === "side" ? "stack" : "side");
+};
+
+window.setResultsLayoutMode = function setResultsLayoutMode(mode) {
+  applyResultsLayoutMode(mode === "side" ? "side" : "stack");
+};
+
+window.setInterfaceLayout = function setInterfaceLayout(mode) {
+  const m = mode === "vertical" ? "vertical" : "horizontal";
+
+  // Horizontal panels: controls on top, details below; default graph layout: Horizontal.
+  // Vertical panels: controls on left, details beside; default graph layout: Vertical.
+  if (m === "horizontal") {
+    persistLayoutPrefs({ mode: "top" });
+    applyResultsLayoutMode("stack");
+    localStorage.setItem(PATH_FLOW_STACK_LS, "horizontal");
+  } else {
+    persistLayoutPrefs({ mode: "sidebar" });
+    applyResultsLayoutMode("side");
+    localStorage.setItem(PATH_FLOW_SIDE_LS, "vertical");
+  }
+
+  applyPathFlowFromStorage();
+  rebuildGraph();
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+  renderWaypointChain();
+  updatePathModeHint();
+  updateQuickExamplesVisibility();
 };
 
 /** Draggable divider: horizontal split (stacked) or vertical split (details beside graph). */
@@ -1389,7 +2333,7 @@ function initResultsSplit() {
     resizeAlignT = window.setTimeout(() => {
       const before = state.pathFlow;
       applyPathFlowFromStorage();
-      if (state.segments && before !== state.pathFlow) renderResults();
+      if (state.segments && before !== state.pathFlow) window.dispatch({ type: "RENDER_RESULTS" });
     }, 150);
   });
 
@@ -1489,7 +2433,20 @@ function initResultsSplit() {
 // ── Initialise ──────────────────────────────────────────────────────────────
 
 window.showHelp = function() {
-  document.getElementById('help-modal').style.display = 'block';
+  const m = document.getElementById("help-modal");
+  if (!m) return;
+  m.setAttribute("aria-hidden", "false");
+  lockBodyScroll();
+  // Focus the dialog so Esc/keyboard users start inside it.
+  const card = m.querySelector(".help-modal-card");
+  if (card && typeof card.focus === "function") card.focus();
+};
+
+window.hideHelp = function() {
+  const m = document.getElementById("help-modal");
+  if (!m) return;
+  m.setAttribute("aria-hidden", "true");
+  unlockBodyScroll();
 };
 
 /** Official ArchiMate 3.x specification (same family as embedded § references). */
@@ -1861,7 +2818,7 @@ function buildMatrixConnectivityHtml(name) {
         </div>
       </div>
       <p class="el-matrix-footnote">
-        <strong>Association</strong> (O) is always permitted between any two elements (§5.2.4) but is not listed in Appendix B’s matrix. ArchiTrek encodes that as optional bridges: with <strong>Allow Association Fallback</strong> off, search uses only Appendix B (and derived) arcs; when on, §5.2.4 links may appear as a last resort and are flagged in results.
+        <strong>Association</strong> (O) is always permitted between any two elements (§5.2.4) but is not listed in Appendix B’s matrix. ArchiTrek encodes that as optional bridges: with <strong>Semantic rigor</strong> Academic (or Association off in Advanced Logic Overrides), the pathfinder does not use §5.2.4 Association as a bridge; <strong>Direct vs +Derived</strong> still controls whether Appendix B only or §5.7 derived edges are in the graph. Looser rigor or overrides allow Association as a last resort, flagged in results.
       </p>
     </section>`;
 }
@@ -1976,11 +2933,15 @@ window.showElementDetails = function showElementDetails(elementName) {
 
 // ── Diagram pan / zoom (path SVG) ───────────────────────────────────────────
 const diagramView = { scale: 1, tx: 0, ty: 0, min: 0.25, max: 4, step: 1.2 };
-/** When mode / badges / vertical / or segment result ref changes, reset pan-zoom; not when only switching path tab. */
+/** When mode / badges / layout / story theme / or segment result ref changes, reset pan-zoom; not when only switching path tab. */
 let _diagramPanCtx = { modeKey: null, segmentsRef: null };
 
 function diagramPanShouldReset(segments) {
-  const modeKey = `${state.mode}|${state.pathFlow}|${state.showBadges}`;
+  // Keep the camera stable when toggling Compact ↔ Swimlanes.
+  // Both are just alternative renderings of the same result set; resetting pan/zoom feels like the diagram
+  // "disappears" even though only lane bands/layout changed.
+  const panModeKey = (state.mode === "swimlane") ? "compact" : state.mode;
+  const modeKey = `${panModeKey}|${state.pathFlow}|${state.showBadges}|${normalizeDomainContext(state.domainContext)}`;
   const segRef = segments;
   if (_diagramPanCtx.modeKey !== modeKey || _diagramPanCtx.segmentsRef !== segRef) {
     _diagramPanCtx = { modeKey, segmentsRef: segRef };
@@ -1991,6 +2952,206 @@ function diagramPanShouldReset(segments) {
 
 function resetDiagramPanContext() {
   _diagramPanCtx = { modeKey: null, segmentsRef: null };
+}
+
+/** No-path UI sits above the pan/zoom surface (not inside #path-diagram) so the canvas is not draggable. */
+function showDiagramNoPathOverlay(html) {
+  const inner = document.getElementById("diagram-no-path-overlay-inner");
+  const ov = document.getElementById("diagram-no-path-overlay");
+  const area = document.getElementById("diagram-area");
+  if (inner) inner.innerHTML = html || "";
+  if (ov) {
+    ov.hidden = false;
+    ov.setAttribute("aria-hidden", "false");
+  }
+  if (area) area.classList.add("diagram-area--no-path-overlay");
+}
+
+function hideDiagramNoPathOverlay() {
+  const inner = document.getElementById("diagram-no-path-overlay-inner");
+  const ov = document.getElementById("diagram-no-path-overlay");
+  const area = document.getElementById("diagram-area");
+  if (inner) inner.innerHTML = "";
+  if (ov) {
+    ov.hidden = true;
+    ov.setAttribute("aria-hidden", "true");
+  }
+  if (area) area.classList.remove("diagram-area--no-path-overlay");
+}
+
+/** First segment with no UCS result (ordered mode: first directed leg that fails). */
+function getFirstFailingSegment(segments) {
+  if (!Array.isArray(segments)) return null;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    if (s && (!s.paths || s.paths.length === 0)) {
+      return { from: s.from, to: s.to, index: i };
+    }
+  }
+  return null;
+}
+
+function hidePathFailureModal() {
+  const modal = document.getElementById("path-fail-modal");
+  if (!modal) return;
+  modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+}
+
+window.hidePathFailureModal = hidePathFailureModal;
+
+function showPathFailureModal(opts) {
+  const modal = document.getElementById("path-fail-modal");
+  const body = document.getElementById("path-fail-modal-body");
+  const titleEl = document.getElementById("path-fail-modal-title");
+  if (!modal || !body || !titleEl) return;
+
+  const {
+    narrFrom,
+    narrTo,
+    fail,
+    chainStr,
+    segmentCount = 0,
+    selectionMode,
+    pathHints,
+    includeDerived,
+    allowAssociationFallback,
+  } = opts;
+
+  modal.dataset.narrFrom = narrFrom || "";
+  modal.dataset.narrTo = narrTo || "";
+
+  const isOrdered = selectionMode === "ordered";
+  const vpF = getStrictViewpointFailureContext(narrFrom, narrTo);
+  titleEl.textContent =
+    vpF.strict && !vpF.fromInGraph && !vpF.toInGraph
+      ? "No path in this viewpoint"
+      : isOrdered
+        ? "No path for your waypoint order"
+        : "No path found";
+
+  const nf = escapeHtml(narrFrom || "—");
+  const nt = escapeHtml(narrTo || "—");
+  const chainEsc = chainStr ? escapeHtml(chainStr) : "";
+
+  let lead = "";
+  if (vpF.strict) {
+    const vpn = escapeHtml(vpF.name);
+    let vpExpl = "";
+    if (!vpF.fromInGraph && !vpF.toInGraph) {
+      vpExpl = `With viewpoint <strong>${vpn}</strong>, neither endpoint is in this viewpoint’s element palette, so they are not part of the pathfinding graph while this filter is on.`;
+    } else if (!vpF.fromInGraph) {
+      vpExpl = `With viewpoint <strong>${vpn}</strong>, <strong>${nf}</strong> is not in this viewpoint’s element palette.`;
+    } else if (!vpF.toInGraph) {
+      vpExpl = `With viewpoint <strong>${vpn}</strong>, <strong>${nt}</strong> is not in this viewpoint’s element palette.`;
+    } else {
+      vpExpl = `Viewpoint <strong>${vpn}</strong> limits which element types and matrix relationships the search may use. There is no route within that scope for this query — either no permitted chain exists between these points under your options, or a chain would need element types or links this viewpoint does not include.`;
+    }
+    if (isOrdered && chainEsc) {
+      if (fail && typeof fail.index === "number") {
+        lead = `<p class="path-fail-modal-lead">${vpExpl} You asked for the directed chain <strong>${chainEsc}</strong>; the first failing hop is <strong>${nf} → ${nt}</strong> (segment ${fail.index + 1} of ${segmentCount || "?"}).</p>`;
+      } else {
+        lead = `<p class="path-fail-modal-lead">${vpExpl} You asked for <strong>${chainEsc}</strong>. Try widening the viewpoint, raising max hops, or using a one-off relaxed search below.</p>`;
+      }
+    } else {
+      lead = `<p class="path-fail-modal-lead">${vpExpl} No valid path was found for <strong>${nf}</strong> → <strong>${nt}</strong> with the current connect-set search.</p>`;
+    }
+  } else if (isOrdered && chainEsc) {
+    if (fail && typeof fail.index === "number") {
+      lead = `<p class="path-fail-modal-lead">You asked for the directed chain <strong>${chainEsc}</strong>. There is no valid route under your current settings for the hop <strong>${nf} → ${nt}</strong> (segment ${fail.index + 1} of ${segmentCount || "?"}) — the Appendix B graph may have no forward path between these elements within the hop limit and search effort, or filters such as <strong>Viewpoint</strong> / <strong>Direct only</strong> removed the needed edges.</p>`;
+    } else {
+      lead = `<p class="path-fail-modal-lead">You asked for <strong>${chainEsc}</strong>. The pathfinder could not build a complete chain under your current limits and options. Try a different order, raise max hops, widen the viewpoint, or relax Direct / Association settings.</p>`;
+    }
+  } else {
+    lead = `<p class="path-fail-modal-lead">No valid architectural path was found for <strong>${nf}</strong> → <strong>${nt}</strong> with the current connect-set search.</p>`;
+  }
+
+  const ruleKey = typeof getAspectRuleKey === "function" ? getAspectRuleKey(narrFrom, narrTo) : "";
+  const aspectRule = ruleKey && typeof ASPECT_RULES !== "undefined" ? ASPECT_RULES[ruleKey] : null;
+  const layerRuleKey = typeof getLayerRuleKey === "function" ? getLayerRuleKey(narrFrom, narrTo) : "";
+  const layerRule = layerRuleKey && typeof LAYER_RULES !== "undefined" ? LAYER_RULES[layerRuleKey] : null;
+  const aspectOk = !aspectRule || aspectRule.valid !== false;
+  const layerOk = !layerRule || layerRule.valid !== false;
+  const mmOk = aspectOk && layerOk;
+
+  let whyDetails = "<ul>";
+  whyDetails +=
+    `<li>The search follows <strong>directed</strong> edges (Appendix B tail → head; §5.7 derived only if enabled). If no edge sequence exists from <strong>${nf}</strong> to <strong>${nt}</strong> within the max hops per segment, the segment is empty.</li>`;
+  if (!mmOk) {
+    if (!aspectOk && aspectRule?.reason) {
+      whyDetails += `<li><strong>§4.2 aspect rule:</strong> ${escapeHtml(aspectRule.reason)}</li>`;
+    }
+    if (!layerOk && layerRule?.reason) {
+      whyDetails += `<li><strong>Layer pattern:</strong> ${escapeHtml(layerRule.reason)}</li>`;
+    }
+  } else {
+    whyDetails += vpF.strict
+      ? "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; remaining blockers include matrix reachability, hop depth, or Direct-only mode (viewpoint limits are explained in the next bullet).</li>"
+      : "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; the usual blockers are matrix reachability, hop depth, viewpoint palette, or Direct-only mode.</li>";
+  }
+  if (vpF.strict) {
+    whyDetails += `<li><strong>Viewpoint (${escapeHtml(vpF.name)}):</strong> The routed graph only includes elements in this viewpoint’s palette and matrix entries between allowed types. A “no path” here means no such chain under those limits — not necessarily that every ArchiMate link is forbidden in the full metamodel.</li>`;
+  }
+  if (pathHints?.derivedWouldHelp) {
+    whyDetails +=
+      "<li>Automatic check: enabling <strong>+ Derived</strong> (§5.7) would add traversable edges for this query.</li>";
+  }
+  if (pathHints?.associationWouldHelp) {
+    whyDetails +=
+      "<li>Automatic check: allowing <strong>Association</strong> fallback (§5.2.4) would connect under the same limits.</li>";
+  }
+  if (includeDerived && allowAssociationFallback && !pathHints?.derivedWouldHelp && !pathHints?.associationWouldHelp) {
+    whyDetails +=
+      "<li>With +Derived and Association already on, try raising <strong>max hops per segment</strong> or <strong>search effort</strong>, or switch to <strong>All elements</strong>.</li>";
+  }
+  whyDetails += "</ul>";
+
+  const derivedDisabled = includeDerived ? " disabled" : "";
+  const assocDisabled = allowAssociationFallback ? " disabled" : "";
+  const relaxBlock = `
+    <div class="path-fail-relax-wrap" role="group" aria-label="Expand search one time">
+      <p class="path-fail-relax-intro">Same actions as the diagram overlay: run <strong>one</strong> search with relaxed rules. Your saved <strong>Options</strong> are not changed permanently.</p>
+      <div class="path-fail-relax-buttons">
+        <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled){window.hidePathFailureModal();window.tryRelaxPathDerived();}">🔍 Search with Derived Relations</button>
+        ${includeDerived ? '<span class="path-dead-end__pill" aria-hidden="true">On</span>' : ""}
+        <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${assocDisabled} onclick="if(!this.disabled){window.hidePathFailureModal();window.tryRelaxPathAssociation();}">🤝 Search with Informal Associations</button>
+        ${allowAssociationFallback ? '<span class="path-dead-end__pill" aria-hidden="true">On</span>' : ""}
+      </div>
+    </div>`;
+
+  body.innerHTML =
+    lead +
+    `<details class="path-fail-details"><summary>Why this search failed</summary><div class="path-fail-details-body">${whyDetails}</div></details>` +
+    relaxBlock;
+
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function initPathFailureModal() {
+  const modal = document.getElementById("path-fail-modal");
+  if (!modal) return;
+  const close = () => hidePathFailureModal();
+  modal.querySelectorAll("[data-path-fail-close]").forEach((el) => {
+    el.addEventListener("click", close);
+  });
+  document.getElementById("path-fail-open-mm")?.addEventListener("click", () => {
+    const from = modal.dataset.narrFrom;
+    const to = modal.dataset.narrTo;
+    hidePathFailureModal();
+    if (from && to && typeof window.focusMetamodel === "function") {
+      window.focusMetamodel(from, to);
+    }
+  });
+  document.getElementById("path-fail-scroll-explain")?.addEventListener("click", () => {
+    hidePathFailureModal();
+    document.getElementById("explanation-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (modal.style.display !== "flex") return;
+    close();
+  });
 }
 
 function applyDiagramTransform() {
@@ -2007,6 +3168,8 @@ function resetDiagramView() {
 }
 
 function diagramZoomAtPoint(clientX, clientY, factor) {
+  const nov = document.getElementById("diagram-no-path-overlay");
+  if (nov && !nov.hidden) return;
   const vp = document.getElementById("diagram-pan-viewport");
   if (!vp) return;
   const rect = vp.getBoundingClientRect();
@@ -2086,6 +3249,8 @@ function initDiagramPanZoom() {
   }
 
   vp.addEventListener("pointerdown", (e) => {
+    const ov = document.getElementById("diagram-no-path-overlay");
+    if (ov && !ov.hidden) return;
     if (e.button !== 0) return;
     activeId = e.pointerId;
     start = { x: e.clientX, y: e.clientY, tx: diagramView.tx, ty: diagramView.ty };
@@ -2098,6 +3263,8 @@ function initDiagramPanZoom() {
   vp.addEventListener(
     "wheel",
     (e) => {
+      const ov = document.getElementById("diagram-no-path-overlay");
+      if (ov && !ov.hidden) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
       diagramZoomAtPoint(e.clientX, e.clientY, factor);
@@ -2124,6 +3291,7 @@ function init() {
   const mm = document.getElementById('metamodel-diagram');
   if (mm) renderMetamodelDiagram(mm);
   rebuildGraph();
+  updateDiagramEmptyChrome();
 
   // Self-test: verify pathfinder works in this browser context
   try {
@@ -2139,6 +3307,10 @@ function init() {
       maxStates: 25000,
       includeDerived: true,
       allowAssociationFallback: false,
+      pathWeightDirect: 1,
+      pathWeightDerived: 5,
+      pathWeightAssociation: 100,
+      pathWeightLayerSkip: 15,
     };
     const _vdStrict = findPaths(state.graph, ["Value", "Data Object"], _vdOpts);
     const _vdNoStrict = !segmentsSearchSucceeded(_vdStrict.segments);
@@ -2178,20 +3350,30 @@ function init() {
     }
   } catch(e) { console.error("[NAV] Self-test error:", e); }
 
-  addWaypointSlot(0, 'Start');
-  addWaypointSlot(1, 'End');
+  const baseLabel = state.selectionMode === "set" ? "Point" : "Start";
+  const endLabel = state.selectionMode === "set" ? "Point" : "End";
+  addWaypointSlot(0, baseLabel);
+  addWaypointSlot(1, endLabel);
   renderWaypointChain();
   setSelectionMode(state.selectionMode);
+  state.domainContext = normalizeDomainContext(state.domainContext);
+  repopulateDomainContextSelectorsFromScenarios();
+  syncDomainContextSelectors();
 
   initLayoutChrome();
   initPathOptionsOverlay();
   initPathChromeCollapsible();
   initResultsSplit();
   initDiagramPanZoom();
+  initPathFailureModal();
+  initPathLabelsHelp();
 
   updateQuickExamplesVisibility();
 
   applySearchOptionsToUI();
+  document.getElementById("btn-direct")?.classList.toggle("active", !state.includeDerived);
+  document.getElementById("btn-derived")?.classList.toggle("active", state.includeDerived);
+  updatePathOptionsTriggerSummary();
 
   // Hide initial loading indicator after first paint.
   setLoading(false);
@@ -2231,6 +3413,7 @@ function rebuildGraph() {
 window.onViewpointChange = function() {
   const key = document.getElementById('viewpoint-select').value;
   state.viewpoint = key || null;
+  state._perspectiveSuggestFullMetamodel = false;
 
   if (key && VIEWPOINTS[key] && !VIEWPOINTS[key].allElements) {
     state.allowedElements = new Set(VIEWPOINTS[key].elements);
@@ -2278,28 +3461,75 @@ function addWaypointSlot(index, label) {
   state.waypoints[index] = state.waypoints[index] ?? { layer: null, element: null, label };
 }
 
+function ensureEditingControlsVisible() {
+  try {
+    const prefs = readLayoutPrefs();
+    if (prefs?.collapsed) persistLayoutPrefs({ collapsed: false });
+  } catch (_) {
+    // Layout prefs are best-effort only.
+  }
+}
+
+function withVisibleEditingControls(actionFn) {
+  ensureEditingControlsVisible();
+  requestAnimationFrame(() => {
+    try {
+      actionFn?.();
+    } catch (_) {
+      // ignore UI animation wrapper failures
+    }
+  });
+}
+
+function animateWaypointCardOut(index, onDone) {
+  const chain = document.getElementById("waypoint-chain");
+  const card = chain?.querySelector(`.waypoint-card[data-waypoint-index="${index}"]`);
+  if (!card) {
+    onDone?.();
+    return;
+  }
+  card.classList.add("waypoint-card--leave");
+  setTimeout(() => onDone?.(), 190);
+}
+
+function animateWaypointCardIn(index) {
+  const chain = document.getElementById("waypoint-chain");
+  const card = chain?.querySelector(`.waypoint-card[data-waypoint-index="${index}"]`);
+  if (!card) return;
+  card.classList.add("waypoint-card--enter");
+  setTimeout(() => card.classList.remove("waypoint-card--enter"), 240);
+}
+
 
 
 window.addWaypoint = function() {
+  let insertAt = 0;
   if (state.selectionMode === 'set') {
     // Connect Set mode: just add to the end of the list
+    insertAt = state.waypoints.length;
     state.waypoints.push({ layer: null, element: null, label: 'Point' });
   } else {
     // Ordered mode: insert before the "End" point
-    const insertAt = Math.max(1, state.waypoints.length - 1);
+    insertAt = Math.max(1, state.waypoints.length - 1);
     state.waypoints.splice(insertAt, 0, { layer: null, element: null, label: 'Via' });
   }
   renderWaypointChain();
+  animateWaypointCardIn(insertAt);
+  return insertAt;
 };
 
 window.clearAllElements = function() {
   // Clear data
   state.waypoints = [];
-  addWaypointSlot(0, 'Start');
-  addWaypointSlot(1, 'End');
+  const baseLabel = state.selectionMode === "set" ? "Point" : "Start";
+  const endLabel = state.selectionMode === "set" ? "Point" : "End";
+  addWaypointSlot(0, baseLabel);
+  addWaypointSlot(1, endLabel);
   state.segments = null;
   state.pathFailureHints = null;
   state.lastPathIsFallback = false;
+  state.lastPathTemporaryRelaxation = null;
+  state._relaxOneShotRestore = null;
   renderWaypointChain();
   
   // Clear the UI visually
@@ -2309,12 +3539,17 @@ window.clearAllElements = function() {
   const explainEl = document.getElementById('explanation-content');
   const toolsEl = document.getElementById('diagram-tools');
   
-  if (diagramEl) diagramEl.innerHTML = '';
+  if (diagramEl) diagramEl.innerHTML = "";
+  hideDiagramNoPathOverlay();
   resetDiagramPanContext();
   resetDiagramView();
   if (emptyEl) emptyEl.style.display = 'flex';
+  updateDiagramEmptyChrome();
   if (tabsEl) tabsEl.style.display = 'none';
+  const pathTabsHelp = document.getElementById("path-tabs-help");
+  if (pathTabsHelp) pathTabsHelp.hidden = true;
   if (explainEl) explainEl.innerHTML = 'Path explanation will appear here after finding a path.';
+  setExplanationRouteColumn("");
   if (toolsEl) toolsEl.hidden = true;
   state.mmLast = null;
   updateMmConnectionStrip(null);
@@ -2324,12 +3559,21 @@ window.clearAllElements = function() {
   schedulePersistSession();
 };
 
-function removeWaypoint(index) {
+function removeWaypoint(index, { animate = true, suppressSearch = false, after = null } = {}) {
   // Always keep at least 2 points.
   if (state.waypoints.length <= 2) return;
-  state.waypoints.splice(index, 1);
-  renderWaypointChain();
-  checkReady();
+  const commit = () => {
+    state.waypoints.splice(index, 1);
+    renderWaypointChain();
+    checkReady();
+    if (!suppressSearch && state.segments) window.dispatch({ type: "FIND_PATH", reason: "remove-waypoint" });
+    if (typeof after === "function") after();
+  };
+  if (!animate) {
+    commit();
+    return;
+  }
+  animateWaypointCardOut(index, commit);
 }
 
 function moveWaypoint(index, dir) {
@@ -2340,7 +3584,7 @@ function moveWaypoint(index, dir) {
   state.waypoints[index] = state.waypoints[j];
   state.waypoints[j] = tmp;
   renderWaypointChain();
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint" });
 }
 
 function moveWaypointTo(fromIndex, toIndex) {
@@ -2350,7 +3594,7 @@ function moveWaypointTo(fromIndex, toIndex) {
   const [item] = state.waypoints.splice(fromIndex, 1);
   state.waypoints.splice(toIndex, 0, item);
   renderWaypointChain();
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint-to" });
 }
 
 window.swapStartEnd = function() {
@@ -2493,7 +3737,10 @@ function renderWaypointChain() {
 
     const header = document.createElement('div');
     header.className = 'picker-popover-header';
-    header.innerHTML = `<div class="picker-title">Pick an element (${layerId})</div>`;
+    const titleText = layerId
+      ? `Pick an element (${layerId})`
+      : 'Pick an element';
+    header.innerHTML = `<div class="picker-title">${titleText}</div>`;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'picker-close';
@@ -2515,46 +3762,59 @@ function renderWaypointChain() {
     const search = document.createElement('input');
     search.type = 'search';
     search.className = 'visual-picker-search';
-    search.placeholder = 'Search element…';
+    search.placeholder = 'Search all layers…';
     body.appendChild(search);
 
     const grid = document.createElement('div');
     grid.className = 'element-grid popover-grid';
     body.appendChild(grid);
 
-    const elementsForLayer = Object.entries(ELEMENTS)
-      .filter(([, meta]) => meta.layer === layerId)
-      .map(([name]) => name)
-      .sort();
+    const filterLayerId = canonicalLayerIdForWaypoint(layerId);
+    const elementsForLayer = filterLayerId
+      ? Object.entries(ELEMENTS)
+          .filter(([, meta]) => meta.layer === filterLayerId)
+          .map(([name]) => name)
+          .sort()
+      : [];
+
+    const ASPECT_ORDER = [
+      'Active Structure',
+      'Behavior',
+      'Passive Structure',
+      'Composite',
+      'Motivation',
+    ];
+
+    const layerList = typeof LAYERS !== "undefined" && Array.isArray(LAYERS) ? LAYERS : [];
+    const layerRank = new Map(layerList.map((l, i) => [l.id, i]));
+
+    /** When a layer is not chosen but a strict viewpoint is active, show the full viewpoint palette (sorted). */
+    const viewpointBrowseSorted =
+      !filterLayerId && effAllowed && effAllowed.size
+        ? [...effAllowed].sort((a, b) => {
+            const la = ELEMENTS[a]?.layer;
+            const lb = ELEMENTS[b]?.layer;
+            const dr = (layerRank.get(la) ?? 999) - (layerRank.get(lb) ?? 999);
+            if (dr) return dr;
+            const ia = ASPECT_ORDER.indexOf(ELEMENTS[a]?.aspect);
+            const ib = ASPECT_ORDER.indexOf(ELEMENTS[b]?.aspect);
+            const ar = (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
+            if (ar) return ar;
+            return a.localeCompare(b);
+          })
+        : null;
 
     const renderGrid = () => {
-      const q = (search.value || '').trim().toLowerCase();
+      const raw = String(search.value || "").replace(/\u200b/g, "").trim();
+      const q = raw.toLowerCase();
       grid.innerHTML = '';
-
-      const ASPECT_ORDER = [
-        'Active Structure',
-        'Behavior',
-        'Passive Structure',
-        'Composite',
-        'Motivation',
-      ];
-
-      const groups = new Map();
-      for (const a of ASPECT_ORDER) groups.set(a, []);
-      groups.set('Other', []);
-
-      for (const name of elementsForLayer) {
-        if (q && !name.toLowerCase().includes(q)) continue;
-        const aspect = ELEMENTS?.[name]?.aspect || 'Other';
-        (groups.get(aspect) || groups.get('Other')).push(name);
-      }
 
       const addCard = (name) => {
         const allowed = !effAllowed || effAllowed.has(name);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'element-card' +
-          (state.waypoints[waypointIdx].element === name ? ' selected' : '') +
+          (state.waypoints[waypointIdx]?.element === name ? ' selected' : '') +
           (!allowed ? ' disabled' : '');
         btn.disabled = !allowed;
 
@@ -2572,22 +3832,91 @@ function renderWaypointChain() {
       };
 
       let renderedAny = false;
-      for (const [aspect, names] of groups.entries()) {
-        if (!names.length) continue;
-        renderedAny = true;
 
-        const title = document.createElement('div');
-        title.className = 'element-group-title';
-        title.textContent = aspect;
-        grid.appendChild(title);
+      if (q) {
+        const pool = Object.keys(ELEMENTS)
+          .filter((name) => name.toLowerCase().includes(q))
+          .sort((a, b) => {
+            const la = ELEMENTS[a]?.layer;
+            const lb = ELEMENTS[b]?.layer;
+            const dr = (layerRank.get(la) ?? 999) - (layerRank.get(lb) ?? 999);
+            if (dr) return dr;
+            const ia = ASPECT_ORDER.indexOf(ELEMENTS[a]?.aspect);
+            const ib = ASPECT_ORDER.indexOf(ELEMENTS[b]?.aspect);
+            const ar = (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
+            if (ar) return ar;
+            return a.localeCompare(b);
+          });
 
-        for (const name of names) addCard(name);
+        let prevLayer = null;
+        let prevAspect = null;
+        for (const name of pool) {
+          const layer = ELEMENTS[name]?.layer || 'Other';
+          const aspect = ELEMENTS[name]?.aspect || 'Other';
+          if (layer !== prevLayer || aspect !== prevAspect) {
+            const title = document.createElement('div');
+            title.className = 'element-group-title';
+            title.textContent = `${layer} — ${aspect}`;
+            grid.appendChild(title);
+            prevLayer = layer;
+            prevAspect = aspect;
+          }
+          addCard(name);
+          renderedAny = true;
+        }
+      } else if (viewpointBrowseSorted && viewpointBrowseSorted.length) {
+        let prevLayer = null;
+        let prevAspect = null;
+        for (const name of viewpointBrowseSorted) {
+          const layer = ELEMENTS[name]?.layer || 'Other';
+          const aspect = ELEMENTS[name]?.aspect || 'Other';
+          if (layer !== prevLayer || aspect !== prevAspect) {
+            const title = document.createElement('div');
+            title.className = 'element-group-title';
+            title.textContent = `${layer} — ${aspect}`;
+            grid.appendChild(title);
+            prevLayer = layer;
+            prevAspect = aspect;
+          }
+          addCard(name);
+          renderedAny = true;
+        }
+      } else {
+        const groups = new Map();
+        for (const a of ASPECT_ORDER) groups.set(a, []);
+        groups.set('Other', []);
+
+        for (const name of elementsForLayer) {
+          const aspect = ELEMENTS?.[name]?.aspect || 'Other';
+          (groups.get(aspect) || groups.get('Other')).push(name);
+        }
+
+        for (const [aspect, names] of groups.entries()) {
+          if (!names.length) continue;
+          renderedAny = true;
+
+          const title = document.createElement('div');
+          title.className = 'element-group-title';
+          title.textContent = aspect;
+          grid.appendChild(title);
+
+          for (const name of names) addCard(name);
+        }
       }
 
       if (!renderedAny) {
         const empty = document.createElement('div');
         empty.className = 'element-grid-empty';
-        empty.textContent = q ? 'No matching elements.' : 'No elements available.';
+        let hint;
+        if (q) {
+          hint = 'No matching elements.';
+        } else if (!filterLayerId && !(effAllowed && effAllowed.size)) {
+          hint =
+            'Type above to search all layers, or choose a layer on the waypoint to browse by category.';
+        } else {
+          hint = 'No elements available.';
+        }
+        empty.textContent = hint;
         grid.appendChild(empty);
       }
     };
@@ -2716,7 +4045,7 @@ function renderWaypointChain() {
     const canMoveDown = i < state.waypoints.length - 1;
     const isTwoOnly = state.waypoints.length === 2;
 
-    if (isTwoOnly && (isFirst || isLast)) {
+    if (!isSetMode && isTwoOnly && (isFirst || isLast)) {
       const swapBtn = document.createElement('button');
       swapBtn.className = 'waypoint-move';
       swapBtn.title = 'Swap Start and End';
@@ -2752,8 +4081,8 @@ function renderWaypointChain() {
 
     card.appendChild(header);
 
-    // Body: element picker only (layer lives in header)
-    if (wp.layer) {
+    // Body: element picker (layer lives in header; layer optional — search works without it)
+    {
       const body = document.createElement('div');
       body.className = 'waypoint-card-body' + (isTopLayout ? ' waypoint-card-body--compact' : '');
 
@@ -2783,7 +4112,13 @@ function renderWaypointChain() {
       } else {
         trigger.classList.remove('element-trigger--tile-label');
         trigger.removeAttribute('aria-label');
-        name.textContent = wp.element || 'Select element…';
+        if (wp.element) {
+          name.textContent = wp.element;
+        } else if (!wp.layer && !(effAllowed && effAllowed.size)) {
+          name.textContent = 'Type to search, or pick layer…';
+        } else {
+          name.textContent = 'Select element…';
+        }
       }
       left.appendChild(name);
       trigger.appendChild(left);
@@ -2793,7 +4128,7 @@ function renderWaypointChain() {
       chev.textContent = '▾';
       trigger.appendChild(chev);
 
-      trigger.onclick = () => openElementOverlay(trigger, i, wp.layer);
+      trigger.onclick = () => openElementOverlay(trigger, i, wp.layer ?? null);
       body.appendChild(trigger);
       card.appendChild(body);
     }
@@ -2809,7 +4144,7 @@ function updatePathModeHint() {
   const top = document.getElementById("app-layout")?.classList.contains("layout-top");
   const text =
     state.selectionMode === "set"
-      ? "Order does not matter: pick any points; the tool builds one chain that minimises total path cost."
+      ? "Order does not matter: pick points and the engine will reorder them into the strongest legal chain."
       : top
         ? "The route follows your waypoint order left to right (Start → … → End). Use + Add element for extra stops."
         : "The route follows your list from top to bottom (Start → … → End). Use + Add element for extra stops.";
@@ -2817,6 +4152,12 @@ function updatePathModeHint() {
   const btn = document.getElementById("path-mode-info-btn");
   if (pop) pop.textContent = text;
   if (btn) btn.title = text;
+}
+
+function updateConnectSetExploratoryWarning() {
+  const warning = document.getElementById("connect-set-exploratory-warning");
+  if (!warning) return;
+  warning.hidden = state.selectionMode !== "set";
 }
 
 function updateQuickExamplesVisibility() {
@@ -2834,6 +4175,10 @@ function updateQuickExamplesVisibility() {
   block.hidden = !blockVisible;
   if (showRow) showRow.hidden = blockVisible || (!shouldAutoHide && !veteran);
   if (hideBtn) hideBtn.hidden = !blockVisible || (!shouldAutoHide && !veteran);
+
+  // Empty-state CTA is redundant once examples are visible.
+  const emptyExamplesBtn = document.getElementById("diagram-empty-examples-btn");
+  if (emptyExamplesBtn) emptyExamplesBtn.hidden = blockVisible;
 }
 
 window.showQuickExamplesPanel = function () {
@@ -2857,6 +4202,9 @@ function selectLayer(waypointIdx, layerId) {
 
 function selectElement(waypointIdx, elementName) {
   state.waypoints[waypointIdx].element = elementName || null;
+  if (elementName && ELEMENTS?.[elementName]?.layer) {
+    state.waypoints[waypointIdx].layer = ELEMENTS[elementName].layer;
+  }
   renderWaypointChain();
 }
 
@@ -2870,10 +4218,55 @@ function checkReady() {
 
 
 window.setMode = function(mode) {
+  const prevMode = state.mode;
+  const isCompactSwimToggle =
+    (prevMode === "compact" && mode === "swimlane") ||
+    (prevMode === "swimlane" && mode === "compact");
+
+  // When switching Compact ↔ Swimlanes, the renderer changes the SVG viewBox width/height.
+  // Even if we keep the same pan/zoom state, that viewBox delta changes pixel-to-world scaling,
+  // which feels like a "jump". We compensate by adjusting the camera so the viewport center stays fixed.
+  const captureDiagramViewBox = () => {
+    const host = document.getElementById("path-diagram");
+    const svg = host?.querySelector?.("svg");
+    if (!svg) return null;
+    const vb = String(svg.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number);
+    if (vb.length !== 4 || vb.some((n) => !Number.isFinite(n))) return null;
+    const vp = document.getElementById("diagram-pan-viewport");
+    if (!vp) return null;
+    const r = vp.getBoundingClientRect();
+    return {
+      w: vb[2],
+      h: vb[3],
+      cx: r.left + r.width / 2,
+      cy: r.top + r.height / 2,
+    };
+  };
+
+  const vbBefore = (isCompactSwimToggle && state.segments) ? captureDiagramViewBox() : null;
+
   state.mode = mode;
   const swimBtn = document.getElementById('btn-toggle-swimlanes');
   if (swimBtn) swimBtn.classList.toggle('active', mode === 'swimlane');
-  if (state.segments) renderResults();
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+
+  if (vbBefore) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const vbAfter = captureDiagramViewBox();
+        if (!vbAfter) return;
+        if (!Number.isFinite(vbBefore.w) || vbBefore.w <= 0) return;
+        if (!Number.isFinite(vbAfter.w) || vbAfter.w <= 0) return;
+
+        // Maintain apparent scale by compensating for viewBox width change.
+        // px/world ∝ 1/viewBoxW, so when viewBoxW grows, increase camera scale proportionally.
+        const factor = vbAfter.w / vbBefore.w;
+        if (!Number.isFinite(factor) || factor <= 0) return;
+        if (Math.abs(factor - 1) < 1e-6) return;
+        diagramZoomAtPoint(vbBefore.cx, vbBefore.cy, factor);
+      });
+    });
+  }
   schedulePersistSession();
 };
 
@@ -2890,7 +4283,7 @@ window.cyclePathFlow = function () {
     localStorage.setItem(getPathFlowStorageKey(), next);
   } catch (_) {}
   updatePathFlowButton();
-  if (state.segments) renderResults();
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
   schedulePersistSession();
 };
 
@@ -2900,28 +4293,72 @@ window.toggleVertical = window.cyclePathFlow;
 
 window.setDerived = function(include) {
   state.includeDerived = include;
+  state.lastPathTemporaryRelaxation = null;
   document.getElementById('btn-direct').classList.toggle('active',  !include);
   document.getElementById('btn-derived').classList.toggle('active',  include);
   rebuildGraph();
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "set-derived" });
   updatePathOptionsTriggerSummary();
   schedulePersistSession();
 };
 
+/**
+ * Connect-set mode finds a directed chain but leaves waypoint slots in pick order.
+ * Ordered mode uses slot order as Start → Via → End; after switching, align slots with
+ * the last successful solver chain so the directed search matches what was shown in set mode.
+ */
+function reorderWaypointsToMatchLastSolverChainIfPossible() {
+  const chain = state.lastAutoOrderResult;
+  const wps = state.waypoints;
+  if (!Array.isArray(chain) || chain.length < 2 || !Array.isArray(wps) || wps.length !== chain.length) {
+    return;
+  }
+
+  const picked = wps.map((wp) => wp?.element).filter(Boolean);
+  if (picked.length !== wps.length) return;
+  if (new Set(picked).size !== picked.length) return;
+
+  const sortKey = (arr) =>
+    [...arr]
+      .filter(Boolean)
+      .sort()
+      .join("\u0000");
+  if (sortKey(picked) !== sortKey(chain)) return;
+
+  const lastIn = state.lastAutoOrderInput;
+  if (!Array.isArray(lastIn) || sortKey(lastIn) !== sortKey(picked)) return;
+
+  const byEl = new Map();
+  for (const wp of wps) {
+    const el = wp?.element;
+    if (!el || byEl.has(el)) return;
+    byEl.set(el, wp);
+  }
+
+  const reordered = chain.map((el) => byEl.get(el));
+  if (reordered.some((wp) => !wp)) return;
+  state.waypoints = reordered;
+}
+
 window.setSelectionMode = function(mode) {
+  const prev = state.selectionMode;
   state.selectionMode = (mode === 'set') ? 'set' : 'ordered';
   document.getElementById('btn-ordered')?.classList.toggle('active', state.selectionMode === 'ordered');
   document.getElementById('btn-set')?.classList.toggle('active', state.selectionMode === 'set');
 
   updatePathModeHint();
+  updateConnectSetExploratoryWarning();
   updatePathOptionsTriggerSummary();
 
   // In set mode, there is no Start/End semantics; allow removing any point.
   // Keep existing selections as-is.
+  if (state.selectionMode === "ordered" && prev === "set") {
+    reorderWaypointsToMatchLastSolverChainIfPossible();
+  }
   renderWaypointChain();
 
   // Re-run if we already have results.
-  if (state.segments) findPath();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "set-selection-mode" });
   schedulePersistSession();
 };
 
@@ -2931,15 +4368,25 @@ window.loadExample = function(waypoints) {
   // waypoints = [{layer, element}, ...]
   state.waypoints = waypoints.map(wp => ({ layer: wp.layer, element: wp.element }));
   renderWaypointChain();
-  findPath();
+  window.dispatch({ type: "FIND_PATH", reason: "load-example" });
   schedulePersistSession();
 };
 
 // ── Find Path ───────────────────────────────────────────────────────────────
 
-window.findPath = function() {
+window.findPath = function(opts = {}) {
+  const runId = Number.isFinite(opts?.runId) ? opts.runId : state._findRunId;
   const picked = state.waypoints.map(wp => wp.element).filter(Boolean);
+  const forceFullMetamodel = !!state._pathfindFullMetamodelOnce;
   state.lastAutoOrdered = false;
+
+  trackEvent("find_path", {
+    selectionMode: state.selectionMode,
+    includeDerived: !!state.includeDerived,
+    allowAssociationFallback: !!state.allowAssociationFallback,
+    waypointCount: picked.length,
+    reason: (opts && typeof opts.reason === "string" && opts.reason) || undefined,
+  });
   
   window.state.userChoices = {}; // Reset decisions for the new path
   
@@ -2950,16 +4397,31 @@ window.findPath = function() {
     state.userChoices = {}; // Clear previous decisions
     // Allow browser to paint loading state before doing BFS work.
     setTimeout(() => {
+    let usedFullMetamodelOnce = false;
+    try {
+    // If a newer run started while we were waiting for the UI to paint, ignore this callback.
+    if (runId !== state._findRunId) return;
+    if (!state._relaxOneShotRestore) {
+      state.lastPathTemporaryRelaxation = null;
+    }
+
     let segs = [];
     let pathIsFallback = false;
     let chainForExplain = null;
 
     state.userChoices = {}; // Clear previous decisions
     state.lastAutoOrderMetrics = null;
+    const searchGraph = forceFullMetamodel
+      ? buildGraph({ allowedElements: null, includeDerived: state.includeDerived })
+      : state.graph;
+    usedFullMetamodelOnce = forceFullMetamodel;
+    const searchOptions = getSearchPathOptions({ forceFullMetamodel });
+    let searchStatus = "no_path";
     if (state.selectionMode === 'set') {
-      const res = findBestChainForSet(state.graph, picked, getSearchPathOptions());
+      const res = findBestChainForSet(searchGraph, picked, searchOptions);
       segs = res?.segments ?? [];
       pathIsFallback = !!res?.isFallback;
+      searchStatus = String(res?.searchStatus || "no_path");
       chainForExplain = res?.orderedPoints ?? null;
       state.lastAutoOrdered = true;
       state.lastAutoOrderInput = picked.slice();
@@ -2976,22 +4438,57 @@ window.findPath = function() {
     } else {
       const waypointNames = state.waypoints.map(wp => wp.element);
       chainForExplain = waypointNames;
-      const fp = findPaths(state.graph, waypointNames, getSearchPathOptions());
+      const fp = findPaths(searchGraph, waypointNames, searchOptions);
       segs = fp.segments;
       pathIsFallback = !!fp.isFallback;
+      searchStatus = String(fp?.searchStatus || "no_path");
     }
 
     let hasNoPath = !segs || segs.length === 0 || segs.some(s => !s.paths || s.paths.length === 0);
 
+    // Guard against stale async completion (e.g. user toggles options rapidly).
+    if (runId !== state._findRunId) return;
+
     state.segments = segs;
+    state.lastPathSearchStatus = searchStatus;
     state.lastPathIsFallback = !hasNoPath && pathIsFallback;
+
+    trackEvent("find_path_result", {
+      ok: !hasNoPath,
+      selectionMode: state.selectionMode,
+      includeDerived: !!state.includeDerived,
+      allowAssociationFallback: !!state.allowAssociationFallback,
+      waypointCount: picked.length,
+      isFallback: !hasNoPath && !!pathIsFallback,
+      segmentCount: Array.isArray(segs) ? segs.length : 0,
+    });
+    if (state._relaxOneShotRestore) {
+      const snap = state._relaxOneShotRestore;
+      if (!hasNoPath) {
+        const relaxedDerived =
+          snap.relaxMode === "derived" && snap.includeDerived === false;
+        const relaxedAssoc =
+          snap.relaxMode === "association" && snap.allowAssociationFallback === false;
+        if (relaxedDerived || relaxedAssoc) {
+          state.lastPathTemporaryRelaxation = {
+            derived: !!relaxedDerived,
+            association: !!relaxedAssoc,
+          };
+        } else {
+          state.lastPathTemporaryRelaxation = null;
+        }
+      } else {
+        state.lastPathTemporaryRelaxation = null;
+      }
+    }
     state.activePathIdx = 0;
     computeAndSetPathFailureHints(
       hasNoPath,
       picked,
       state.waypoints.map((wp) => wp.element)
     );
-    renderResults();
+    applyRelaxOneShotRestore();
+
     if (window.__pendingSessionExtras) {
       const ex = window.__pendingSessionExtras;
       window.__pendingSessionExtras = undefined;
@@ -3003,10 +4500,18 @@ window.findPath = function() {
         state.activePathIdx = Math.max(0, Math.min(Math.floor(ex.activePathIdx), maxAlts - 1));
       }
       sanitizeUserChoicesForActivePath();
-      renderResults();
     }
-    setLoading(false);
-    schedulePersistSession();
+    // Single render after all state (including session extras) is applied.
+    scheduleRenderResults();
+    } finally {
+      applyRelaxOneShotRestore();
+      if (usedFullMetamodelOnce) {
+        state._pathfindFullMetamodelOnce = false;
+        rebuildGraph();
+      }
+      setLoading(false);
+      schedulePersistSession();
+    }
     }, 0);
   } catch (e) {
     console.error('findPath error:', e);
@@ -3014,6 +4519,14 @@ window.findPath = function() {
     setLoading(false);
   }
 };
+
+function algorithmDetailsPanelInitiallyOpen() {
+  try {
+    return sessionStorage.getItem("archimateAlgorithmDetailsOpen") === "1";
+  } catch (_) {
+    return false;
+  }
+}
 
 /** Sum hops across segments for the given alternative index (Connect set / ordered). */
 function totalHopsInSegments(segments, pathIdx) {
@@ -3026,7 +4539,9 @@ function totalHopsInSegments(segments, pathIdx) {
   return h;
 }
 
-/** Single grey box: connect-set order + cost / hops / search cap (no separate banner above). */
+const ALGORITHM_DETAILS_TOGGLE_SVG = `<svg class="algorithm-details-toggle__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+/** Single grey box: connect-set order visible; cost / UCS math behind Algorithm Details toggle. */
 function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
   if (!metrics) return "";
   const hops = totalHopsInSegments(segments, pathIdx);
@@ -3035,45 +4550,1388 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
   const so = getSearchPathOptions();
   const chainStr =
     orderedChain?.length ? orderedChain.map((n) => String(n).trim()).filter(Boolean).join(" → ") : "";
+  const panelOpen = algorithmDetailsPanelInitiallyOpen();
+  const headMain = chainStr
+    ? `<div class="connect-set-note-tech-chain"><strong>Connect set</strong> · ${chainStr}</div>`
+    : `<div class="connect-set-note-tech-chain connect-set-note-tech-chain--titleonly"><strong>Connect set</strong></div>`;
+  const btnTitle = panelOpen ? "Hide Routing Math" : "Show Routing Math";
+  const btnAria =
+    panelOpen ? "Hide routing math details" : "Show routing math details";
   return `<div class="connect-set-note-tech" role="note">
-    ${
-      chainStr
-        ? `<div class="connect-set-note-tech-chain"><strong>Connect set</strong> · ${chainStr}</div>`
-        : ""
-    }
-    <span class="connect-set-note-tech-line">
-      <strong>Total cost</strong> ${scoreStr}
-      <span class="connect-set-note-sep" aria-hidden="true">·</span>
-      <strong>Chain</strong> ${hops} hop${hops !== 1 ? "s" : ""}
-      <span class="connect-set-note-sep" aria-hidden="true">·</span>
-      <strong>Points</strong> ${metrics.pointCount}
-      <span class="connect-set-note-sep" aria-hidden="true">·</span>
-      ${orderShort}
-      <span class="connect-set-note-sep" aria-hidden="true">·</span>
-      <strong>UCS</strong> · max ${so.maxDepth} hops/segment
-    </span>
-    <span class="connect-set-note-tech-hint">Cost = sum of hop weights (Appendix B / derived = 1 per hop; penalized Association = 100 unless target is Value or Meaning). Lower is better.</span>
+    <div class="connect-set-note-tech-headrow">
+      ${headMain}
+      <button type="button" class="algorithm-details-toggle" title="${btnTitle}" aria-label="${btnAria}" aria-expanded="${panelOpen ? "true" : "false"}" onclick="window.toggleAlgorithmDetailsPanel(event)">${ALGORITHM_DETAILS_TOGGLE_SVG}</button>
+    </div>
+    <div class="algorithm-debug-panel${panelOpen ? " show" : ""}">
+      <span class="connect-set-note-tech-line">
+        <strong>Total cost</strong> ${scoreStr}
+        <span class="connect-set-note-sep" aria-hidden="true">·</span>
+        <strong>Chain</strong> ${hops} hop${hops !== 1 ? "s" : ""}
+        <span class="connect-set-note-sep" aria-hidden="true">·</span>
+        <strong>Points</strong> ${metrics.pointCount}
+        <span class="connect-set-note-sep" aria-hidden="true">·</span>
+        ${orderShort}
+        <span class="connect-set-note-sep" aria-hidden="true">·</span>
+        <strong>UCS</strong> · max ${so.maxDepth} hops/segment
+      </span>
+      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: direct = ${so.pathWeightDirect}, derived = ${so.pathWeightDerived}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
+    </div>
   </div>`;
 }
 
+function getPerspectiveTitlesForDomain() {
+  const key = normalizeDomainContext(state.domainContext);
+  const fallback = {
+    A: "Business Operations",
+    B: "System Infrastructure",
+    C: "Strategic Realization",
+  };
+  if (typeof SCENARIOS === "undefined" || !SCENARIOS) return fallback;
+  const cur = SCENARIOS[key]?.perspectiveTitles;
+  const abs = SCENARIOS.abstract?.perspectiveTitles;
+  return cur || abs || fallback;
+}
+
+function layerBadgeClassForLabel(layerLabel) {
+  switch (layerLabel) {
+    case "Business-Heavy":
+      return "path-badge--layer-business";
+    case "Application-Heavy":
+      return "path-badge--layer-application";
+    case "Tech/Physical-Heavy":
+      return "path-badge--layer-tech";
+    default:
+      return "path-badge--layer-fullstack";
+  }
+}
+
+function precisionBadgeClassForLabel(precisionLabel) {
+  return precisionLabel === "Executive Summary"
+    ? "path-badge--precision-executive"
+    : "path-badge--precision-ground";
+}
+
+function escapeHtmlAttr(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+function precisionTooltip(precisionLabel) {
+  if (precisionLabel === "Executive Summary") {
+    return "This path uses ArchiMate Derivation rules (Cost=5) to hide technical complexity for a business audience.";
+  }
+  return "This path follows only direct ArchiMate relationships (Cost=1) to provide the most granular engineering view.";
+}
+
+function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
+  if (!action) return [];
+  if (action.mode === "swap" && Array.isArray(action.candidates) && action.candidates.length) {
+    return action.candidates.slice(0, 2).map((c) => ({
+      label: `Replace ${c.removeElement} -> ${c.addElement}`,
+      onClick: () =>
+        withVisibleEditingControls(() =>
+          replacePerspectiveFocusPoint(c.removeIndex, c.addElement, {
+            expandedScope: isElementOutsideStrictViewpoint(c.addElement, recCtx) && !!recCtx.usingFullMetamodel,
+          })
+        ),
+    }));
+  }
+  if (action.mode === "remove" && Array.isArray(action.candidates) && action.candidates.length) {
+    return action.candidates.slice(0, 2).map((c) => ({
+      label: `Remove ${c.element}`,
+      onClick: () => withVisibleEditingControls(() => removeWaypoint(c.index)),
+    }));
+  }
+  if (action.mode === "add" && Array.isArray(action.candidates) && action.candidates.length) {
+    return action.candidates.slice(0, 2).map((c) => ({
+      label: `Add ${c.element}`,
+      onClick: () =>
+        withVisibleEditingControls(() =>
+          addPerspectiveSuggestedElement(c.element, {
+            expandedScope: isElementOutsideStrictViewpoint(c.element, recCtx) && !!recCtx.usingFullMetamodel,
+          })
+        ),
+    }));
+  }
+  return [];
+}
+
+function widenSearchForVariation() {
+  let changed = false;
+
+  const curPaths = clampSearchMaxPaths(state.searchMaxPaths);
+  if (curPaths < 10) {
+    state.searchMaxPaths = clampSearchMaxPaths(curPaths + 2);
+    changed = true;
+  } else {
+    const effort = normalizeSearchEffort(state.searchEffort);
+    if (effort === "fast") {
+      state.searchEffort = "balanced";
+      changed = true;
+    } else if (effort === "balanced") {
+      state.searchEffort = "thorough";
+      changed = true;
+    } else {
+      const curDepth = clampSearchDepth(state.searchMaxDepth);
+      if (curDepth < 12) {
+        state.searchMaxDepth = clampSearchDepth(curDepth + 1);
+        changed = true;
+      }
+    }
+  }
+
+  if (!changed) return false;
+  applySearchOptionsToUI();
+  updatePathOptionsTriggerSummary();
+  schedulePersistSession();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "variation-coach-widen-search" });
+  return true;
+}
+
+function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, activePathIdx, recCtx = {}) {
+  if (!Array.isArray(items) || items.length < 3) return null;
+
+  const precisionCounts = new Map();
+  const layerCounts = new Map();
+  for (const item of items) {
+    const p = String(item?.precisionLabel || "");
+    const l = String(item?.layerLabel || "");
+    if (p) precisionCounts.set(p, (precisionCounts.get(p) || 0) + 1);
+    if (l) layerCounts.set(l, (layerCounts.get(l) || 0) + 1);
+  }
+
+  const topOf = (m) => {
+    let bestKey = "";
+    let bestCount = 0;
+    for (const [k, v] of m.entries()) {
+      if (v > bestCount) {
+        bestKey = k;
+        bestCount = v;
+      }
+    }
+    return { key: bestKey, count: bestCount };
+  };
+
+  const pTop = topOf(precisionCounts);
+  const lTop = topOf(layerCounts);
+  const pShare = pTop.count / items.length;
+  const lShare = lTop.count / items.length;
+
+  if (pShare >= 0.8 && pTop.key === "Engineering Ground-Truth") {
+    const canEnableSimplified = !state.includeDerived;
+    const canWiden = clampSearchMaxPaths(state.searchMaxPaths) < 10
+      || normalizeSearchEffort(state.searchEffort) !== "thorough"
+      || clampSearchDepth(state.searchMaxDepth) < 12;
+    const actions = [];
+    if (canEnableSimplified) {
+      actions.push({
+        label: "Enable Simplified (+Derived)",
+        onClick: () => setDerived(true),
+      });
+    }
+    if (canWiden) {
+      actions.push({
+        label: "Widen search",
+        onClick: () => widenSearchForVariation(),
+      });
+    }
+    if (!actions.length) return null;
+    return {
+      text: "Most routes here are Ground-Truth. Consider trying Simplified variants for a higher-level explanation.",
+      actions,
+    };
+  }
+
+  if (pShare >= 0.8 && pTop.key === "Executive Summary") {
+    const canGroundTruth = state.includeDerived;
+    const canWiden = clampSearchMaxPaths(state.searchMaxPaths) < 10
+      || normalizeSearchEffort(state.searchEffort) !== "thorough"
+      || clampSearchDepth(state.searchMaxDepth) < 12;
+    const actions = [];
+    if (canGroundTruth) {
+      actions.push({
+        label: "Switch to Ground-Truth (Direct)",
+        onClick: () => setDerived(false),
+      });
+    }
+    if (canWiden) {
+      actions.push({
+        label: "Widen search",
+        onClick: () => widenSearchForVariation(),
+      });
+    }
+    if (!actions.length) return null;
+    return {
+      text: "Most routes here are Simplified. Consider Ground-Truth variants for full relationship detail.",
+      actions,
+    };
+  }
+
+  if (lShare >= 0.85 && lTop.key) {
+    // Pick another lens and surface concrete add/remove/replace actions from its existing suggestion engine.
+    const targetSection = sectionId === "A" ? "B" : sectionId === "B" ? "A" : "A";
+    const targetPrimary = buildPerspectiveSuggestions(targetSection, grouped, segments, activePathIdx, recCtx);
+    const targetAction = resolvePerspectiveEmptyCta(targetSection, grouped, targetPrimary, recCtx);
+    const targetAdd = targetAction.mode === "add" && (!targetPrimary || targetPrimary.length === 0)
+      ? buildFallbackPerspectiveAddSuggestions(targetSection, grouped, segments, activePathIdx, recCtx)
+      : targetPrimary;
+    const effectiveAction = targetAction.mode === "add"
+      ? { ...targetAction, candidates: targetAdd }
+      : targetAction;
+    const actions = buildCoachActionsFromPerspectiveAction(effectiveAction, recCtx);
+    return {
+      text: `Routes here are heavily concentrated on ${lTop.key}. Try one of these concrete changes to diversify the perspective.`,
+      actions,
+    };
+  }
+
+  return null;
+}
+
+function layerTooltip(layerLabel) {
+  switch (layerLabel) {
+    case "Business-Heavy":
+      return "Most hops touch Motivation, Strategy, or Business elements.";
+    case "Application-Heavy":
+      return "Most hops touch Application-layer elements.";
+    case "Tech/Physical-Heavy":
+      return "Most hops touch Technology, Physical, or Implementation elements.";
+    case "Full-Stack Alignment":
+      return "Connects upper layers (Motivation/Strategy/Business) with infrastructure (Application and/or Technology/Physical), or a balanced mix.";
+    default:
+      return layerLabel;
+  }
+}
+
+function buildPathLabelsModalHtml() {
+  const t = getPerspectiveTitlesForDomain();
+  const pMode = normalizePerspectiveClassMode(state.perspectiveClassMode);
+  const sharePct = clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct);
+  const classifierLine =
+    pMode === "dominant-share"
+      ? `Grouping is currently set to <strong>Dominant share</strong>: a route is grouped as upper or infrastructure only when that band reaches at least <strong>${sharePct}%</strong> of upper+infrastructure hops; otherwise it is grouped as cross-layer.`
+      : `Grouping is currently set to <strong>Exclusive</strong>: upper and infrastructure groups require routes to stay strictly inside those bands; mixed routes are grouped as cross-layer.`;
+  const te = (s) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  return `
+    <div class="path-labels-section path-labels-section--route">
+      <div class="path-labels-section-head">
+        <span class="path-labels-section-kicker">Grouping</span>
+        <h4 class="path-labels-h">Route groups</h4>
+      </div>
+      <p class="path-labels-p">Each group lists path alternatives that share the same <em>layer mix</em> on the route (Motivation/Strategy/Business vs Application vs Technology/Physical). Section titles follow your <strong>story theme</strong> when one is selected.</p>
+      <p class="path-labels-p">${classifierLine}</p>
+      <div class="path-labels-route-grid">
+        <div class="path-labels-route-card path-labels-route-card--upper">
+          <div class="path-labels-route-card__title">${te(t.A)}</div>
+          <p class="path-labels-route-card__text">Every element on the route sits in the upper band (Motivation, Strategy, or Business). There are no Application-only or Technology/Physical hops.</p>
+          <div class="path-labels-mini-legend" aria-hidden="true">
+            <span class="path-labels-mini-swatch" style="background:var(--layer-motivation)"></span>
+            <span class="path-labels-mini-swatch" style="background:var(--layer-strategy)"></span>
+            <span class="path-labels-mini-swatch" style="background:var(--layer-business)"></span>
+          </div>
+        </div>
+        <div class="path-labels-route-card path-labels-route-card--infra">
+          <div class="path-labels-route-card__title">${te(t.B)}</div>
+          <p class="path-labels-route-card__text">The route stays in Application and/or Technology/Physical (and Implementation). It does not pass through Motivation, Strategy, or Business elements.</p>
+          <div class="path-labels-mini-legend" aria-hidden="true">
+            <span class="path-labels-mini-swatch" style="background:var(--layer-application)"></span>
+            <span class="path-labels-mini-swatch" style="background:var(--layer-technology)"></span>
+            <span class="path-labels-mini-swatch" style="background:var(--layer-physical)"></span>
+          </div>
+        </div>
+        <div class="path-labels-route-card path-labels-route-card--cross">
+          <div class="path-labels-route-card__title">${te(t.C)}</div>
+          <p class="path-labels-route-card__text">The route mixes upper layers with Application or infrastructure — typical “vertical slice” or realization-style alignment.</p>
+          <div class="path-labels-mini-legend path-labels-mini-legend--blend" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+    <div class="path-labels-section path-labels-section--badges">
+      <div class="path-labels-section-head">
+        <span class="path-labels-section-kicker">On each route</span>
+        <h4 class="path-labels-h">Layer mix badge</h4>
+      </div>
+      <p class="path-labels-p">Estimated from hop counts by ArchiMate layer (same logic as the pathfinder). Colors match the small badges in the path list.</p>
+      <ul class="path-labels-badge-explainer">
+        <li class="path-labels-badge-explainer__row">
+          <span class="path-labels-pill path-labels-pill--business">Business-Heavy</span>
+          <span class="path-labels-badge-explainer__desc">Most hops are in Motivation, Strategy, or Business.</span>
+        </li>
+        <li class="path-labels-badge-explainer__row">
+          <span class="path-labels-pill path-labels-pill--application">Application-Heavy</span>
+          <span class="path-labels-badge-explainer__desc">Most hops are in the Application layer.</span>
+        </li>
+        <li class="path-labels-badge-explainer__row">
+          <span class="path-labels-pill path-labels-pill--tech">Tech/Physical-Heavy</span>
+          <span class="path-labels-badge-explainer__desc">Most hops are in Technology, Physical, or Implementation.</span>
+        </li>
+        <li class="path-labels-badge-explainer__row">
+          <span class="path-labels-pill path-labels-pill--fullstack">Full-Stack Alignment</span>
+          <span class="path-labels-badge-explainer__desc">Connects upper layers with infrastructure (e.g. Business with Tech), or a tie / balanced mix — not dominated by a single band.</span>
+        </li>
+      </ul>
+    </div>
+    <div class="path-labels-section path-labels-section--precision">
+      <div class="path-labels-section-head">
+        <span class="path-labels-section-kicker">Path precision</span>
+        <h4 class="path-labels-h">Simplified vs ground-truth</h4>
+      </div>
+      <div class="path-labels-precision-grid">
+        <div class="path-labels-precision-card path-labels-precision-card--simplified">
+          <div class="path-labels-precision-card__head">
+            <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-simplified">Simplified</span>
+          </div>
+          <p class="path-labels-precision-card__text">${te(precisionTooltip("Executive Summary"))}</p>
+        </div>
+        <div class="path-labels-precision-card path-labels-precision-card--ground">
+          <div class="path-labels-precision-card__head">
+            <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-ground">Ground-Truth</span>
+          </div>
+          <p class="path-labels-precision-card__text">${te(precisionTooltip("Engineering Ground-Truth"))}</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+window.openPathLabelsModal = function openPathLabelsModal() {
+  const modal = document.getElementById("path-labels-modal");
+  const body = document.getElementById("path-labels-body");
+  if (!modal || !body) return;
+  body.innerHTML = buildPathLabelsModalHtml();
+  modal.setAttribute("aria-hidden", "false");
+  document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "true");
+};
+
+window.closePathLabelsModal = function closePathLabelsModal() {
+  const modal = document.getElementById("path-labels-modal");
+  if (!modal) return;
+  modal.setAttribute("aria-hidden", "true");
+  document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "false");
+};
+
+function initPathLabelsHelp() {
+  const tabs = document.getElementById("path-tabs");
+  if (!tabs || tabs.dataset.pathLabelsDelegated) return;
+  tabs.dataset.pathLabelsDelegated = "1";
+  tabs.addEventListener("click", (e) => {
+    const btn = e.target.closest("#path-categories-help-btn");
+    if (!btn) return;
+    e.preventDefault();
+    window.openPathLabelsModal();
+  });
+}
+
+function getPerspectiveEmptyUiForDomain() {
+  const key = normalizeDomainContext(state.domainContext);
+  const fallback = {
+    A: { intro: "No route currently stays only in Motivation, Strategy, or Business.", cta: "Add element to explore business lens", suggestionsLead: "Closest upper-layer elements to involve" },
+    B: { intro: "No route currently stays only in Application, Technology, Physical, or Implementation.", cta: "Add element to explore infrastructure lens", suggestionsLead: "Closest infrastructure elements to involve" },
+    C: { intro: "No route currently bridges upper layers and infrastructure in one chain.", cta: "Add element to explore cross-layer lens", suggestionsLead: "Closest bridge candidates to involve" },
+  };
+  if (typeof SCENARIOS === "undefined" || !SCENARIOS) return fallback;
+  const cur = SCENARIOS[key]?.perspectiveEmpty;
+  const abs = SCENARIOS.abstract?.perspectiveEmpty;
+  return cur || abs || fallback;
+}
+
+function perspectiveSectionMeaning(sectionId) {
+  switch (sectionId) {
+    case "A":
+      return "Upper-band lens: route hops remain in Motivation, Strategy, and Business.";
+    case "B":
+      return "Infrastructure lens: route hops remain in Application and/or Technology, Physical, and Implementation.";
+    default:
+      return "Cross-layer lens: route hops connect upper layers with Application or infrastructure.";
+  }
+}
+
+function explainWhyPerspectiveEmpty(sectionId, grouped) {
+  const counts = {
+    A: grouped?.byPerspective?.A?.length || 0,
+    B: grouped?.byPerspective?.B?.length || 0,
+    C: grouped?.byPerspective?.C?.length || 0,
+  };
+  if (sectionId === "A") {
+    if (counts.B > 0 || counts.C > 0) return "Current routes enter Application and/or infrastructure layers, so no upper-only chain is available.";
+    return "Current selection did not produce an upper-band-only route.";
+  }
+  if (sectionId === "B") {
+    if (counts.A > 0 || counts.C > 0) return "Current routes include upper-layer hops, so no infrastructure-only chain is available.";
+    return "Current selection did not produce an infrastructure-only route.";
+  }
+  if (counts.A > 0 && counts.B === 0) return "Current routes stay in upper layers, so no cross-layer chain is available.";
+  if (counts.B > 0 && counts.A === 0) return "Current routes stay in Application/infrastructure, so no cross-layer chain is available.";
+  return "Current selection did not produce a cross-layer chain.";
+}
+
+function perspectiveModeIsDominantShare() {
+  return normalizePerspectiveClassMode(state.perspectiveClassMode) === "dominant-share";
+}
+
+function dominantSharePctLabel() {
+  return clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct);
+}
+
+function perspectiveEmptyIntro(sectionId, grouped, copy) {
+  const fallback = copy?.intro || explainWhyPerspectiveEmpty(sectionId, grouped);
+  if (!perspectiveModeIsDominantShare()) return fallback;
+  const pct = dominantSharePctLabel();
+  if (sectionId === "A") {
+    return `No route currently stays mostly in Motivation, Strategy, or Business (at least ${pct}% of upper/infrastructure hops).`;
+  }
+  if (sectionId === "B") {
+    return `No route currently stays mostly in Application and infrastructure layers (at least ${pct}% of upper/infrastructure hops).`;
+  }
+  return `No route currently qualifies as a cross-layer balance under the ${pct}% dominant-share grouping rule.`;
+}
+
+function collectPerspectiveSuggestionSources(segments, activePathIdx) {
+  const picked = (state.waypoints || []).map((wp) => wp?.element).filter(Boolean);
+  const unique = Array.from(new Set(picked));
+  if (unique.length) return unique;
+  if (typeof flattenSegmentsForIndex !== "function") return unique;
+  const flat = flattenSegmentsForIndex(segments, activePathIdx) || [];
+  return Array.from(new Set(flat.map((s) => s?.element).filter(Boolean)));
+}
+
+const lensProfileCache = new Map();
+const perspectiveOutcomeCache = new Map();
+const RECOMMENDATION_POOL_SIZE = 8;
+
+function weightedRandomSample(items, count, weightFn) {
+  const pool = (items || []).slice();
+  const out = [];
+  const pickCount = Math.max(0, Math.min(Number(count || 0), pool.length));
+  for (let n = 0; n < pickCount; n++) {
+    let total = 0;
+    const weights = pool.map((item, idx) => {
+      const w = Math.max(0, Number(weightFn?.(item, idx) ?? 1));
+      total += w;
+      return w;
+    });
+    if (!(total > 0)) break;
+    let r = Math.random() * total;
+    let chosen = 0;
+    for (let i = 0; i < pool.length; i++) {
+      r -= weights[i];
+      if (r <= 0) {
+        chosen = i;
+        break;
+      }
+    }
+    out.push(pool[chosen]);
+    pool.splice(chosen, 1);
+  }
+  return out;
+}
+
+function diversifyRankedRows(rows, { pickCount = 3, poolSize = RECOMMENDATION_POOL_SIZE } = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const rankedPool = rows.slice(0, Math.max(1, Math.min(poolSize, rows.length)));
+  const sampled = weightedRandomSample(rankedPool, pickCount, (_row, idx) => 1 / (1 + idx));
+  return sampled.length ? sampled : rankedPool.slice(0, pickCount);
+}
+
+function getElementLensProfile(elementName) {
+  const key = String(elementName || "");
+  if (!key) return { upper: 0, infra: 0, crossStrength: 0, upperRatio: 0, infraRatio: 0 };
+  if (lensProfileCache.has(key)) return lensProfileCache.get(key);
+
+  let upper = 0;
+  let infra = 0;
+  const seenPartners = new Set();
+  const rows = (typeof MATRIX !== "undefined" && Array.isArray(MATRIX)) ? MATRIX : [];
+  for (const row of rows) {
+    if (!row || (row.from !== key && row.to !== key)) continue;
+    const directCount = Array.isArray(row.direct) ? row.direct.length : 0;
+    const derivedCount = Array.isArray(row.derived) ? row.derived.length : 0;
+    if (directCount + derivedCount <= 0) continue;
+    const partner = row.from === key ? row.to : row.from;
+    if (!partner || seenPartners.has(partner)) continue;
+    seenPartners.add(partner);
+    const bucket = getLayerBucketForPathMeta(partner);
+    if (bucket === "upper") upper += 1;
+    if (bucket === "middle" || bucket === "lower") infra += 1;
+  }
+
+  const total = upper + infra;
+  const profile = {
+    upper,
+    infra,
+    crossStrength: upper > 0 && infra > 0 ? Math.min(upper, infra) : 0,
+    upperRatio: total > 0 ? upper / total : 0,
+    infraRatio: total > 0 ? infra / total : 0,
+  };
+  lensProfileCache.set(key, profile);
+  return profile;
+}
+
+function perspectiveCountsFromCluster(clustered) {
+  return {
+    A: clustered?.byPerspective?.A?.length || 0,
+    B: clustered?.byPerspective?.B?.length || 0,
+    C: clustered?.byPerspective?.C?.length || 0,
+  };
+}
+
+function perspectiveActionScore(sectionId, clustered) {
+  const c = perspectiveCountsFromCluster(clustered);
+  if (sectionId === "A") {
+    if (c.A <= 0) return -Infinity;
+    return c.A * 100 - c.C * 30 - c.B * 10;
+  }
+  if (sectionId === "B") {
+    if (c.B <= 0) return -Infinity;
+    return c.B * 100 - c.C * 30 - c.A * 10;
+  }
+  if (c.C <= 0) return -Infinity;
+  return c.C * 100 + Math.min(c.A, c.B) * 10;
+}
+
+function simulatePerspectiveClusterForElements(elementNames, ctx = {}) {
+  const names = (elementNames || []).filter(Boolean);
+  const graph = ctx.graph || state.graph;
+  const options = ctx.options || getSearchPathOptions();
+  if (state.selectionMode === "set") {
+    const unique = Array.from(new Set(names));
+    if (unique.length < 2 || typeof findBestChainForSet !== "function") return null;
+    const res = findBestChainForSet(graph, unique, options);
+    const segs = res?.segments || [];
+    if (!segs.length || segs.some((s) => !s.paths || !s.paths.length)) return null;
+    return typeof clusterPaths === "function"
+      ? clusterPaths(segs, options)
+      : null;
+  }
+
+  if (names.length < 2 || names.some((n) => !n) || typeof findPaths !== "function") return null;
+  const fp = findPaths(graph, names, options);
+  const segs = fp?.segments || [];
+  if (!segs.length || segs.some((s) => !s.paths || !s.paths.length)) return null;
+  return typeof clusterPaths === "function"
+    ? clusterPaths(segs, options)
+    : null;
+}
+
+function buildElementsForAction({ removeIndex = null, addElement = null } = {}) {
+  const wps = (state.waypoints || []).map((wp) => ({
+    layer: wp?.layer || null,
+    element: wp?.element || null,
+  }));
+  if (typeof removeIndex === "number" && removeIndex >= 0 && removeIndex < wps.length) {
+    wps.splice(removeIndex, 1);
+  }
+  if (addElement) {
+    if (state.selectionMode === "set") {
+      wps.push({ layer: normalizeWaypointLayerForElement(addElement), element: addElement });
+    } else {
+      const insertAt = Math.max(1, wps.length - 1);
+      wps.splice(insertAt, 0, { layer: normalizeWaypointLayerForElement(addElement), element: addElement });
+    }
+  }
+  return wps.map((w) => w.element).filter(Boolean);
+}
+
+function scorePerspectiveAction(sectionId, { removeIndex = null, addElement = null } = {}, ctx = {}) {
+  const key = [
+    sectionId,
+    state.selectionMode,
+    String(removeIndex ?? ""),
+    String(addElement ?? ""),
+    (state.waypoints || []).map((wp) => wp?.element || "").join("|"),
+    String(state.includeDerived),
+    String(state.allowAssociationFallback),
+    String(state.searchMaxDepth),
+    String(state.searchMaxPaths),
+    String(state.viewpoint || ""),
+    String(!!ctx.usingFullMetamodel),
+  ].join("::");
+  if (perspectiveOutcomeCache.has(key)) return perspectiveOutcomeCache.get(key);
+  const elements = buildElementsForAction({ removeIndex, addElement });
+  const clustered = simulatePerspectiveClusterForElements(elements, ctx);
+  const score = perspectiveActionScore(sectionId, clustered);
+  perspectiveOutcomeCache.set(key, score);
+  return score;
+}
+
+function rankPerspectiveSuggestions(sectionId, candidates, ctx = {}) {
+  const selected = new Set((state.waypoints || []).map((wp) => wp?.element).filter(Boolean));
+  let rows = (candidates || [])
+    .filter((c) => c && c.element && !selected.has(c.element))
+    .map((c) => ({ ...c, profile: getElementLensProfile(c.element) }));
+
+  if (sectionId === "A") {
+    rows.sort((a, b) => {
+      const bOutcome = scorePerspectiveAction(sectionId, { addElement: b.element }, ctx);
+      const aOutcome = scorePerspectiveAction(sectionId, { addElement: a.element }, ctx);
+      if (bOutcome !== aOutcome) return bOutcome - aOutcome;
+      // For business/upper focus, prefer upper-heavy and less cross-layer-bridging elements.
+      if (b.profile.upperRatio !== a.profile.upperRatio) return b.profile.upperRatio - a.profile.upperRatio;
+      if (a.profile.crossStrength !== b.profile.crossStrength) return a.profile.crossStrength - b.profile.crossStrength;
+      if (a.distance !== b.distance) return a.distance - b.distance;
+      return String(a.element).localeCompare(String(b.element));
+    });
+    const ranked = rows.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
+    return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+  }
+
+  if (sectionId === "B") {
+    rows.sort((a, b) => {
+      const bOutcome = scorePerspectiveAction(sectionId, { addElement: b.element }, ctx);
+      const aOutcome = scorePerspectiveAction(sectionId, { addElement: a.element }, ctx);
+      if (bOutcome !== aOutcome) return bOutcome - aOutcome;
+      // For infra focus, prefer infra-heavy and less cross-layer-bridging elements.
+      if (b.profile.infraRatio !== a.profile.infraRatio) return b.profile.infraRatio - a.profile.infraRatio;
+      if (a.profile.crossStrength !== b.profile.crossStrength) return a.profile.crossStrength - b.profile.crossStrength;
+      if (a.distance !== b.distance) return a.distance - b.distance;
+      return String(a.element).localeCompare(String(b.element));
+    });
+    const ranked = rows.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
+    return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+  }
+
+  // Cross-layer lens: prefer elements that actually bridge both upper and infra neighbors.
+  const bridgeFirst = rows.filter((r) => r.profile.crossStrength > 0);
+  const pool = bridgeFirst.length ? bridgeFirst : rows;
+  pool.sort((a, b) => {
+    const bOutcome = scorePerspectiveAction(sectionId, { addElement: b.element }, ctx);
+    const aOutcome = scorePerspectiveAction(sectionId, { addElement: a.element }, ctx);
+    if (bOutcome !== aOutcome) return bOutcome - aOutcome;
+    if (b.profile.crossStrength !== a.profile.crossStrength) return b.profile.crossStrength - a.profile.crossStrength;
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    return String(a.element).localeCompare(String(b.element));
+  });
+  const ranked = pool.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
+  return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+}
+
+function perspectiveSuggestionBuckets(sectionId, grouped) {
+  if (sectionId === "A") return ["upper"];
+  if (sectionId === "B") return ["middle", "lower"];
+  const countA = grouped?.byPerspective?.A?.length || 0;
+  const countB = grouped?.byPerspective?.B?.length || 0;
+  const countC = grouped?.byPerspective?.C?.length || 0;
+  if (countC > 0) return [];
+  if (countA > 0 && countB === 0) return ["middle", "lower"];
+  if (countB > 0 && countA === 0) return ["upper"];
+  return ["upper", "middle", "lower"];
+}
+
+function buildPerspectiveSuggestions(sectionId, grouped, segments, activePathIdx, ctx = {}) {
+  if (typeof findNearestElementsByBucket !== "function") return [];
+  const buckets = perspectiveSuggestionBuckets(sectionId, grouped);
+  if (!buckets.length) return [];
+  const sources = collectPerspectiveSuggestionSources(segments, activePathIdx);
+  if (!sources.length) return [];
+  const nearest = findNearestElementsByBucket(ctx.graph || state.graph, sources, buckets, {
+    maxResults: 12,
+    maxDepth: 6,
+    skipAssociation: true,
+  });
+  return rankPerspectiveSuggestions(sectionId, nearest, ctx);
+}
+
+function sortPerspectiveCandidatesHeuristic(sectionId, candidates) {
+  const rows = (candidates || []).map((c) => ({ ...c, profile: getElementLensProfile(c.element) }));
+  if (sectionId === "A") {
+    rows.sort((a, b) =>
+      (b.profile.upperRatio - a.profile.upperRatio) ||
+      (a.profile.crossStrength - b.profile.crossStrength) ||
+      (a.distance - b.distance) ||
+      String(a.element).localeCompare(String(b.element))
+    );
+  } else if (sectionId === "B") {
+    rows.sort((a, b) =>
+      (b.profile.infraRatio - a.profile.infraRatio) ||
+      (a.profile.crossStrength - b.profile.crossStrength) ||
+      (a.distance - b.distance) ||
+      String(a.element).localeCompare(String(b.element))
+    );
+  } else {
+    rows.sort((a, b) =>
+      (b.profile.crossStrength - a.profile.crossStrength) ||
+      (a.distance - b.distance) ||
+      String(a.element).localeCompare(String(b.element))
+    );
+  }
+  return diversifyRankedRows(rows, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+}
+
+function keepPerspectiveCandidatesThatImproveLens(sectionId, candidates, ctx = {}) {
+  const out = [];
+  for (const c of candidates || []) {
+    if (!c?.element) continue;
+    const outcome = scorePerspectiveAction(sectionId, { addElement: c.element }, ctx);
+    if (!Number.isFinite(outcome)) continue;
+    out.push(c);
+  }
+  return out;
+}
+
+function buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, activePathIdx, ctx = {}) {
+  const buckets = perspectiveSuggestionBuckets(sectionId, grouped);
+  if (!buckets.length) return [];
+  const selected = new Set((state.waypoints || []).map((wp) => wp?.element).filter(Boolean));
+  const sources = collectPerspectiveSuggestionSources(segments, activePathIdx);
+  let candidates = [];
+  if (typeof findNearestElementsByBucket === "function" && sources.length) {
+    candidates = findNearestElementsByBucket(ctx.graph || state.graph, sources, buckets, {
+      maxResults: 24,
+      maxDepth: 8,
+      skipAssociation: true,
+    });
+  }
+  candidates = candidates.filter((c) => c?.element && !selected.has(c.element));
+  if (candidates.length) {
+    const ranked = sortPerspectiveCandidatesHeuristic(sectionId, candidates);
+    return keepPerspectiveCandidatesThatImproveLens(sectionId, ranked, ctx);
+  }
+
+  const bucketSet = new Set(buckets);
+  const fromRegistry = Object.keys(ELEMENTS || {})
+    .filter((name) => !selected.has(name))
+    .filter((name) => !(ctx.strictAllowedElements instanceof Set) || ctx.strictAllowedElements.has(name))
+    .filter((name) => bucketSet.has(getLayerBucketForPathMeta(name)))
+    .map((name) => ({
+      element: name,
+      distance: 99,
+      layer: ELEMENTS?.[name]?.layer ?? "Unknown",
+      bucket: getLayerBucketForPathMeta(name),
+    }));
+  const fallbackRanked = sortPerspectiveCandidatesHeuristic(sectionId, fromRegistry);
+  return keepPerspectiveCandidatesThatImproveLens(sectionId, fallbackRanked, ctx);
+}
+
+function conflictingBucketsForPerspective(sectionId) {
+  if (sectionId === "A") return new Set(["middle", "lower"]);
+  if (sectionId === "B") return new Set(["upper"]);
+  return new Set();
+}
+
+function buildPerspectiveRemovalCandidates(sectionId, grouped, ctx = {}) {
+  if (sectionId !== "A" && sectionId !== "B") return [];
+  if ((state.waypoints || []).length <= 2) return [];
+  const countC = grouped?.byPerspective?.C?.length || 0;
+  // In exclusive mode, removals are most useful when mixed/cross-layer results dominate.
+  // In dominant-share mode, removals can still be useful even without explicit C results.
+  if (!perspectiveModeIsDominantShare() && countC === 0) return [];
+
+  const conflicts = conflictingBucketsForPerspective(sectionId);
+  if (!conflicts.size) return [];
+
+  const out = [];
+  for (let idx = 0; idx < (state.waypoints || []).length; idx++) {
+    const wp = state.waypoints[idx];
+    const el = wp?.element;
+    if (!el) continue;
+    if (state.selectionMode === "ordered" && (idx === 0 || idx === state.waypoints.length - 1)) {
+      continue; // keep Start/End fixed in ordered mode
+    }
+    const bucket = getLayerBucketForPathMeta(el);
+    if (!conflicts.has(bucket)) continue;
+    const outcomeScore = scorePerspectiveAction(sectionId, { removeIndex: idx }, ctx);
+    out.push({ index: idx, element: el, bucket, outcomeScore });
+  }
+  out.sort((a, b) => {
+    const as = Number.isFinite(a.outcomeScore) ? a.outcomeScore : -Infinity;
+    const bs = Number.isFinite(b.outcomeScore) ? b.outcomeScore : -Infinity;
+    if (bs !== as) return bs - as;
+    return String(a.element).localeCompare(String(b.element));
+  });
+  return diversifyRankedRows(out, { pickCount: 3, poolSize: 6 }).map(({ outcomeScore, ...rest }) => rest);
+}
+
+function addPerspectiveExplorationWaypoint() {
+  const targetIdx = typeof window.addWaypoint === "function"
+    ? window.addWaypoint()
+    : (state.selectionMode === "set" ? state.waypoints.length - 1 : Math.max(1, state.waypoints.length - 2));
+  setTimeout(() => {
+    const chain = document.getElementById("waypoint-chain");
+    const card = chain?.querySelector(`.waypoint-card[data-waypoint-index="${targetIdx}"]`);
+    const field = card?.querySelector(".waypoint-layer-select");
+    if (chain && typeof chain.scrollIntoView === "function") {
+      chain.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (card && typeof card.scrollIntoView === "function") {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (field && typeof field.focus === "function") {
+      field.focus();
+    }
+  }, 0);
+}
+
+function normalizeWaypointLayerForElement(elementName) {
+  const layer = ELEMENTS?.[elementName]?.layer || null;
+  if (!layer) return null;
+  return layer === "Implementation & Migration" ? "Implementation" : layer;
+}
+
+/** Match `ELEMENTS[].layer` ids (same normalization as waypoint persistence / labels). */
+function canonicalLayerIdForWaypoint(layerId) {
+  if (!layerId) return layerId;
+  return layerId === "Implementation & Migration" ? "Implementation" : layerId;
+}
+
+function addPerspectiveSuggestedElement(elementName, { expandedScope = false } = {}) {
+  const name = String(elementName || "").trim();
+  if (!name) return;
+  const targetLayer = normalizeWaypointLayerForElement(name);
+  if (typeof window.addWaypoint !== "function") return;
+  const targetIdx = window.addWaypoint();
+  if (!state.waypoints[targetIdx]) return;
+  state.waypoints[targetIdx].layer = targetLayer;
+  state.waypoints[targetIdx].element = name;
+  renderWaypointChain();
+  animateWaypointCardIn(targetIdx);
+  if (expandedScope) state._pathfindFullMetamodelOnce = true;
+  if (state.segments) {
+    window.dispatch({
+      type: "FIND_PATH",
+      reason: expandedScope ? "perspective-suggestion-add-expanded" : "perspective-suggestion-add",
+    });
+  }
+
+  setTimeout(() => {
+    const chain = document.getElementById("waypoint-chain");
+    const card = chain?.querySelector(`.waypoint-card[data-waypoint-index="${targetIdx}"]`);
+    const trigger = card?.querySelector(".element-trigger");
+    if (card && typeof card.scrollIntoView === "function") {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (trigger && typeof trigger.focus === "function") {
+      trigger.focus();
+    }
+  }, 0);
+}
+
+function replacePerspectiveFocusPoint(removeIndex, addElementName, { expandedScope = false } = {}) {
+  if (typeof removeIndex !== "number" || removeIndex < 0 || removeIndex >= state.waypoints.length) return;
+  removeWaypoint(removeIndex, {
+    suppressSearch: true,
+    after: () => addPerspectiveSuggestedElement(addElementName, { expandedScope }),
+  });
+}
+
+function buildPerspectiveSwapCandidates(sectionId, grouped, addSuggestions, ctx = {}) {
+  if (sectionId !== "A" && sectionId !== "B") return [];
+  const countC = grouped?.byPerspective?.C?.length || 0;
+  if (countC === 0) return [];
+  const removal = buildPerspectiveRemovalCandidates(sectionId, grouped, ctx);
+  if (!removal.length || !addSuggestions.length) return [];
+
+  const pairs = [];
+  for (const add of addSuggestions) {
+    if (!add?.element) continue;
+    for (const rem of removal) {
+      if (!rem?.element) continue;
+      if (add.element === rem.element) continue;
+      const score = scorePerspectiveAction(sectionId, {
+        removeIndex: rem.index,
+        addElement: add.element,
+      }, ctx);
+      if (!Number.isFinite(score)) continue;
+      pairs.push({
+        removeIndex: rem.index,
+        removeElement: rem.element,
+        addElement: add.element,
+        score,
+      });
+    }
+  }
+  pairs.sort((a, b) => b.score - a.score || String(a.removeElement).localeCompare(String(b.removeElement)));
+  return diversifyRankedRows(pairs, { pickCount: 3, poolSize: 10 }).map(({ score, ...rest }) => rest);
+}
+
+function resolvePerspectiveEmptyCta(sectionId, grouped, addSuggestions, ctx = {}) {
+  const dominantMode = perspectiveModeIsDominantShare();
+  const swap = buildPerspectiveSwapCandidates(sectionId, grouped, addSuggestions, ctx);
+  if (swap.length && (dominantMode || sectionId === "A" || sectionId === "B")) {
+    return {
+      mode: "swap",
+      label: "",
+      lead: "To narrow this lens, replace one focus point with:",
+      candidates: swap,
+    };
+  }
+
+  const removal = buildPerspectiveRemovalCandidates(sectionId, grouped, ctx);
+  if (removal.length && (dominantMode || sectionId === "A" || sectionId === "B")) {
+    return {
+      mode: "remove",
+      label: "Remove one focus point to narrow this lens",
+      lead: "To explore this perspective, consider removing:",
+      candidates: removal,
+    };
+  }
+  return {
+    mode: "add",
+    label: "",
+    lead: "To explore this perspective, consider adding:",
+    candidates: [],
+  };
+}
+
+function createPerspectiveRecommendationContext() {
+  const vpCtx = resolveViewpointSearchContext({ forceFullMetamodel: false });
+  const strictViewpoint = !!vpCtx.viewpointStrict;
+  const usingFullMetamodel = strictViewpoint && !!state._perspectiveSuggestFullMetamodel;
+  const graph = usingFullMetamodel
+    ? buildGraph({ allowedElements: null, includeDerived: state.includeDerived })
+    : state.graph;
+  const options = getSearchPathOptions({ forceFullMetamodel: usingFullMetamodel });
+  const strictAllowedElements = usingFullMetamodel ? null : effectiveAllowedElements();
+  const viewpointName =
+    state.viewpoint && VIEWPOINTS?.[state.viewpoint]
+      ? VIEWPOINTS[state.viewpoint].name || state.viewpoint
+      : (state.viewpoint || "current viewpoint");
+  return {
+    strictViewpoint,
+    usingFullMetamodel,
+    graph,
+    options,
+    strictAllowedElements,
+    viewpointName,
+  };
+}
+
+function isElementOutsideStrictViewpoint(elementName, ctx) {
+  if (!ctx?.strictViewpoint) return false;
+  if (!(ctx?.strictAllowedElements instanceof Set)) return false;
+  return !ctx.strictAllowedElements.has(elementName);
+}
+
+window.expandPerspectiveSuggestionsToFullMetamodel = function expandPerspectiveSuggestionsToFullMetamodel() {
+  state._perspectiveSuggestFullMetamodel = true;
+  scheduleRenderResults();
+};
+
+window.restorePerspectiveSuggestionsToViewpoint = function restorePerspectiveSuggestionsToViewpoint() {
+  state._perspectiveSuggestFullMetamodel = false;
+  scheduleRenderResults();
+};
+
+function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
+  if (!tabsEl) return { byPathIndex: {} };
+  const recCtx = createPerspectiveRecommendationContext();
+  if (!recCtx.strictViewpoint && state._perspectiveSuggestFullMetamodel) {
+    state._perspectiveSuggestFullMetamodel = false;
+  }
+  const grouped = typeof clusterPaths === "function"
+    ? clusterPaths(segments, getSearchPathOptions())
+    : { byPerspective: { A: [], B: [], C: [] }, byPathIndex: {}, all: [] };
+  const titles = getPerspectiveTitlesForDomain();
+  const emptyUi = getPerspectiveEmptyUiForDomain();
+  const sections = ["A", "B", "C"];
+  const hasAny = grouped.all && grouped.all.length > 0;
+  const activePerspective = grouped?.byPathIndex?.[String(activePathIdx)]?.perspective || null;
+
+  tabsEl.style.display = "block";
+  tabsEl.classList.add("path-tabs--perspective");
+  tabsEl.innerHTML = "";
+
+  if (!hasAny) {
+    tabsEl.style.display = "none";
+    return grouped;
+  }
+
+  for (const sectionId of sections) {
+    const items = grouped.byPerspective?.[sectionId] || [];
+
+    const wrap = document.createElement("details");
+    wrap.className = "path-perspective";
+    wrap.open = activePerspective ? sectionId === activePerspective : sectionId === "A";
+    wrap.innerHTML = `
+      <summary class="path-perspective-head">
+        <span class="path-perspective-title">${titles[sectionId] || sectionId}</span>
+        <span class="path-perspective-count">${items.length}</span>
+      </summary>
+    `;
+
+    const body = document.createElement("div");
+    body.className = "path-perspective-body";
+    const sectionMeaning = document.createElement("p");
+    sectionMeaning.className = "path-perspective-explainer";
+    sectionMeaning.textContent = perspectiveSectionMeaning(sectionId);
+    body.appendChild(sectionMeaning);
+
+    if (items.length > 0) {
+      for (const meta of items) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "path-perspective-item" + (meta.pathIndex === activePathIdx ? " active" : "");
+        row.title = precisionTooltip(meta.precisionLabel);
+        row.onclick = () => selectPath(meta.pathIndex);
+        row.innerHTML = `
+          <span class="path-perspective-item-main">
+            <strong>Route ${meta.pathIndex + 1}</strong>
+            <span class="hop-badge">${meta.hopCount} hop${meta.hopCount !== 1 ? "s" : ""}</span>
+          </span>
+          <span class="path-perspective-item-badges">
+            <span class="path-badge ${layerBadgeClassForLabel(meta.layerLabel)}" title="${escapeHtmlAttr(layerTooltip(meta.layerLabel))}">${meta.layerLabel}</span>
+            <span class="path-badge ${precisionBadgeClassForLabel(meta.precisionLabel)}" title="${escapeHtmlAttr(precisionTooltip(meta.precisionLabel))}">${meta.precisionLabel === "Executive Summary" ? "Simplified" : "Ground-Truth"}</span>
+          </span>
+        `;
+        body.appendChild(row);
+      }
+
+      const coach = buildPerspectiveVariationCoach(sectionId, items, grouped, segments, activePathIdx, recCtx);
+      if (coach) {
+        const coachWrap = document.createElement("div");
+        coachWrap.className = "path-perspective-coach";
+        const coachText = document.createElement("p");
+        coachText.className = "path-perspective-coach-text";
+        coachText.textContent = coach.text;
+        coachWrap.appendChild(coachText);
+        if (Array.isArray(coach.actions) && coach.actions.length) {
+          const actionRow = document.createElement("div");
+          actionRow.className = "path-perspective-coach-actions";
+          for (const a of coach.actions.slice(0, 3)) {
+            if (!a?.label || typeof a?.onClick !== "function") continue;
+            const coachBtn = document.createElement("button");
+            coachBtn.type = "button";
+            coachBtn.className = "path-perspective-coach-btn";
+            coachBtn.textContent = a.label;
+            coachBtn.onclick = () => a.onClick();
+            actionRow.appendChild(coachBtn);
+          }
+          if (actionRow.childElementCount > 0) coachWrap.appendChild(actionRow);
+        }
+        body.appendChild(coachWrap);
+      }
+    } else {
+      body.classList.add("path-perspective-body--empty");
+      const copy = emptyUi?.[sectionId] || {};
+      const primaryAddSuggestions = buildPerspectiveSuggestions(sectionId, grouped, segments, activePathIdx, recCtx);
+      const action = resolvePerspectiveEmptyCta(sectionId, grouped, primaryAddSuggestions, recCtx);
+      const addSuggestions =
+        action.mode === "add" && primaryAddSuggestions.length === 0
+          ? buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, activePathIdx, recCtx)
+          : primaryAddSuggestions;
+      const hasAnyActionCandidates =
+        (Array.isArray(action?.candidates) && action.candidates.length > 0) ||
+        (Array.isArray(addSuggestions) && addSuggestions.length > 0);
+      const viewpointBlocksLens = recCtx.strictViewpoint && !recCtx.usingFullMetamodel && !hasAnyActionCandidates;
+      const alert = document.createElement("div");
+      alert.className = "path-perspective-empty-alert";
+      const emptyLine = document.createElement("p");
+      emptyLine.className = "path-perspective-empty-copy";
+      emptyLine.textContent = perspectiveEmptyIntro(sectionId, grouped, copy);
+      alert.appendChild(emptyLine);
+      if (viewpointBlocksLens) {
+        const reason = document.createElement("p");
+        reason.className = "path-perspective-empty-copy";
+        reason.textContent = `No valid recommendation is available within ${recCtx.viewpointName}.`;
+        alert.appendChild(reason);
+      }
+      if (recCtx.usingFullMetamodel) {
+        const scopeNote = document.createElement("p");
+        scopeNote.className = "path-perspective-empty-copy";
+        scopeNote.textContent = "Showing expanded recommendations outside the current viewpoint scope.";
+        alert.appendChild(scopeNote);
+      }
+      body.appendChild(alert);
+
+      if (action.mode === "swap" && action.candidates.length) {
+        const lead = document.createElement("p");
+        lead.className = "path-perspective-suggestion-lead";
+        lead.textContent = action.lead;
+        body.appendChild(lead);
+
+        const chips = document.createElement("div");
+        chips.className = "path-perspective-suggestion-chips";
+        for (const candidate of action.candidates) {
+          const outsideStrict = isElementOutsideStrictViewpoint(candidate.addElement, recCtx);
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--swap";
+          chip.title =
+            `Replace ${candidate.removeElement} with ${candidate.addElement}` +
+            (outsideStrict ? " (outside current viewpoint)" : "");
+          chip.innerHTML = `
+            <span class="path-perspective-suggestion-swap-icon" aria-hidden="true">×+</span>
+            <span class="path-perspective-suggestion-text">${candidate.removeElement} → ${candidate.addElement}${outsideStrict ? " · outside scope" : ""}</span>
+          `;
+          chip.onclick = () =>
+            withVisibleEditingControls(() =>
+              replacePerspectiveFocusPoint(candidate.removeIndex, candidate.addElement, {
+                expandedScope: outsideStrict && recCtx.usingFullMetamodel,
+              })
+            );
+          chips.appendChild(chip);
+        }
+        body.appendChild(chips);
+      } else if (action.mode === "remove" && action.candidates.length) {
+        const lead = document.createElement("p");
+        lead.className = "path-perspective-suggestion-lead";
+        lead.textContent = action.lead;
+        body.appendChild(lead);
+
+        const chips = document.createElement("div");
+        chips.className = "path-perspective-suggestion-chips";
+        for (const candidate of action.candidates) {
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--remove";
+          chip.title = `Remove ${candidate.element} from current focus points`;
+          chip.innerHTML = `
+            <span class="path-perspective-suggestion-plus" aria-hidden="true">×</span>
+            <span class="path-perspective-suggestion-text">${candidate.element}</span>
+          `;
+          chip.querySelector(".path-perspective-suggestion-plus")?.classList.add("path-perspective-suggestion-plus--remove");
+          chip.onclick = () => withVisibleEditingControls(() => removeWaypoint(candidate.index));
+          chips.appendChild(chip);
+        }
+        body.appendChild(chips);
+      } else {
+        if (addSuggestions.length) {
+          const lead = document.createElement("p");
+          lead.className = "path-perspective-suggestion-lead";
+          lead.textContent = action.lead;
+          body.appendChild(lead);
+
+          const chips = document.createElement("div");
+          chips.className = "path-perspective-suggestion-chips";
+          for (const suggestion of addSuggestions) {
+            const outsideStrict = isElementOutsideStrictViewpoint(suggestion.element, recCtx);
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--add";
+            chip.title =
+              `${suggestion.element} (${suggestion.layer}, ${suggestion.distance} hop${suggestion.distance !== 1 ? "s" : ""})` +
+              (outsideStrict ? " — outside current viewpoint" : "");
+            chip.innerHTML = `
+              <span class="path-perspective-suggestion-plus" aria-hidden="true">+</span>
+              <span class="path-perspective-suggestion-text">${suggestion.element}${outsideStrict ? " · outside scope" : ""}</span>
+            `;
+            chip.onclick = () =>
+              withVisibleEditingControls(() =>
+                addPerspectiveSuggestedElement(suggestion.element, { expandedScope: outsideStrict && recCtx.usingFullMetamodel })
+              );
+            chips.appendChild(chip);
+          }
+          body.appendChild(chips);
+        }
+      }
+
+      const shouldShowCta = action.mode === "remove";
+      if (shouldShowCta) {
+        const cta = document.createElement("button");
+        cta.type = "button";
+        cta.className = "path-perspective-cta";
+        cta.textContent = action.mode === "remove"
+          ? action.label
+          : (copy.cta || "Add element to explore this perspective");
+        cta.onclick = () => {
+          if (action.mode === "remove" && action.candidates.length) {
+            withVisibleEditingControls(() => removeWaypoint(action.candidates[0].index));
+            return;
+          }
+          withVisibleEditingControls(() => addPerspectiveExplorationWaypoint());
+        };
+        body.appendChild(cta);
+      }
+
+      if (viewpointBlocksLens) {
+        const expandBtn = document.createElement("button");
+        expandBtn.type = "button";
+        expandBtn.className = "path-perspective-cta";
+        expandBtn.textContent = "Expand search to full metamodel";
+        expandBtn.onclick = () => window.expandPerspectiveSuggestionsToFullMetamodel?.();
+        body.appendChild(expandBtn);
+      } else if (recCtx.usingFullMetamodel) {
+        const restoreBtn = document.createElement("button");
+        restoreBtn.type = "button";
+        restoreBtn.className = "path-perspective-cta";
+        restoreBtn.textContent = "Back to viewpoint-scoped recommendations";
+        restoreBtn.onclick = () => window.restorePerspectiveSuggestionsToViewpoint?.();
+        body.appendChild(restoreBtn);
+      }
+    }
+
+    wrap.appendChild(body);
+    tabsEl.appendChild(wrap);
+  }
+
+  const prevHelp = document.getElementById("path-tabs-help");
+  if (prevHelp) prevHelp.remove();
+  const helpWrap = document.createElement("div");
+  helpWrap.className = "path-tabs-help path-tabs-help--after-groups";
+  helpWrap.id = "path-tabs-help";
+  helpWrap.innerHTML = `<button type="button" class="path-tabs-help-link" id="path-categories-help-btn"
+    aria-expanded="false" aria-controls="path-labels-modal"
+    title="Open definitions for route groups and badges">What do these labels mean?</button>`;
+  tabsEl.appendChild(helpWrap);
+
+  return grouped;
+}
+
+/** Element strip + waypoint note under path tabs (wide stacked layout); path title & narrative stay in the main panel. */
+function setExplanationRouteColumn(html) {
+  const el = document.getElementById("explanation-route-column");
+  if (!el) return;
+  const s = html && String(html).trim() ? String(html) : "";
+  el.innerHTML = s;
+  el.hidden = !s;
+}
+
+/** One-time relax banner (blue) — only when not merged with the Association fallback warning below. */
+function buildTemporaryRelaxationBanner() {
+  const t = state.lastPathTemporaryRelaxation;
+  if (!t || (!t.derived && !t.association)) return "";
+  const parts = [];
+  if (t.derived) parts.push("§5.7 derived relations");
+  if (t.association) parts.push("Association fallback (§5.2.4)");
+  return `<div class="path-temp-relax-banner" role="status">This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open Options if you want relaxed rules to stay on.</div>`;
+}
+
+/**
+ * Banners for explanation panel: avoids duplicate Association messaging when one-shot relax
+ * and penalized hops both apply — single yellow warning with spec ref + Options guidance.
+ */
+function buildPathResultBanners() {
+  const t = state.lastPathTemporaryRelaxation;
+  const hasTemp = t && (t.derived || t.association);
+  const isFallback = state.lastPathIsFallback;
+  const mergeAssocOneShot =
+    isFallback && hasTemp && t.association;
+
+  if (mergeAssocOneShot) {
+    const parts = [];
+    if (t.derived) parts.push("§5.7 derived relations");
+    parts.push("Association fallback (§5.2.4)");
+    return `<div class="path-fallback-banner" role="status">⚠️ <strong>Fallback path used</strong> — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship. This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open <strong>Options</strong> if you want relaxed rules to stay on.</div>`;
+  }
+
+  let html = "";
+  if (hasTemp) html += buildTemporaryRelaxationBanner();
+  if (isFallback) {
+    html += `<div class="path-fallback-banner" role="status">⚠️ Fallback Path Used — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship.</div>`;
+  }
+  return html;
+}
+
 // ── Render Results ───────────────────────────────────────────────────────────
+
+/** Snapshot open explanation accordions so a full re-render (e.g. relationship pick) does not collapse them. */
+function captureExplainUiState() {
+  const container = document.getElementById("explanation-content");
+  if (!container) return null;
+  const hops = [];
+  container.querySelectorAll("details.explain-hop-justification").forEach((det) => {
+    if (!det.open) return;
+    const dataHop = det.querySelector("[data-hop][data-from][data-to]");
+    if (!dataHop) return;
+    const h = parseInt(dataHop.getAttribute("data-hop"), 10);
+    if (!Number.isFinite(h)) return;
+    hops.push({ hop: h });
+  });
+  return { hops, scrollTop: container.scrollTop };
+}
+
+function restoreExplainUiState(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.hops)) return;
+  const container = document.getElementById("explanation-content");
+  if (!container) return;
+  for (const { hop } of snapshot.hops) {
+    const el = container.querySelector(`[data-hop="${hop}"][data-from][data-to]`);
+    const outer = el?.closest("details.explain-hop-justification");
+    if (!outer) continue;
+    outer.open = true;
+  }
+  requestAnimationFrame(() => {
+    container.scrollTop = snapshot.scrollTop;
+  });
+}
+
+/**
+ * Per-hop formal metamodel disclosure ("View Formal Metamodel Logic", nested derivation, etc.) must
+ * never open except when the user explicitly toggles its summary.
+ * Native <details> can interact badly with nested accordions / re-renders; we handle open state manually.
+ */
+function wireDefinitionsRelationshipDisclosures(container) {
+  if (!container) return;
+  container.querySelectorAll("details.explain-details").forEach((det) => {
+    det.open = false;
+    const sum = det.querySelector(":scope > summary");
+    if (!sum) return;
+    if (!sum.dataset.defsManualToggle) {
+      sum.dataset.defsManualToggle = "1";
+      sum.addEventListener(
+        "click",
+        (e) => {
+          if (!e.isTrusted) return;
+          e.preventDefault();
+          det.open = !det.open;
+        },
+        true
+      );
+    }
+  });
+}
+
+function ensureDefinitionsRelationshipDetailsClosed(container) {
+  if (!container) return;
+  container.querySelectorAll("details.explain-details").forEach((d) => {
+    d.open = false;
+  });
+}
 
 function renderResults() {
   const segments    = state.segments;
   const pathIdx     = state.activePathIdx;
   const diagramEl   = document.getElementById('path-diagram');
   const emptyEl     = document.getElementById('diagram-empty');
+  const viewportWrap = document.getElementById("diagram-viewport-wrap");
+  const resultsPanel = document.getElementById("results-panel");
   const tabsEl      = document.getElementById('path-tabs');
   const explainEl   = document.getElementById('explanation-content');
   const toolsEl     = document.getElementById('diagram-tools');
 
-  // Check if any segment has no paths
-  const hasNoPath = segments.some(s => !s.paths || s.paths.length === 0);
+  const hasResults = Array.isArray(segments);
+  // Match findPath / pathfinder: empty segments[] happens when connect-set search finds no valid chain
+  // ([]).some(...) is false — must treat length 0 as no path or the diagram stays blank.
+  const hasNoPath =
+    hasResults &&
+    (segments.length === 0 || segments.some((s) => !s.paths || s.paths.length === 0));
 
   // Show/Hide path tools (compact/swimlanes always visible)
   if (toolsEl) {
-    toolsEl.hidden = hasNoPath;
+    toolsEl.hidden = !hasResults || hasNoPath;
   }
+
+  // Initial state (no results yet): show the "Build a path" empty panel only.
+  if (!hasResults) {
+    if (resultsPanel) resultsPanel.classList.add("results-panel--empty");
+    state.lastPathIsFallback = false;
+    state.mmLast = null;
+    updateMmConnectionStrip(null);
+    clearDiagram(diagramEl);
+    hideDiagramNoPathOverlay();
+    hidePathFailureModal();
+    resetDiagramPanContext();
+    resetDiagramView();
+    if (emptyEl) emptyEl.style.display = "flex";
+    if (tabsEl) tabsEl.style.display = "none";
+    const pth = document.getElementById("path-tabs-help");
+    if (pth) pth.hidden = true;
+    if (explainEl) {
+      explainEl.innerHTML = "Path explanation will appear here after finding a path.";
+    }
+    setExplanationRouteColumn("");
+    if (viewportWrap) viewportWrap.hidden = true;
+    updateDiagramEmptyChrome();
+    return;
+  }
+
+  if (resultsPanel) resultsPanel.classList.remove("results-panel--empty");
 
   if (hasNoPath) {
     state.lastPathIsFallback = false;
@@ -3082,41 +5940,81 @@ function renderResults() {
     // No-path case
     clearDiagram(diagramEl);
     emptyEl.style.display = 'none';
+    updateDiagramEmptyChrome();
     tabsEl.style.display  = 'none';
-    diagramEl.innerHTML   = '<p style="color:var(--text-3);font-size:13px;padding:8px">No valid path found within the current settings.</p>';
+    const pth = document.getElementById("path-tabs-help");
+    if (pth) pth.hidden = true;
     resetDiagramPanContext();
     resetDiagramView();
+    if (viewportWrap) viewportWrap.hidden = false;
 
-    const fromEl = state.waypoints[0].element;
-    const toEl   = state.waypoints[state.waypoints.length - 1].element;
+    const pickedNames = state.waypoints.map((wp) => wp.element).filter(Boolean);
+    const fail = getFirstFailingSegment(segments);
+    const narrFrom =
+      fail?.from ?? (pickedNames[0] || state.waypoints[0]?.element);
+    const narrTo =
+      fail?.to ??
+      (pickedNames.length >= 2
+        ? pickedNames[pickedNames.length - 1]
+        : state.waypoints[state.waypoints.length - 1]?.element);
+    const chainLabel = pickedNames.length >= 2 ? pickedNames.join(" → ") : "";
+    const blockedByViewpoint = state.lastPathSearchStatus === "BLOCKED_BY_VIEWPOINT";
+    const vpFailCtx = getStrictViewpointFailureContext(narrFrom, narrTo);
+    const deadEndHtml =
+      blockedByViewpoint && typeof renderViewpointBlockedPanel === "function"
+        ? renderViewpointBlockedPanel({
+            viewpointKey: state.viewpoint || null,
+            viewpointName: VIEWPOINTS?.[state.viewpoint]?.name || state.viewpoint || "current",
+          })
+        : typeof renderNoPathEducationalPanel === "function"
+        ? renderNoPathEducationalPanel(narrFrom, narrTo, {
+            includeDerived: !!state.includeDerived,
+            allowAssociationFallback: !!state.allowAssociationFallback,
+            selectionMode: state.selectionMode === "ordered" ? "ordered" : "set",
+            pickedCount: pickedNames.length,
+            waypointChainLabel: state.selectionMode === "ordered" ? chainLabel : "",
+            failingSegmentOrdinal: fail ? fail.index + 1 : undefined,
+            segmentTotal: segments.length,
+            viewpointStrict: vpFailCtx.strict,
+            viewpointName: vpFailCtx.strict ? vpFailCtx.name : "",
+            viewpointFromInGraph: !vpFailCtx.strict || vpFailCtx.fromInGraph,
+            viewpointToInGraph: !vpFailCtx.strict || vpFailCtx.toInGraph,
+          })
+        : `<div class="path-dead-end path-dead-end--fallback" role="status"><div class="path-dead-end__icon-wrap" aria-hidden="true"><svg class="path-dead-end__svg" width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.5"/><circle cx="32" cy="32" r="4" fill="currentColor" opacity="0.35"/><path d="M32 8 L36 28 L32 32 L28 28 Z" fill="currentColor" opacity="0.55"/></svg></div><p class="path-dead-end__fallback">No valid path found within the current settings.</p></div>`;
+    showDiagramNoPathOverlay(deadEndHtml);
     const diagnostics =
       typeof renderPathSearchDiagnostics === "function"
         ? renderPathSearchDiagnostics(buildPathSearchReportPayload(), state.pathFailureHints)
         : typeof renderPathFailureSuggestions === "function"
           ? renderPathFailureSuggestions(state.pathFailureHints)
           : "";
-    explainEl.innerHTML = explainNoPath(fromEl, toEl, "unknown") + diagnostics;
+    setExplanationRouteColumn("");
+    explainEl.innerHTML =
+      explainNoPath(narrFrom, narrTo, blockedByViewpoint ? "viewpoint" : "unknown", {
+        selectionMode: state.selectionMode === "ordered" ? "ordered" : "set",
+        waypointChain: pickedNames,
+        failingSegmentIndex: fail?.index ?? null,
+        totalSegments: segments.length,
+      }) + diagnostics;
 
-    openMetamodelModal();
-
-    const fromRole = ELEMENTS[fromEl]?.metamodelRole;
-    const toRole   = ELEMENTS[toEl]?.metamodelRole;
+    const fromRole = ELEMENTS[narrFrom]?.metamodelRole;
+    const toRole   = ELEMENTS[narrTo]?.metamodelRole;
     const fromKey  = getMetamodelBoxKey(fromRole);
     const toKey    = getMetamodelBoxKey(toRole);
     if (fromKey || toKey) {
       highlightMetamodel(fromKey, toKey, false);
     }
 
-    const ruleKey = getAspectRuleKey(fromEl, toEl);
+    const ruleKey = getAspectRuleKey(narrFrom, narrTo);
     const aspectRule = ASPECT_RULES[ruleKey];
-    const layerRuleKey = getLayerRuleKey(fromEl, toEl);
+    const layerRuleKey = getLayerRuleKey(narrFrom, narrTo);
     const layerRule = LAYER_RULES[layerRuleKey];
     const aspectOk = !aspectRule || aspectRule.valid !== false;
     const layerOk = !layerRule || layerRule.valid !== false;
     const ok = aspectOk && layerOk;
 
     setMetamodelStatus(`
-      <div><strong>No valid path:</strong> ${fromEl} → ${toEl}</div>
+      <div><strong>No valid path:</strong> ${narrFrom} → ${narrTo}${fail && state.selectionMode === "ordered" ? ` <span style="color:var(--text-3)">(first failing segment)</span>` : ""}</div>
       <div style="margin-top:6px">
         <span class="${ok ? 'good' : 'bad'}">${ok ? 'Metamodel allows it; the graph settings blocked it.' : 'Metamodel forbids it.'}</span>
         <span style="color:var(--text-3)"> · Aspect: ${ruleKey}${aspectRule?.label ? ` (${aspectRule.label})` : ''} · Layer: ${layerRuleKey}</span>
@@ -3131,40 +6029,44 @@ function renderResults() {
 
     const fk = getMetamodelBoxKey(fromRole);
     const tk = getMetamodelBoxKey(toRole);
-    renderMetamodelRoleContents(fk, tk, fromEl, toEl);
+    renderMetamodelRoleContents(fk, tk, narrFrom, narrTo);
+
+    if (!blockedByViewpoint && state._pathFailModalShownForRunId !== state._findRunId) {
+      state._pathFailModalShownForRunId = state._findRunId;
+      requestAnimationFrame(() => {
+        showPathFailureModal({
+          narrFrom,
+          narrTo,
+          fail,
+          chainStr: chainLabel,
+          segmentCount: segments.length,
+          selectionMode: state.selectionMode,
+          pathHints: state.pathFailureHints,
+          includeDerived: state.includeDerived,
+          allowAssociationFallback: state.allowAssociationFallback,
+        });
+      });
+    }
     return;
   }
 
+  hideDiagramNoPathOverlay();
+  hidePathFailureModal();
+  if (viewportWrap) viewportWrap.hidden = false;
+
   sanitizeUserChoicesForActivePath();
 
-  // Build path tabs from the first segment's paths
-  // (all segments are traversed; tabs cycle through alternative 0–4)
-  const maxAlts = Math.max(...segments.map(s => s.paths.length));
+  // Build contextual perspective groups from path alternatives.
   emptyEl.style.display = 'none';
+  updateDiagramEmptyChrome();
 
-  // Render tabs
-  if (maxAlts > 1) {
-    tabsEl.style.display = 'flex';
-    tabsEl.innerHTML = '';
-    tabsEl.title =
-      maxAlts > 2 ? "Several path options — pick a tab to compare routes" : "";
-    for (let i = 0; i < maxAlts; i++) {
-      const hops = countHops(segments, i);
-      const tab  = document.createElement('button');
-      tab.type = "button";
-      tab.className = 'path-tab' + (i === pathIdx ? ' active' : '');
-      tab.innerHTML = `Path ${i + 1} <span class="hop-badge">${hops} hop${hops !== 1 ? 's' : ''}</span>`;
-      tab.onclick = () => selectPath(i);
-      tabsEl.appendChild(tab);
-    }
-    const activeTab = tabsEl.querySelector(".path-tab.active");
-    requestAnimationFrame(() => {
-      activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    });
-  } else {
-    tabsEl.style.display = 'none';
-    tabsEl.title = "";
+  const clustered = renderPerspectiveAccordion(tabsEl, segments, pathIdx);
+  state.pathClusters = clustered;
+  const pathTabsHelpEl = document.getElementById("path-tabs-help");
+  if (pathTabsHelpEl) {
+    pathTabsHelpEl.hidden = tabsEl.style.display === "none";
   }
+  const activePathMeta = clustered?.byPathIndex?.[String(pathIdx)] || null;
 
   // Render diagram
   try {
@@ -3181,30 +6083,43 @@ function renderResults() {
     resetDiagramPanContext();
     resetDiagramView();
   }
-  // Render explanation
-  const autoOrderedNote =
+  // Render explanation (connect-set routing math + UCS details at bottom — see buildConnectSetTechHtml)
+  const connectSetRoutingFooter =
     state.selectionMode === "set" &&
     state.lastAutoOrdered &&
     state.lastAutoOrderResult?.length &&
     state.lastAutoOrderMetrics
-      ? `<div class="explain-waypoint-note connect-set-note" style="margin-bottom:12px">${buildConnectSetTechHtml(
+      ? `<div class="explain-routing-math-footer" role="note">${buildConnectSetTechHtml(
           state.lastAutoOrderMetrics,
           segments,
           pathIdx,
           state.lastAutoOrderResult
         )}</div>`
       : "";
-  const fallbackBanner = state.lastPathIsFallback
-    ? `<div class="path-fallback-banner" role="status">⚠️ Fallback Path Used — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship.</div>`
-    : "";
+  const pathResultBanners = buildPathResultBanners();
+  const preserveExplainUi = !!state._preserveExplainUiOnNextRender;
+  state._preserveExplainUiOnNextRender = false;
+  const explainUiSnapshot = preserveExplainUi && explainEl ? captureExplainUiState() : null;
   try {
-    explainEl.innerHTML = autoOrderedNote + fallbackBanner + explainPath(segments, pathIdx, { constrained: state.selectionMode === 'ordered' });
+    const explained = explainPath(segments, pathIdx, {
+      constrained: state.selectionMode === "ordered",
+      perspectiveMeta: activePathMeta,
+      perspectiveTitles: getPerspectiveTitlesForDomain(),
+      domainContext: state.domainContext,
+      rigorPreset: state.searchRigorPreset,
+    });
+    setExplanationRouteColumn(explained.routeColumn);
+    explainEl.innerHTML = pathResultBanners + explained.detailColumn + connectSetRoutingFooter;
   } catch (e) {
     console.error('[NAV] explainPath failed', e);
-    explainEl.innerHTML = autoOrderedNote + `
+    setExplanationRouteColumn("");
+    explainEl.innerHTML =
+      pathResultBanners +
+      `
       <div style="color:var(--invalid);padding:12px;font-size:13px">
         Error rendering explanation. Check console for details.
-      </div>`;
+      </div>` +
+      connectSetRoutingFooter;
   }
 
   // Highlight metamodel
@@ -3213,6 +6128,8 @@ function renderResults() {
 
   // Wire explanation hover to highlight the corresponding hop everywhere.
   wireHopInteractions();
+  if (explainUiSnapshot) restoreExplainUiState(explainUiSnapshot);
+  ensureDefinitionsRelationshipDetailsClosed(explainEl);
 }
 
 function clearHopHighlights() {
@@ -3227,14 +6144,21 @@ function setMetamodelStatus(html) {
   el.innerHTML = html || 'Hover a hop (diagram arrow or Step N) to see what it means here.';
 }
 
+function isMetamodelModalOpen() {
+  const m = document.getElementById('mm-modal');
+  return !!m && m.getAttribute('aria-hidden') === 'false';
+}
+
 window.expandHopDetails = function expandHopDetails(hopIdx, opts = {}) {
   if (hopIdx == null || hopIdx === '') return;
   const container = document.getElementById('explanation-content');
   if (!container) return;
   const hopEl = container.querySelector(`[data-hop="${hopIdx}"]`);
   if (!hopEl) return;
-  const details = hopEl.querySelector('details.explain-details');
-  if (details) details.open = true;
+  const hopOuter = hopEl.closest("details.explain-hop-justification");
+  if (hopOuter) hopOuter.open = true;
+  // Do not open details.explain-details (formal metamodel / definitions) here — only the user toggling
+  // that summary should expand it; otherwise diagram/hop clicks feel like the glossary opens on its own.
   const block = hopEl.closest('.explain-edge-block');
   if (block && opts.scroll === true) {
     block.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -3382,6 +6306,9 @@ function highlightHop(hopIdx) {
   });
 
   // Metamodel highlight
+  // If the metamodel modal is open, we treat it as “locked” to the user’s explicit focus
+  // (via the “Show on metamodel” button) and avoid hover-driven overrides.
+  if (isMetamodelModalOpen()) return;
   const fromEl = flat[hopIdx - 1]?.element;
   const toEl   = flat[hopIdx]?.element;
   const fromKey = getMetamodelBoxKey(ELEMENTS[fromEl]?.metamodelRole);
@@ -3482,9 +6409,16 @@ function wireHopInteractions() {
       if (!btn) return;
       e.preventDefault();
       e.stopPropagation();
-      const fromRaw = btn.getAttribute('data-mm-from');
-      const toRaw   = btn.getAttribute('data-mm-to');
+      // Prefer the hop container’s from/to (source of truth for what the user is viewing).
+      // This avoids mismatches if a button’s data-* becomes stale across rerenders.
+      const hopHost = btn.closest?.('[data-hop][data-from][data-to]');
+      const fromHostRaw = hopHost?.getAttribute?.('data-from') ?? null;
+      const toHostRaw   = hopHost?.getAttribute?.('data-to') ?? null;
+
+      const fromRaw = fromHostRaw || btn.getAttribute('data-mm-from');
+      const toRaw   = toHostRaw || btn.getAttribute('data-mm-to');
       const relRaw  = btn.getAttribute('data-mm-rel');
+
       const fromEl = fromRaw ? decodeURIComponent(fromRaw) : null;
       const toEl   = toRaw ? decodeURIComponent(toRaw) : null;
       if (fromEl && toEl && window.focusMetamodel) window.focusMetamodel(fromEl, toEl);
@@ -3492,9 +6426,10 @@ function wireHopInteractions() {
       if (rel) {
         const status = document.getElementById('metamodel-status');
         if (status) {
-          // append badge if not already present
           const topLine = status.querySelector('div');
-          if (topLine && !topLine.querySelector('.mm-rel-badge')) {
+          if (topLine) {
+            // Replace (don’t “stick”) the relationship badge.
+            topLine.querySelectorAll('.mm-rel-badge').forEach(n => n.remove());
             const span = document.createElement('span');
             span.className = 'mm-rel-badge';
             span.textContent = rel;
@@ -3509,8 +6444,16 @@ function wireHopInteractions() {
     const hopIdx = Number(el.getAttribute('data-hop'));
     const block  = el.closest('.explain-edge-block');
     if (!block) return;
-    block.onmouseenter = () => { clearHopHighlights(); highlightHop(hopIdx); };
-    block.onmouseleave = () => { clearHopHighlights(); updateMetamodelHighlight(state.segments, state.activePathIdx ?? 0); };
+    block.onmouseenter = () => {
+      if (isMetamodelModalOpen()) return;
+      clearHopHighlights();
+      highlightHop(hopIdx);
+    };
+    block.onmouseleave = () => {
+      if (isMetamodelModalOpen()) return;
+      clearHopHighlights();
+      updateMetamodelHighlight(state.segments, state.activePathIdx ?? 0);
+    };
     block.onclick = (e) => {
       clearHopHighlights();
       highlightHop(hopIdx);
@@ -3519,11 +6462,18 @@ function wireHopInteractions() {
       const clickEl = e.target instanceof Element ? e.target : e.target?.parentElement;
       if (clickEl?.closest?.(".el-info-trigger")) return;
       if (clickEl?.closest?.("details.explain-details > summary")) return;
+      if (clickEl?.closest?.("details.explain-hop-justification > summary")) return;
       requestAnimationFrame(() => {
         if (typeof window.expandHopDetails === 'function') window.expandHopDetails(hopIdx, { scroll: true });
       });
     };
   });
+
+  if (typeof window.initExplainBadgeTips === "function") {
+    window.initExplainBadgeTips();
+  }
+
+  wireDefinitionsRelationshipDisclosures(container);
 }
 
 function countHops(segments, pathIdx) {
@@ -3538,7 +6488,7 @@ function countHops(segments, pathIdx) {
 function selectPath(idx) {
   state.activePathIdx = idx;
   sanitizeUserChoicesForActivePath();
-  renderResults();
+  window.dispatch({ type: "RENDER_RESULTS" });
   schedulePersistSession();
 }
 
@@ -3567,6 +6517,9 @@ function doHighlight(fromKey, toKey, valid) {
 }
 
 function updateMetamodelHighlight(segments, pathIdx) {
+  // While the modal is open, keep the explicit focus (don’t auto-jump back to the
+  // “default” hop on mouseleave / rerender).
+  if (isMetamodelModalOpen()) return;
   const flatSteps = flattenSegments(segments, pathIdx);
   if (flatSteps.length < 2) {
     state.mmLast = null;
@@ -3581,6 +6534,9 @@ function updateMetamodelHighlight(segments, pathIdx) {
   let hopIdx = 1;
   let appendixRel = "";
 
+  // Prefer the first path hop that maps to at least one §4.2 core box. Requiring both
+  // endpoints (old pk && ck) skipped hops like Business Process → Product (composite
+  // has no box) and incorrectly defaulted to a later hop — e.g. Technology Collaboration.
   for (let i = 1; i < flatSteps.length; i++) {
     const prev = flatSteps[i - 1].element;
     const curr = flatSteps[i].element;
@@ -3588,15 +6544,28 @@ function updateMetamodelHighlight(segments, pathIdx) {
     const cr = ELEMENTS[curr]?.metamodelRole;
     const pk = getMetamodelBoxKey(pr);
     const ck = getMetamodelBoxKey(cr);
-    if (pk && ck) {
+    if (pk || ck) {
       fromRole = pk;
       toRole = ck;
       fromEl = prev;
       toEl = curr;
       hopIdx = i;
-      const codes = flatSteps[i]?.codes ?? [];
-      const code0 = codes[0] ? String(codes[0]).toUpperCase() : null;
-      appendixRel = code0 ? (RELATIONSHIPS?.[code0]?.name ?? code0) : "";
+      const stepAtHop = flatSteps[i];
+      const codes = stepAtHop?.codes ?? [];
+      const codeList = codes.map((c) => String(c).toUpperCase());
+      const multiHop = codeList.length > 1;
+      const edgeCommitted =
+        typeof window.edgeChoiceCommittedForHop === "function"
+          ? window.edgeChoiceCommittedForHop(i, codes)
+          : true;
+      const primaryCodeRaw =
+        multiHop && !edgeCommitted
+          ? null
+          : typeof window.resolvedRelationshipCodeForHop === "function"
+            ? window.resolvedRelationshipCodeForHop(stepAtHop, i)
+            : codeList[0] ?? null;
+      const primaryCode = primaryCodeRaw != null ? String(primaryCodeRaw).toUpperCase() : null;
+      appendixRel = primaryCode ? (RELATIONSHIPS?.[primaryCode]?.name ?? primaryCode) : "";
       break;
     }
   }
@@ -3660,7 +6629,12 @@ function sanitizeUserChoicesForActivePath() {
     const step = flat[i];
     const raw = next[k];
     if (raw == null || raw === "") continue;
-    if (!step?.codes?.some((c) => String(c).toUpperCase() === String(raw).toUpperCase())) {
+    const codes = step?.codes || [];
+    const validPicker =
+      codes.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+        ? window.relationshipPickerCodesFromMatrixCodes(codes)
+        : codes;
+    if (!validPicker.some((c) => String(c).toUpperCase() === String(raw).toUpperCase())) {
       delete next[k];
       changed = true;
     }
@@ -3669,6 +6643,7 @@ function sanitizeUserChoicesForActivePath() {
 }
 
 function showError(msg) {
+  setExplanationRouteColumn("");
   document.getElementById('explanation-content').innerHTML =
     `<div style="color:var(--invalid);padding:12px;font-size:13px">Error: ${msg}</div>`;
 }
@@ -3709,9 +6684,35 @@ document.addEventListener('click', (e) => {
   if (el.closest('[data-feedback-close="1"]')) closeFeedbackModal();
   if (el.closest('[data-el-close="1"]')) closeElementInfoModal();
   if (el.closest('[data-mm-close="1"]')) closeMetamodelModal();
+  if (el.closest('[data-path-labels-close="1"]')) closePathLabelsModal();
+  if (el.closest('[data-theme-splash-close="1"]')) closeThemeSplashModal();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  const ts = document.getElementById('theme-splash-modal');
+  if (ts && ts.style.display === 'flex') {
+    closeThemeSplashModal();
+    e.preventDefault();
+    return;
+  }
+  const pl = document.getElementById('path-labels-modal');
+  if (pl && pl.getAttribute('aria-hidden') === 'false') {
+    closePathLabelsModal();
+    e.preventDefault();
+    return;
+  }
+  const sd = document.getElementById('search-depth-guide-modal');
+  if (sd && sd.style.display === 'flex') {
+    closeSearchDepthGuideModal();
+    e.preventDefault();
+    return;
+  }
+  const rg = document.getElementById('rigor-guide-modal');
+  if (rg && rg.style.display === 'flex') {
+    closeRigorGuideModal();
+    e.preventDefault();
+    return;
+  }
   const fb = document.getElementById('feedback-modal');
   if (fb && fb.style.display === 'flex') {
     closeFeedbackModal();
@@ -3727,35 +6728,9 @@ document.addEventListener('keydown', (e) => {
   closeMetamodelModal();
 });
 
-// Global delegated handler for “Show on metamodel” buttons.
-// (More reliable than relying on per-render wiring.)
-document.addEventListener('click', (e) => {
-  const el = e.target;
-  if (!(el instanceof Element)) return;
-  const btn = el.closest('.mm-jump');
-  if (!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-
-  const fromRaw = btn.getAttribute('data-mm-from');
-  const toRaw   = btn.getAttribute('data-mm-to');
-  const relRaw  = btn.getAttribute('data-mm-rel');
-  const fromEl = fromRaw ? decodeURIComponent(fromRaw) : null;
-  const toEl   = toRaw ? decodeURIComponent(toRaw) : null;
-  const rel    = relRaw ? decodeURIComponent(relRaw) : null;
-
-  if (fromEl && toEl && window.focusMetamodel) window.focusMetamodel(fromEl, toEl);
-  if (rel) {
-    const status = document.getElementById('metamodel-status');
-    const topLine = status?.querySelector?.('div');
-    if (topLine && !topLine.querySelector('.mm-rel-badge')) {
-      const span = document.createElement('span');
-      span.className = 'mm-rel-badge';
-      span.textContent = rel;
-      topLine.appendChild(span);
-    }
-  }
-}, true);
+// Note: “Show on metamodel” is handled by the delegated handler wired to
+// `#explanation-content` in `wireHopInteractions()`. Keeping a single handler
+// prevents stale or “sticky” focus when the explanation rerenders.
 
 // Element info chips (path explanation, element modal neighbor lists, etc.)
 document.addEventListener(
@@ -3777,12 +6752,14 @@ window.toggleFullScreen = function() {
   const diagramArea = document.getElementById('diagram-area');
   
   if (!document.fullscreenElement) {
+    trackEvent("toggle_fullscreen", { enabled: true });
     diagramArea.requestFullscreen().catch(err => {
       console.error(`Error attempting to enable fullscreen: ${err.message}`);
     });
     // Add a temporary white background so it doesn't go transparent black in fullscreen
     diagramArea.style.backgroundColor = "var(--surface)"; 
   } else {
+    trackEvent("toggle_fullscreen", { enabled: false });
     document.exitFullscreen();
     diagramArea.style.backgroundColor = ""; 
   }
@@ -3794,6 +6771,11 @@ window.downloadDiagram = function() {
     alert("No diagram to download!");
     return;
   }
+
+  trackEvent("download_diagram", {
+    waypointCount: (state.waypoints || []).map((w) => w && w.element).filter(Boolean).length,
+    mode: state.mode,
+  });
 
   // Clone the SVG so we don't accidentally modify the live DOM
   const clone = svg.cloneNode(true);
@@ -3831,7 +6813,15 @@ window.toggleBadges = function() {
     btn.textContent = state.showBadges ? "Hide #" : "Show #";
     btn.title = state.showBadges ? "Hide hop numbers on arrows" : "Show hop numbers on arrows";
   }
-  if (state.segments) renderResults();
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+  schedulePersistSession();
+};
+
+window.onCompositeSubsToggle = function onCompositeSubsToggle() {
+  const cb = document.getElementById("toggle-composite-subs");
+  const next = cb ? !!cb.checked : true;
+  state.showCompositeSubs = next;
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
   schedulePersistSession();
 };
 
@@ -3839,10 +6829,10 @@ window.toggleBadges = function() {
 window.setEdgeChoice = function(hopIndex, code) {
   console.log(`[DECISION] Hop ${hopIndex} set to ${code}`);
   window.state.userChoices[hopIndex] = code;
-  
-  // CRITICAL: We must re-run the render logic to update the SVG and Explanation
+  state._preserveExplainUiOnNextRender = true;
+  // Re-run render to update the diagram and explanation; accordions stay open via capture/restore.
   if (window.state.segments) {
-    renderResults(); 
+    window.dispatch({ type: "RENDER_RESULTS" });
   }
   schedulePersistSession();
 };

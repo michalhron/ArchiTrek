@@ -4055,16 +4055,55 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 }
 
 .app-layout.layout-sidebar #panel-resize-v {
-  flex: 0 0 6px;
-  width: 6px;
+  /* Match .results-split-handle in vertical (diagram | explanation) layout */
+  flex: 0 0 10px;
+  width: 10px;
   min-width: 0;
   align-self: stretch;
   position: relative;
   margin: 0;
   overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(
+    180deg,
+    rgba(45, 95, 138, 0.12) 0%,
+    rgba(45, 95, 138, 0.22) 45%,
+    rgba(45, 95, 138, 0.12) 100%
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  z-index: 40;
   transition: flex-basis 0.28s cubic-bezier(0.32, 0.72, 0, 1),
     width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
     opacity 0.2s ease;
+}
+
+.app-layout.layout-sidebar #panel-resize-v::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: rgba(45, 95, 138, 0.35);
+  pointer-events: none;
+}
+
+.app-layout.layout-sidebar #panel-resize-v:hover,
+.app-layout.layout-sidebar #panel-resize-v:focus-visible {
+  background: linear-gradient(
+    180deg,
+    rgba(45, 95, 138, 0.16) 0%,
+    rgba(45, 95, 138, 0.3) 45%,
+    rgba(45, 95, 138, 0.16) 100%
+  );
+  outline: none;
+}
+
+.app-layout.layout-sidebar #panel-resize-v:hover::after,
+.app-layout.layout-sidebar #panel-resize-v:focus-visible::after {
+  background: rgba(45, 95, 138, 0.48);
 }
 
 .app-layout.layout-sidebar.panel-collapsed #panel-resize-v {
@@ -4183,7 +4222,7 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 
 .panel-resize-handle--vertical {
   cursor: col-resize;
-  width: 6px;
+  width: 10px;
   /* No negative margin: overlap into #results-panel sat under it (z-index 6) and stole pointer events */
   margin: 0;
   position: relative;
@@ -5295,6 +5334,23 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   width: 3px;
   height: 36px;
 }
+
+.results-panel.results-layout--side .results-split-handle:hover,
+.results-panel.results-layout--side .results-split-handle:focus-visible {
+  background: linear-gradient(
+    180deg,
+    rgba(45, 95, 138, 0.16) 0%,
+    rgba(45, 95, 138, 0.3) 45%,
+    rgba(45, 95, 138, 0.16) 100%
+  );
+  outline: none;
+}
+
+.results-panel.results-layout--side .results-split-handle:hover::after,
+.results-panel.results-layout--side .results-split-handle:focus-visible::after {
+  background: rgba(45, 95, 138, 0.48);
+}
+
 .results-panel.results-layout--side .results-lower {
   flex: 0 0 var(--results-side-pct);
   min-width: 200px;

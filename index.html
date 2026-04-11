@@ -18,7 +18,25 @@
   else document.head.insertBefore(b, document.head.firstChild);
 })();
 </script>
-<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"/>
+<script>
+(function () {
+  /* upgrade-insecure-requests breaks plain-HTTP local dev (CSS/JS fetch as https://127.0.0.1/... and fail). */
+  var h = (location.hostname || "").toLowerCase();
+  var isLocal =
+    h === "" ||
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "[::1]" ||
+    h === "::1" ||
+    h.endsWith(".localhost");
+  if (!isLocal) {
+    var m = document.createElement("meta");
+    m.httpEquiv = "Content-Security-Policy";
+    m.content = "upgrade-insecure-requests";
+    document.head.appendChild(m);
+  }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <script>
 (function () {

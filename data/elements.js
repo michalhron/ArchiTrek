@@ -36,11 +36,11 @@ const ELEMENT_DEFINITIONS = {
     section: "§6.3.2", aspect: "Motivation",
   },
   "Principle": {
-    definition: "Represents a statement of intent defining a general property that applies to any system in a certain context.",
+    definition: "Represents intent expressed as a general property that applies to any system in a certain context.",
     section: "§6.3.3", aspect: "Motivation",
   },
   "Requirement": {
-    definition: "Represents a statement of need defining a property that applies to a specific system as described by the architecture.",
+    definition: "Represents need expressed as a property that applies to the specific system described by the architecture.",
     section: "§6.3.4", aspect: "Motivation",
   },
   "Constraint": {
@@ -153,7 +153,7 @@ const ELEMENT_DEFINITIONS = {
     section: "§9.2.2", aspect: "Behavior",
   },
   "Application Process": {
-    definition: "Represents a sequence of application behaviors that achieves a specific result.",
+    definition: "Represents a sequence of application behaviors in the application layer that achieves a specific result.",
     section: "§9.2.3", aspect: "Behavior",
   },
   "Application Event": {
@@ -204,7 +204,7 @@ const ELEMENT_DEFINITIONS = {
     section: "§10.2.1", aspect: "Behavior",
   },
   "Technology Process": {
-    definition: "Represents a sequence of technology behaviors that achieves a specific result.",
+    definition: "Represents a sequence of technology behaviors in the technology layer that achieves a specific result.",
     section: "§10.2.2", aspect: "Behavior",
   },
   "Technology Interaction": {

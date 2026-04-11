@@ -2213,9 +2213,31 @@ function reverseRelationshipCodesForDirectedPair(fromElement, toElement) {
 /**
  * {@code userChoices[hopIndex]} can be stale (different path alternative, session restore, etc.).
  * Only accept a stored choice if it appears in this hop's picker list (matrix codes, plus O when multi-option).
+ * When {@code fromElement} is omitted, derives path endpoints from {@code window.state} so flipped hops
+ * validate against the same Appendix B row as {@link drawArrow}.
  */
-function resolvedRelationshipCodeForHop(step, hopIndex) {
-  const matrixCodes = step?.codes?.length ? step.codes : [];
+function resolvedRelationshipCodeForHop(step, hopIndex, fromElement, edgeConstraints) {
+  let fromEl = fromElement;
+  let ec = edgeConstraints;
+  if (arguments.length < 3 && hopIndex != null && typeof window !== "undefined" && window.state?.segments) {
+    const flat = flattenSegments(window.state.segments, window.state.activePathIdx ?? 0);
+    const ix = Number(hopIndex);
+    if (Number.isInteger(ix) && ix >= 1 && ix < flat.length) {
+      fromEl = flat[ix - 1]?.element;
+      if (ec === undefined) ec = window.state.edgeConstraints;
+    }
+  } else if (arguments.length >= 3 && ec === undefined && typeof window !== "undefined") {
+    ec = window.state?.edgeConstraints;
+  }
+
+  const pathCodes = Array.isArray(step?.codes) ? step.codes : [];
+  const toEl = String(step?.element || "").trim();
+  const fromStr = fromEl != null ? String(fromEl).trim() : "";
+  const matrixCodes =
+    fromStr && toEl
+      ? matrixCodesForPathAppendixBRow(fromStr, toEl, pathCodes, ec)
+      : pathCodes.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+
   const pickerCodes =
     matrixCodes.length > 1 ? relationshipPickerCodesFromMatrixCodes(matrixCodes) : matrixCodes;
   const list = pickerCodes.map((c) => String(c).toUpperCase());
@@ -2243,8 +2265,15 @@ function edgeChoiceCommittedForHop(hopIndex, codesList) {
 /**
  * Minimum horizontal gap between swimlane columns so the widest hop label fits in the inter-node channel.
  */
-function estimateSwimlaneHopLabelWidthPx(step, hopIndex) {
-  const codesList = step?.codes?.length ? step.codes : [];
+function estimateSwimlaneHopLabelWidthPx(step, hopIndex, flatSteps = null, edgeConstraints = null) {
+  const ec =
+    edgeConstraints ?? (typeof window !== "undefined" ? window.state?.edgeConstraints : null);
+  const codesList =
+    flatSteps && hopIndex != null
+      ? appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, ec)
+      : step?.codes?.length
+        ? step.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+        : [];
   if (!codesList.length) return SWIMLANE_COMPACT_COL_GAP;
   const choiceUndecided =
     hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
@@ -2281,6 +2310,47 @@ function hasDirectedEdgeConstraint(edgeConstraints, source, target, type = "FORC
     if (c.sourceId === source && c.targetId === target) return true;
   }
   return false;
+}
+
+/**
+ * Appendix B merged relationship letters for a path hop, respecting {@code FORCED_DIRECTION} when
+ * it reverses the reading relative to waypoint traversal (same basis as {@link drawArrow}).
+ */
+function matrixCodesForPathAppendixBRow(pathFromEl, pathToEl, pathStepCodes, edgeConstraints) {
+  const list = Array.isArray(pathStepCodes)
+    ? pathStepCodes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+    : [];
+  const from = String(pathFromEl || "").trim();
+  const to = String(pathToEl || "").trim();
+  if (!from || !to || from === to) return list;
+  const ec = Array.isArray(edgeConstraints) ? edgeConstraints : [];
+  if (
+    hasDirectedEdgeConstraint(ec, to, from, "FORCED_DIRECTION") &&
+    !hasDirectedEdgeConstraint(ec, from, to, "FORCED_DIRECTION")
+  ) {
+    if (typeof mergeMatrixRowForPair === "function") {
+      const row = mergeMatrixRowForPair(to, from, true);
+      if (row?.merged?.length) {
+        return row.merged.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+      }
+    }
+  }
+  return list;
+}
+
+function appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, edgeConstraints) {
+  const i = Number(hopIndex);
+  if (!Number.isInteger(i) || i < 1 || !Array.isArray(flatSteps) || i >= flatSteps.length) return [];
+  const prevEl = String(flatSteps[i - 1]?.element || "").trim();
+  const currEl = String(flatSteps[i]?.element || "").trim();
+  const pathCodes = Array.isArray(flatSteps[i]?.codes) ? flatSteps[i].codes : [];
+  return matrixCodesForPathAppendixBRow(prevEl, currEl, pathCodes, edgeConstraints);
+}
+
+/** Like {@link edgeChoiceCommittedForHop} but uses flattened path steps (respects direction flip). */
+function edgeChoiceCommittedForPathHop(hopIndex, flatSteps, edgeConstraints) {
+  const codesList = appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, edgeConstraints);
+  return edgeChoiceCommittedForHop(hopIndex, codesList);
 }
 
 /**
@@ -2411,18 +2481,26 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     !hasDirectedEdgeConstraint(edgeConstraints, semanticFrom, semanticTo, "FORCED_DIRECTION");
 
   let codesList = codes && codes.length ? [...codes] : [];
+  /**
+   * Path segment codes (route order). {@code userChoices}, context menu, and sanitize all use this list.
+   * {@code codesList} may switch to the reversed matrix row when drawing a forced opposite direction so
+   * stroke geometry matches the constraint — do not use that list alone to validate user picks.
+   */
+  const codesForUserChoice = codesList.slice();
   if (reverseLayout && typeof mergeMatrixRowForPair === "function") {
     const row = mergeMatrixRowForPair(semanticTo, semanticFrom, true);
     if (row?.merged?.length) codesList = row.merged.map((c) => String(c).toUpperCase());
   }
 
   const choiceUndecided =
-    hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
+    hopIndex != null &&
+    codesForUserChoice.length > 1 &&
+    !edgeChoiceCommittedForHop(hopIndex, codesForUserChoice);
   /** No arrowheads until the user picks a code — path should meet ports without marker clearance gaps. */
   const markerTargetClr = choiceUndecided ? 0 : ARROW_MARKER_TARGET_CLEARANCE;
   const activeCode =
     hopIndex != null
-      ? resolvedRelationshipCodeForHop({ codes: codesList }, hopIndex)
+      ? resolvedRelationshipCodeForHop({ codes: codesForUserChoice }, hopIndex)
       : (codesList[0] ?? "O");
   const UPPER = activeCode.toUpperCase();
   const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
@@ -2805,7 +2883,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
 
   const labelLines = wrapLabel(
     choiceUndecided
-      ? describeRelCodesForDiagramLabel(codesList)
+      ? describeRelCodesForDiagramLabel(codesForUserChoice)
       : describeRelCodesForDiagramLabel([activeCode])
   );
   /** Relationship-type text on arrows only when "Relationship names" overlay is on, or when the hop is still ambiguous. */
@@ -2920,7 +2998,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
           const lines = displayRelLines ?? [];
           const approxTextW =
             lines.length === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-          const hasChoices = codesList.length > 1;
+          const hasChoices = codesForUserChoice.length > 1;
           const showHop = hopIndex != null && showHopNumbers;
           const hopBadgeR = showHop ? (hasChoices ? 9 : 7) : 0;
           const textStartW = showHop ? 2 * hopBadgeR + VERT_BADGE_NAME_GAP : 0;
@@ -2935,7 +3013,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         })();
   let labelY = (() => {
     if (inlineLongestHorizontal) {
-      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesForUserChoice);
       return inlineLongestHorizontal.midY - sh - 2 + nudgeY;
     }
     let ly = forLabelStraddle ? labelAlong + (showHopNumbers ? 0 : 4) : (y1 + y2) / 2;
@@ -2943,7 +3021,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     /** Horizontal hops: inline badge+name row; my is row center, placed just above the stroke. */
     if (!forLabelStraddle) {
       const yLine = (y1 + y2) / 2;
-      const stackHalfH = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      const stackHalfH = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesForUserChoice);
       const gapAboveStroke = 2;
       ly = yLine - stackHalfH - gapAboveStroke;
     }
@@ -2960,7 +3038,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       yLoL,
       yHiL,
       displayRelLines,
-      codesList,
+      codesForUserChoice,
       hopIndex,
       showHopNumbers,
     );
@@ -2999,7 +3077,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       forceBadgeCenterOffsetFromLineEast:
         forLabelStraddle && (sameColumnVertical || sameColumnOuterCShape) ? 15 : null,
       labelLines: displayRelLines,
-      codesList,
+      codesList: codesForUserChoice,
       hopIndex,
       showHopNumbers,
     });
@@ -3011,7 +3089,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast: null,
       labelLines: displayRelLines,
-      codesList,
+      codesList: codesForUserChoice,
       hopIndex,
       showHopNumbers,
     });
@@ -3038,7 +3116,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast,
       labelLines: displayRelLines,
-      codesList,
+      codesList: codesForUserChoice,
       hopIndex,
       showHopNumbers,
       obstacles: swimlaneLabelObstacles,
@@ -3053,7 +3131,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       yLoL,
       yHiL,
       displayRelLines,
-      codesList,
+      codesForUserChoice,
       hopIndex,
       showHopNumbers,
     );
@@ -3068,7 +3146,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     Math.abs(y1 - y2) < 0.5
   ) {
     const yLine = (y1 + y2) / 2;
-    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesForUserChoice);
     const targetY = yLine - sh - 2;
     labelY = clamp(labelY, targetY - 52, targetY + 52);
   }
@@ -3078,13 +3156,13 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    */
   if (!forLabelStraddle && Math.abs(y1 - y2) < 0.5) {
     const yLine = (y1 + y2) / 2;
-    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesForUserChoice);
     const minCenterY = yLine - EL_H / 2 + 2 + sh;
     if (labelY < minCenterY) labelY = minCenterY;
   }
 
   if (labelSpaceRegistry) {
-    const hasChoices = codesList.length > 1;
+    const hasChoices = codesForUserChoice.length > 1;
     const rawRect = forLabelStraddle
       ? estimateSwimlaneVertStraddleLabelRect({
           straddleAnchorX,
@@ -3094,7 +3172,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
           straddleLineStrokeX,
           forceBadgeCenterOffsetFromLineEast,
           labelLines: displayRelLines,
-          codesList,
+          codesList: codesForUserChoice,
           hopIndex,
           showHopNumbers,
         })
@@ -3125,7 +3203,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast,
       labelLines: displayRelLines,
-      codesList,
+      codesList: codesForUserChoice,
       hopIndex,
       showHopNumbers,
     });
@@ -3148,13 +3226,13 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         yLoL,
         yHiL,
         displayRelLines,
-        codesList,
+        codesForUserChoice,
         hopIndex,
         showHopNumbers,
       );
     } else if (!forLabelStraddle && Math.abs(y1 - y2) < 0.5) {
       const yLine = (y1 + y2) / 2;
-      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesForUserChoice);
       const targetY = yLine - sh - 2;
       const band = 40;
       labelY = clamp(labelY, targetY - band, targetY + band);
@@ -3171,7 +3249,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         badgeDisplayNumber,
         showHopNumbers,
         showFlipIcons: showFlipControls,
-        hasChoices: codesList.length > 1,
+        hasChoices: codesForUserChoice.length > 1,
         verticalStraddle: forLabelStraddle,
         straddleAnchorX: forLabelStraddle ? straddleAnchorX : null,
         straddleExtraX: forLabelStraddle ? straddleExtraX : 0,
@@ -3228,7 +3306,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         const fs = 8.5;
         const approxTextW =
           linesH.length === 0 ? 0 : Math.min(170, Math.max(48, linesH.join(" ").length * (fs * 0.55)));
-        const hasRelChoices = codesList.length > 1;
+        const hasRelChoices = codesForUserChoice.length > 1;
         const badgeR = hasRelChoices ? 9 : 7;
         const showHop = hopIndex != null && showHopNumbers;
         const textStart = showHop ? 2 * badgeR + VERT_BADGE_NAME_GAP : 0;
@@ -3768,6 +3846,7 @@ function renderVerticalCompactDiagram(
     }
   };
 
+  const nodeLayers = [];
   for (let i = 0; i < steps.length; i++) {
     const origIdx = sortedIndices[i];
     const illustrationSeed = `${illustrationPathKey}:${origIdx}:${steps[i].element}`;
@@ -3787,14 +3866,18 @@ function renderVerticalCompactDiagram(
       diagUpperOnWest: !incomingPreferWest,
     });
     elG.setAttribute("data-layout-bbox", `${positions[i].x},${positions[i].y},${EL_W},${EL_H}`);
-    svg.appendChild(elG);
+    nodeLayers.push(elG);
   }
   appendHopArrows(true, false);
   // Match horizontal swimlanes: draw aggregation illustration (subs + dashed connectors) above relationship strokes
-  // so orthogonal hops do not paint over the example part boxes.
-  svg.querySelectorAll(".composite-illustration").forEach((g) => {
-    svg.appendChild(g);
-  });
+  // so orthogonal hops do not paint over the example part boxes. (Search detached node trees — they are not on svg yet.)
+  const compositeLayers = [];
+  for (const elG of nodeLayers) {
+    elG.querySelectorAll(".composite-illustration").forEach((g) => compositeLayers.push(g));
+  }
+  for (const g of compositeLayers) svg.appendChild(g);
+  // Paint main element cards (incl. corner glyphs) above connector strokes but under hop labels / flip controls.
+  for (const elG of nodeLayers) svg.appendChild(elG);
   appendHopArrows(false, true);
 }
 
@@ -3830,6 +3913,7 @@ function renderCompact(svg, flatSteps, {
     }
     return out;
   })();
+  const nodeLayers = [];
   for (let i = 0; i < flatSteps.length; i++) {
     const illustrationSeed = `${illustrationPathKey}:${i}:${flatSteps[i].element}`;
     const elGroup = drawElement(flatSteps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
@@ -3838,7 +3922,7 @@ function renderCompact(svg, flatSteps, {
       hideCompositeIllustrations: shouldHideCompositeIllustrations(),
     });
     elGroup.setAttribute("data-layout-bbox", `${positions[i].x},${positions[i].y},${EL_W},${EL_H}`);
-    svg.appendChild(elGroup);
+    nodeLayers.push(elGroup);
   }
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
@@ -3861,6 +3945,7 @@ function renderCompact(svg, flatSteps, {
       edgeConstraints,
     }));
   }
+  for (const elGroup of nodeLayers) svg.appendChild(elGroup);
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
     if (!step.codes) continue;
@@ -4068,7 +4153,7 @@ function renderSwimlane(svg, flatSteps, {
     for (let hi = 1; hi < flatSteps.length; hi++) {
       const step = flatSteps[hi];
       if (!step?.codes) continue;
-      maxW = Math.max(maxW, estimateSwimlaneHopLabelWidthPx(step, hi));
+      maxW = Math.max(maxW, estimateSwimlaneHopLabelWidthPx(step, hi, flatSteps, edgeConstraints));
     }
     const gapPad = 28;
     compactColGapMin = Math.max(SWIMLANE_COMPACT_COL_GAP, maxW + gapPad);
@@ -4275,6 +4360,7 @@ function renderSwimlane(svg, flatSteps, {
     swimlaneCompositeSubsBelowDiagonal
   );
 
+  const nodeLayers = [];
   positions.forEach((pos, i) => {
     const illustrationSeed = `${illustrationPathKey}:${i}:${flatSteps[i].element}`;
     const swimlaneExcludeAdjacentIllustrationSubs = (() => {
@@ -4293,7 +4379,7 @@ function renderSwimlane(svg, flatSteps, {
       swimlaneExcludeAdjacentIllustrationSubs,
     });
     elG.setAttribute("data-layout-bbox", `${pos.x},${pos.y},${EL_W},${EL_H}`);
-    svg.appendChild(elG);
+    nodeLayers.push(elG);
   });
 
   const swimlaneEdgeLabelRegistry = createEdgeLabelSpaceRegistry();
@@ -4340,9 +4426,13 @@ function renderSwimlane(svg, flatSteps, {
 
   // After visible strokes, before hop labels: raise aggregation illustration groups so dashes sit above
   // relationship lines but below badges/labels (interactive pass follows).
-  svg.querySelectorAll(".composite-illustration").forEach((g) => {
-    svg.appendChild(g);
-  });
+  const compositeLayers = [];
+  for (const elG of nodeLayers) {
+    elG.querySelectorAll(".composite-illustration").forEach((g) => compositeLayers.push(g));
+  }
+  for (const g of compositeLayers) svg.appendChild(g);
+
+  for (const elG of nodeLayers) svg.appendChild(elG);
 
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
@@ -5574,13 +5664,17 @@ function segmentFirstHopIndices(segments, pathIndex = 0) {
 /**
  * Determines the dominant relationship type in a path for the summary text.
  */
-function characterisePath(flatSteps) {
+function characterisePath(flatSteps, edgeConstraints = null) {
+  const ec =
+    edgeConstraints ?? (typeof window !== "undefined" ? window.state?.edgeConstraints : null);
   const counts = {};
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
-    if (!step.codes || !step.codes.length) continue;
-    if (step.codes.length > 1 && !edgeChoiceCommittedForHop(i, step.codes)) continue;
-    const chosen = resolvedRelationshipCodeForHop(step, i);
+    const prev = flatSteps[i - 1];
+    const codes = appendixMatrixCodesForPathHopIndex(flatSteps, i, ec);
+    if (!codes.length) continue;
+    if (codes.length > 1 && !edgeChoiceCommittedForHop(i, codes)) continue;
+    const chosen = resolvedRelationshipCodeForHop(step, i, prev.element, ec);
     const u = String(chosen).toUpperCase();
     counts[u] = (counts[u] ?? 0) + 1;
   }
@@ -5727,7 +5821,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
           : "";
     const derivedCount = flatSteps.filter(s => s.isDirect === false).length;
     const transitions  = detectLayerTransitions(flatSteps);
-    const pattern      = characterisePath(flatSteps);
+    const pattern      = characterisePath(flatSteps, edgeConstraintsExplain);
     const routeParts   = [];
     const detailParts  = [];
 
@@ -6031,9 +6125,9 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const waypointBadge = isJunction
         ? `<span class="tag tag-waypoint explain-badge-tip" data-explain-tip="waypoint" tabindex="0" role="note" aria-label="Waypoint marker at step ${i}">Waypoint</span>`
         : "";
-      const safeCodes = curr.codes || [];
+      const safeCodes = appendixMatrixCodesForPathHopIndex(flatSteps, i, edgeConstraintsExplain);
       const hasChoices = safeCodes.length > 1;
-      const activeCode = resolvedRelationshipCodeForHop(curr, i);
+      const activeCode = resolvedRelationshipCodeForHop(curr, i, prev.element, edgeConstraintsExplain);
       const hopMetaForPedagogy = curr.semanticHop
         ? { ...curr.semanticHop, from: narrFrom, to: narrTo }
         : { from: narrFrom, to: narrTo };
@@ -6151,8 +6245,18 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       ...new Set(
         flatSteps.slice(1).flatMap((s, idx) => {
           const hopIdx = idx + 1;
-          if (s.codes?.length > 1 && !edgeChoiceCommittedForHop(hopIdx, s.codes)) return [];
-          return [String(resolvedRelationshipCodeForHop(s, hopIdx)).toUpperCase()];
+          const hopCodes = appendixMatrixCodesForPathHopIndex(flatSteps, hopIdx, edgeConstraintsExplain);
+          if (hopCodes.length > 1 && !edgeChoiceCommittedForHop(hopIdx, hopCodes)) return [];
+          return [
+            String(
+              resolvedRelationshipCodeForHop(
+                s,
+                hopIdx,
+                flatSteps[hopIdx - 1]?.element,
+                edgeConstraintsExplain
+              )
+            ).toUpperCase(),
+          ];
         })
       ),
     ];
@@ -7249,5 +7353,7 @@ function getMetamodelBoxKey(role) {
 
 window.resolvedRelationshipCodeForHop = resolvedRelationshipCodeForHop;
 window.edgeChoiceCommittedForHop = edgeChoiceCommittedForHop;
+window.appendixMatrixCodesForPathHopIndex = appendixMatrixCodesForPathHopIndex;
+window.edgeChoiceCommittedForPathHop = edgeChoiceCommittedForPathHop;
 window.relationshipPickerCodesFromMatrixCodes = relationshipPickerCodesFromMatrixCodes;
 window.reverseRelationshipCodesForDirectedPair = reverseRelationshipCodesForDirectedPair;

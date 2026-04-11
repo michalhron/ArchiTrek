@@ -5024,56 +5024,29 @@ function applyViewportCulling() {
   if (!vp || !svg) return;
   const margin = 160;
   const vpRect = vp.getBoundingClientRect();
-  const ctm = svg.getScreenCTM();
-  if (!ctm) return;
-  let inv;
-  try {
-    inv = ctm.inverse();
-  } catch (_) {
-    return;
-  }
-  const pt = svg.createSVGPoint();
-  const clientToSvgUser = (cx, cy) => {
-    pt.x = cx;
-    pt.y = cy;
-    return pt.matrixTransform(inv);
-  };
-  const ul = clientToSvgUser(vpRect.left - margin, vpRect.top - margin);
-  const br = clientToSvgUser(vpRect.right + margin, vpRect.bottom + margin);
-  const visMinX = Math.min(ul.x, br.x);
-  const visMaxX = Math.max(ul.x, br.x);
-  const visMinY = Math.min(ul.y, br.y);
-  const visMaxY = Math.max(ul.y, br.y);
+  const visLeft = vpRect.left - margin;
+  const visRight = vpRect.right + margin;
+  const visTop = vpRect.top - margin;
+  const visBottom = vpRect.bottom + margin;
 
   const elements = svg.querySelectorAll(".archimate-element");
   for (const el of elements) {
-    let x;
-    let y;
-    let w;
-    let h;
-    const raw = el.getAttribute("data-layout-bbox");
-    if (raw) {
-      const parts = raw.split(",").map((n) => Number(n));
-      if (parts.length === 4 && parts.every(Number.isFinite)) {
-        [x, y, w, h] = parts;
-      }
+    const prevInline = el.style.display;
+    if (prevInline === "none") el.style.display = "";
+    let r;
+    try {
+      r = el.getBoundingClientRect();
+    } catch (_) {
+      el.style.display = prevInline;
+      continue;
     }
-    if (x == null) {
-      try {
-        const b = el.getBBox();
-        x = b.x;
-        y = b.y;
-        w = b.width;
-        h = b.height;
-      } catch (_) {
-        continue;
-      }
-    }
+    const hasSize = r.width > 0.5 && r.height > 0.5;
     const visible =
-      x + w >= visMinX &&
-      x <= visMaxX &&
-      y + h >= visMinY &&
-      y <= visMaxY;
+      hasSize &&
+      r.right >= visLeft &&
+      r.left <= visRight &&
+      r.bottom >= visTop &&
+      r.top <= visBottom;
     el.style.display = visible ? "" : "none";
   }
 }
@@ -9594,7 +9567,10 @@ function highlightHop(hopIdx) {
   renderMetamodelRoleContents(fromKey, toKey, fromEl, toEl);
 
   const stepAtHop = flat[hopIdx];
-  const codes = stepAtHop?.codes ?? [];
+  const codes =
+    typeof window.appendixMatrixCodesForPathHopIndex === "function"
+      ? window.appendixMatrixCodesForPathHopIndex(flat, hopIdx, state.edgeConstraints)
+      : stepAtHop?.codes ?? [];
   const codeList = codes.map(c => String(c).toUpperCase());
   const multiHop = codeList.length > 1;
   const edgeCommitted =
@@ -9605,7 +9581,7 @@ function highlightHop(hopIdx) {
     multiHop && !edgeCommitted
       ? null
       : typeof window.resolvedRelationshipCodeForHop === "function"
-        ? window.resolvedRelationshipCodeForHop(stepAtHop, hopIdx)
+        ? window.resolvedRelationshipCodeForHop(stepAtHop, hopIdx, flat[hopIdx - 1]?.element, state.edgeConstraints)
         : codeList[0] ?? null;
   const primaryCode = primaryCodeRaw != null ? String(primaryCodeRaw).toUpperCase() : null;
   const relName = primaryCode
@@ -9829,7 +9805,10 @@ function updateMetamodelHighlight(segments, pathIdx) {
       toEl = curr;
       hopIdx = i;
       const stepAtHop = flatSteps[i];
-      const codes = stepAtHop?.codes ?? [];
+      const codes =
+        typeof window.appendixMatrixCodesForPathHopIndex === "function"
+          ? window.appendixMatrixCodesForPathHopIndex(flatSteps, i, state.edgeConstraints)
+          : stepAtHop?.codes ?? [];
       const codeList = codes.map((c) => String(c).toUpperCase());
       const multiHop = codeList.length > 1;
       const edgeCommitted =
@@ -9840,7 +9819,7 @@ function updateMetamodelHighlight(segments, pathIdx) {
         multiHop && !edgeCommitted
           ? null
           : typeof window.resolvedRelationshipCodeForHop === "function"
-            ? window.resolvedRelationshipCodeForHop(stepAtHop, i)
+            ? window.resolvedRelationshipCodeForHop(stepAtHop, i, flatSteps[i - 1]?.element, state.edgeConstraints)
             : codeList[0] ?? null;
       const primaryCode = primaryCodeRaw != null ? String(primaryCodeRaw).toUpperCase() : null;
       appendixRel = primaryCode ? (RELATIONSHIPS?.[primaryCode]?.name ?? primaryCode) : "";
@@ -9907,11 +9886,14 @@ function sanitizeUserChoicesForActivePath() {
     const step = flat[i];
     const raw = next[k];
     if (raw == null || raw === "") continue;
-    const codes = step?.codes || [];
+    const effective =
+      typeof window.appendixMatrixCodesForPathHopIndex === "function"
+        ? window.appendixMatrixCodesForPathHopIndex(flat, i, state.edgeConstraints)
+        : step?.codes || [];
     const validPicker =
-      codes.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
-        ? window.relationshipPickerCodesFromMatrixCodes(codes)
-        : codes;
+      effective.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+        ? window.relationshipPickerCodesFromMatrixCodes(effective)
+        : effective;
     if (!validPicker.some((c) => String(c).toUpperCase() === String(raw).toUpperCase())) {
       delete next[k];
       changed = true;
@@ -10391,13 +10373,22 @@ function initEdgeContextMenu() {
     const from = String(prev?.element || "").trim();
     const to = String(curr?.element || "").trim();
     if (!from || !to || from === to) return null;
-    const codes = Array.isArray(curr?.codes) ? curr.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean) : [];
+    const codes =
+      typeof window.appendixMatrixCodesForPathHopIndex === "function"
+        ? window.appendixMatrixCodesForPathHopIndex(flat, ix, state.edgeConstraints)
+        : Array.isArray(curr?.codes)
+          ? curr.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+          : [];
     const pickerCodes =
       codes.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
         ? window.relationshipPickerCodesFromMatrixCodes(codes)
         : codes;
     const currentCode = typeof window.resolvedRelationshipCodeForHop === "function"
-      ? String(window.resolvedRelationshipCodeForHop(curr, ix) || pickerCodes[0] || "").toUpperCase()
+      ? String(
+          window.resolvedRelationshipCodeForHop(curr, ix, from, state.edgeConstraints) ||
+            pickerCodes[0] ||
+            ""
+        ).toUpperCase()
       : String(pickerCodes[0] || "").toUpperCase();
     return {
       hopIndex: ix,
@@ -10726,9 +10717,11 @@ window.cycleEdgeChoice = function(hopIndex) {
   // Find the exact step data for this hop
   const flatSteps = flattenSegments(state.segments, state.activePathIdx ?? 0);
   const step = flatSteps[hopIndex];
-  if (!step || !step.codes || step.codes.length <= 1) return;
-
-  const matrixCodes = step.codes;
+  const matrixCodes =
+    typeof window.appendixMatrixCodesForPathHopIndex === "function"
+      ? window.appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, state.edgeConstraints)
+      : step?.codes;
+  if (!step || !matrixCodes || matrixCodes.length <= 1) return;
   const list =
     typeof window.relationshipPickerCodesFromMatrixCodes === "function"
       ? window.relationshipPickerCodesFromMatrixCodes(matrixCodes)

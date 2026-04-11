@@ -281,6 +281,8 @@ const VIEWPOINTS = {
       "Business Role", "Application Component",
       "Node", "Device",
       "Product", "Contract",
+      // Work Package, Deliverable, Plateau: realization / aggregation links to Requirement (Appendix B).
+      "Work Package", "Deliverable", "Plateau",
       "Location",
     ],
   },

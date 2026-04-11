@@ -214,7 +214,7 @@ body {
   background: var(--surface-2, #f8fafc);
 }
 .explain-segment-hops-lead {
-  margin: 0.65rem 0 0;
+  margin: 1.05rem 0 0;
   font-size: 0.625rem;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -309,7 +309,7 @@ body {
   user-select: none;
   line-height: 1;
 }
-/* Segment header & hop summary: destination shown as canonical ArchiMate name only (no second stacked chip). */
+/* Hop summary: optional plain canonical endpoint; segment header uses stacked chips for both ends. */
 .panel-segment-route-end-name {
   font-weight: 600;
   color: #374151;
@@ -1576,6 +1576,38 @@ details[open].explain-details summary::before { content: '▼ '; }
 
 .explain-formal-metamodel {
   margin-top: 14px;
+}
+
+.explain-formal-metamodel.explain-formal-metamodel--reverse {
+  margin-top: 10px;
+}
+
+.explain-hop-reverse-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.explain-hop-reverse-note--none {
+  color: var(--text-3);
+}
+
+.explain-hop-summary-reverse {
+  margin-top: 6px;
+}
+
+.explain-hop-reverse-chip {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.01em;
+}
+
+.explain-hop-reverse-chip--none {
+  color: var(--text-3);
+  font-weight: 500;
 }
 
 .explain-formal-metamodel > .explain-formal-metamodel-summary {

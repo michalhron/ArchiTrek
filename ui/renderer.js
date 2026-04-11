@@ -5229,19 +5229,8 @@ function explainEdge(
   const toDisplay = toScenario.display;
   const fromClause = fromScenario.isThematic ? sentenceCaseStart(withArticle(fromDisplay)) : fromDisplay;
   const toClause = toScenario.isThematic ? withArticle(toDisplay) : toDisplay;
-  const fromAspect = getAspect(fromEl);
-  const toAspect   = getAspect(toEl);
-  const fromLayer  = getLayer(fromEl);
-  const toLayer    = getLayer(toEl);
-  const ruleKey    = getAspectRuleKey(fromEl, toEl);
-  const aspectRule = ASPECT_RULES[ruleKey];
-  const layerRuleKey = getLayerRuleKey(fromEl, toEl);
-  const layerRule  = LAYER_RULES[layerRuleKey];
-  const mmFrom = metamodelRoleLabelForElement(fromEl);
-  const mmTo   = metamodelRoleLabelForElement(toEl);
   const rel = RELATIONSHIPS[activeCode];
   const primaryRelName = rel?.name ?? activeCode;
-  const dirRules = RELATIONSHIP_DIRECTIONALITY[activeCode];
   const activeCodeUpper = String(activeCode || "O").toUpperCase();
   const forwardRoleText = rel?.roleNames?.forward || relationshipVerb(primaryRelName);
   const backwardRoleText = rel?.roleNames?.backward || forwardRoleText;
@@ -5329,94 +5318,93 @@ function explainEdge(
     ? `<div class="mentor-insight mentor-insight--formal" role="note">⚠️ ${escPathDiag(mentorText)}</div>`
     : "";
 
-  const derivationInfo =
-    typeof DERIVATION_LOGIC_BY_CODE !== "undefined"
-      ? DERIVATION_LOGIC_BY_CODE[activeCodeUpper]
-      : null;
-  const choiceIsMatrixDerived =
-    activeCodeUpper !== "O" &&
-    !hopStep?.isAssociation &&
-    !!hopTier &&
-    !isActiveCodeDirectInMatrix(hopTier, activeCodeUpper);
-  const semanticLogicSentence = (() => {
-    if (semanticHop?.rule === "Derived" || choiceIsMatrixDerived) {
-      return derivationInfo?.studentText || "This is an Inferred relationship allowed by §5.7 derivation rules.";
-    }
-    if (semanticHop?.rule === "Association" || activeCodeUpper === "O" || hopStep?.isAssociation) {
-      const pedagogyOpts = mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper });
-      if (
-        typeof isAssociationHopPedagogySanctioned === "function" &&
-        isAssociationHopPedagogySanctioned(hopStep, semanticHop, pedagogyOpts)
-      ) {
-        const fromEl = semanticHop?.from ?? "";
-        const toEl = hopStep?.element ?? semanticHop?.to ?? "";
-        const vk = typeof window !== "undefined" && window.state?.viewpoint != null ? String(window.state.viewpoint) : "";
-        if (
-          typeof associationPedagogySanctionedForViewpointPalette === "function" &&
-          associationPedagogySanctionedForViewpointPalette(vk, fromEl, toEl)
-        ) {
-          return "This hop uses Association (§5.2.4). It is still a generic metamodel link, but the Information Structure viewpoint includes both elements, so the tool treats it as permitted for this scope—not as an informal modeling mistake.";
-        }
-        if (fromEl === "Value" || fromEl === "Meaning" || toEl === "Value" || toEl === "Meaning") {
-          return "This hop uses Association (§5.2.4). Generic links to or from Value or Meaning are normal in motivation modeling, so this is not flagged as an informal fallback.";
-        }
-        return "This hop uses Association (§5.2.4). Your viewpoint explicitly allows Association among its permitted relationship codes, so this is not treated as an informal shortcut.";
-      }
-      return "This uses a generic Association bridge under §5.2.4, which is semantically informal.";
-    }
-    if (typeof viewpointPaletteCapsDirectStrengthTier === "function") {
-      const cap = viewpointPaletteCapsDirectStrengthTier(
-        semanticHop,
-        hopStep,
-        mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper })
-      );
-      if (cap) {
-        return "This is a direct Appendix B relationship. For the Information Structure viewpoint, both elements are in the palette, so the strength label reflects in-viewpoint fit—not maximal cross-layer rigor.";
-      }
-    }
-    return "This is an Explicit relationship listed in Appendix B.";
-  })();
-  const violationSentence =
-    semanticHop?.violation && semanticHop.violation !== "None"
-      ? ` Mentor flag: ${semanticHop.violationExplain || semanticHop.violationLabel || "semantic rule exception detected."}`
-      : "";
-  const directCodesText = (matrixDirectForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
-  const derivedCodesText = (matrixDerivedForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
-  const derivationFormula =
-    derivationInfo?.formula
-    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
-      ? "§5.7 derivation chain inferred from this pair."
-      : "No derivation needed for a direct Appendix B hop.");
-  const derivationStudentText =
-    derivationInfo?.studentText
-    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
-      ? "This hop is accepted as an inferred relation per §5.7."
-      : "This hop is explicit (Appendix B), so derivation chain math is not required.");
-  const derivationLogicSection = `<details class="explain-derivation-logic">
-      <summary>Derivation Logic</summary>
-      <div class="explain-derivation-logic-body">
-        <div><strong>Rule math:</strong> ${escPathDiag(derivationFormula)}</div>
-        <div style="margin-top:6px">${escPathDiag(derivationStudentText)}</div>
-        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · explicit: [${escPathDiag(directCodesText)}] · inferred: [${escPathDiag(derivedCodesText)}]</div>
-      </div>
-    </details>`;
-
-  const formalMetamodelBody = `
-      <p class="explain-formal-intro">${escPathDiag(semanticLogicSentence)}${violationSentence}</p>
-      ${mentorInsightInner}
-      <ul class="edge-bullets edge-bullets--formal">
-        <li><strong>Metamodel check</strong>: <em>${fromAspect}</em> → <em>${toAspect}</em> <button class="mm-jump" type="button" data-mm-from="${encodeURIComponent(fromEl)}" data-mm-to="${encodeURIComponent(toEl)}" data-mm-rel="${encodeURIComponent(primaryRelName)}">Show on metamodel</button></li>
-        ${mmFrom.label || mmTo.label ? `<li><strong>Metamodel roles</strong>: ${fromEl} = <em>${mmFrom.label ?? "—"}</em> → ${toEl} = <em>${mmTo.label ?? "—"}</em></li>` : ""}
-        ${dirRules ? `<li><strong>Direction rule</strong>: ${dirRules.rule} <cite>${dirRules.section}</cite></li>` : ""}
-        ${fromLayer !== toLayer && layerRule ? `<li><strong>Layer pattern</strong>: ${layerRule.explanation} <cite>${layerRule.section}</cite></li>` : ""}
-      </ul>
-      ${derivationLogicSection}
-      <div class="explain-formal-defs">${renderAspectGrid(fromAspect, toAspect, fromEl, toEl)}</div>`;
+  const formalMetamodelBody = formalMetamodelInnerHtmlForPair(
+    fromEl,
+    toEl,
+    activeCodeUpper,
+    rigorPreset,
+    narrativeOpts,
+    semanticHop,
+    hopStep
+  );
 
   const formalMetamodelAccordion = `<details class="explain-details explain-formal-metamodel">
       <summary class="explain-formal-metamodel-summary"><span class="explain-formal-metamodel-summary-glyph" aria-hidden="true"></span>View Formal Metamodel Logic</summary>
       <div class="explain-formal-metamodel-inner">${formalMetamodelBody}</div>
     </details>`;
+
+  const revFrom = toEl;
+  const revTo = fromEl;
+  const reverseRow =
+    typeof mergeMatrixRowForPair === "function"
+      ? mergeMatrixRowForPair(revFrom, revTo, true)
+      : { merged: [], direct: [], derived: [] };
+  const revMerged = reverseRow.merged || [];
+  const revHasMatrix = revMerged.length > 0;
+  const revMd = (reverseRow.direct || []).map((c) => String(c).toUpperCase());
+  const revMder = (reverseRow.derived || []).map((c) => String(c).toUpperCase());
+  const revPrimary = revHasMatrix
+    ? String(revMd[0] || revMder[0] || "O").toUpperCase()
+    : "O";
+  const revHopStepBase = revHasMatrix
+    ? {
+        element: revTo,
+        codes: revMerged,
+        isDirect: revMd.includes(revPrimary),
+        matrixDirectCodes: revMd,
+        matrixDerivedCodes: revMder,
+      }
+    : {
+        element: revTo,
+        codes: ["O"],
+        isDirect: true,
+        isAssociation: true,
+        matrixDirectCodes: [],
+        matrixDerivedCodes: [],
+      };
+  const revHopStep = pathStepWithCanonicalMatrixRow(revHopStepBase, revFrom, revTo);
+  const revSemanticHop = revHasMatrix
+    ? {
+        from: revFrom,
+        to: revTo,
+        rule: revMd.includes(revPrimary) ? "Direct" : "Derived",
+        primaryCode: revPrimary,
+        violation: "None",
+      }
+    : {
+        from: revFrom,
+        to: revTo,
+        rule: "Association",
+        primaryCode: "O",
+        violation: "None",
+      };
+
+  const reverseHopNoteHtml = !isProvisional
+    ? revHasMatrix
+      ? `<p class="explain-hop-reverse-note" role="note"><strong>Opposite direction</strong> (<em>${escPathDiag(revFrom)} → ${escPathDiag(revTo)}</em>) is listed in Appendix B / §5.7 with relationship code${
+          revMerged.length !== 1 ? "s" : ""
+        } <span class="edge-codes edge-codes--primary explain-hop-reverse-note-codes" title="Matrix codes for the opposite directed hop">[${escPathDiag(
+          revMerged.map((c) => String(c).toUpperCase()).join(", ")
+        )}]</span>.</p>`
+      : `<p class="explain-hop-reverse-note explain-hop-reverse-note--none" role="note"><strong>Opposite direction</strong> (<em>${escPathDiag(revFrom)} → ${escPathDiag(
+          revTo
+        )}</em>) has <strong>no</strong> Appendix B or §5.7 matrix row. The pathfinder can still add a directed <strong>Association</strong> bridge (§5.2.4) for that ordered pair when Association fallback is enabled — it is generic and not encoded as a matrix cell.</p>`
+    : "";
+
+  const reverseFormalAccordion = !isProvisional
+    ? `<details class="explain-details explain-formal-metamodel explain-formal-metamodel--reverse">
+      <summary class="explain-formal-metamodel-summary"><span class="explain-formal-metamodel-summary-glyph" aria-hidden="true"></span>Formal metamodel logic · opposite hop (${escPathDiag(revFrom)} → ${escPathDiag(revTo)})</summary>
+      <div class="explain-formal-metamodel-inner">${formalMetamodelInnerHtmlForPair(
+        revFrom,
+        revTo,
+        revPrimary,
+        rigorPreset,
+        narrativeOpts,
+        revSemanticHop,
+        revHopStep
+      )}</div>
+    </details>`
+    : "";
 
   const keyFacts = isProvisional
     ? `<div class="edge-kicker edge-kicker--undecided">
@@ -5437,7 +5425,9 @@ function explainEdge(
       </div>
       <p class="edge-justification-primary"><strong>Justification:</strong> ${justificationMain}.</p>
       ${architectNotesHtml ? `<div class="edge-architect-notes edge-architect-notes--primary">${architectNotesHtml}</div>` : ""}
+      ${reverseHopNoteHtml}
       ${formalMetamodelAccordion}
+      ${reverseFormalAccordion}
     </div>`;
 
   return choicePrompt + (isProvisional ? mentorInsightInner : "") + keyFacts;
@@ -5737,7 +5727,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
     };
 
     /** Hop summary row: same interactive chips + tooltips as the path strip; stacked subline when the chip uses a scenario name.
-     *  When `plainCanonicalEndpoint`, render the ArchiMate name only (matches segment header destination — no second stacked chip). */
+     *  When `plainCanonicalEndpoint`, render the ArchiMate name only (plain text span, no stacked chip). */
     const hopSummaryEndpointHtml = (elementName, flatStepIndex, useThematicChipLabel, plainCanonicalEndpoint = false) => {
       const safeName = String(elementName ?? "");
       if (plainCanonicalEndpoint) {
@@ -5923,6 +5913,8 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
         segmentBandOpen = true;
         const fromSegScenario = getScenarioDisplayName(segHead.from);
         const sf = fromSegScenario.display;
+        const toSegScenario = getScenarioDisplayName(segHead.to);
+        const st = toSegScenario.display;
         const segOrd = segHead.segmentIndex + 1;
         const defsForSeg = typeof ELEMENTS !== "undefined" ? ELEMENTS : {};
         const semanticTitle = escPathDiag(
@@ -5941,7 +5933,10 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
                   ${explainAbstractSublineFromScenario(fromSegScenario)}
                 </span>
                 <span class="panel-segment-route-arrow path-node-arrow" aria-hidden="true">→</span>
-                <span class="panel-segment-route-end-name" aria-label="Segment end waypoint: ${segmentEndCanonical}">${segmentEndCanonical}</span>
+                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked" aria-label="Segment end waypoint: ${escPathDiag(st)} (${segmentEndCanonical})">
+                  <span class="path-node-chip-primary">${escPathDiag(st)}</span>
+                  ${explainAbstractSublineFromScenario(toSegScenario)}
+                </span>
               </div>
             </div>
             <p class="explain-segment-hops-lead">Hops</p>
@@ -6016,6 +6011,12 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
             { compact: true }
           );
       const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(narrFrom, narrIdxFrom, showThematicRoute)}<span class="explain-hop-summary-connector explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}</span>${hopSummaryEndpointHtml(narrTo, narrIdxTo, showThematicRoute)}</span>`;
+      const revCodesForSummary = reverseRelationshipCodesForDirectedPair(narrFrom, narrTo);
+      const reverseSummaryLine = isProvisional
+        ? ""
+        : revCodesForSummary.length
+          ? `<div class="explain-hop-summary-reverse" role="note"><span class="explain-hop-reverse-chip" title="Appendix B / §5.7 matrix row for the opposite hop (${escPathDiag(narrTo)} → ${escPathDiag(narrFrom)})">↺ opposite: [${escPathDiag(revCodesForSummary.join(", "))}]</span></div>`
+          : `<div class="explain-hop-summary-reverse" role="note"><span class="explain-hop-reverse-chip explain-hop-reverse-chip--none" title="No Appendix B / §5.7 matrix row for ${escPathDiag(narrTo)} → ${escPathDiag(narrFrom)}">↺ opposite: none</span></div>`;
 
       detailParts.push(`<div class="explain-edge-block explain-hop-shell">
         <details class="explain-hop-justification">
@@ -6028,6 +6029,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
                   <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}${forcedDirBadge}</div>
                 </div>
                 ${routeCaptionHtml}
+                ${reverseSummaryLine}
               </span>
             </span>
           </summary>

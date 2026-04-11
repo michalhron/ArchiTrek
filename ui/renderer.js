@@ -520,6 +520,14 @@ function makeRelLabel(mx, my, labelLines, {
 
     const badgeCy = 0;
     const showHop = hopIndex != null && showHopNumbers;
+    /** Same radius as `.path-edge-flip` circle (r=10); horizontal gap matches flip placement below. */
+    const FLIP_ICON_R = 10;
+    const FLIP_GAP = 8;
+    /**
+     * When a hop badge is shown, inline flip/lock anchors sit between badge and relation name on vertical edges.
+     * Reserve this width so the control does not paint over the first glyphs of the name (east: start anchor).
+     */
+    const flipCorridor = showHop ? 2 * FLIP_GAP + 2 * FLIP_ICON_R : 0;
     const relLineH = lineH;
     const textHalfHVert =
       nLines === 0 ? 0 : Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
@@ -528,7 +536,7 @@ function makeRelLabel(mx, my, labelLines, {
     const approxTextW =
       nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
     /** Full width of badge + gap + text (east: circle left → text right; west: text left → circle right). */
-    const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
+    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
     const approxW = textStartXEast + approxTextW;
 
     let stackX;
@@ -539,7 +547,7 @@ function makeRelLabel(mx, my, labelLines, {
       // West: stroke is to the right; badge hugs the line; relation name flows left (text-anchor end).
       stackX = anchor - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
       textAnchor = "end";
-      textBlockX = approxTextW;
+      textBlockX = showHop ? Math.max(0, approxTextW - flipCorridor) : approxTextW;
       circleCx = approxTextW + textGap + badgeR;
     } else {
       // East / spine: default placement clears the stroke by BADGE_LINE_CLEARANCE.
@@ -670,22 +678,19 @@ function makeRelLabel(mx, my, labelLines, {
       "pointer-events": "all",
       cursor: "pointer",
     }));
-    /** World-space center for the path-edge flip: beside the hop badge (not past the full label width). */
-    const FLIP_ICON_R = 10;
-    const FLIP_GAP = 8;
+    /** World-space center for the path-edge flip: in the corridor between hop badge and relation name. */
     let flipIconWorld = null;
     if (showHop) {
       if (verticalStraddleWest) {
-        // [text][badge]: immediately left of the badge (world X of badge left − gap − flip radius).
-        // Equivalent to stackX + circleCx − badgeR − FLIP_GAP − FLIP_ICON_R (not stackX − badgeR − …, since the badge is not at local x=0).
+        // [text][flip][badge]: flip sits in reserved strip immediately left of the badge.
         flipIconWorld = {
           x: stackX + circleCx - badgeR - FLIP_GAP - FLIP_ICON_R,
           y: my,
         };
       } else {
-        // [badge][text]: immediately right of the badge (spec: stackX + BADGE_R + FLIP_ICON_R + FLIP_GAP); y centered on row.
+        // [badge][flip][text]: center of flip in gap after badge’s right edge.
         flipIconWorld = {
-          x: stackX + badgeR + FLIP_ICON_R + FLIP_GAP,
+          x: stackX + 2 * badgeR + FLIP_GAP + FLIP_ICON_R,
           y: my,
         };
       }
@@ -5057,6 +5062,127 @@ function semanticStrengthBadgeHtml(
   return `<span class="semantic-strength-badge semantic-strength-badge--${slug}${discoveryEmphasis}${genericAssoc}${chainCapped} explain-badge-tip" data-explain-tip="semantic-strength" data-semantic-strength="${escPathDiag(tier.strength)}" data-semantic-mapping="${escPathDiag(mapping)}" data-semantic-rule="${escPathDiag(rule)}" tabindex="0" role="note" aria-label="${escPathDiag(summary)}">${escPathDiag(label)}</span>`;
 }
 
+/**
+ * Inner HTML for “View Formal Metamodel Logic”: semantic intro, mentor note, bullets, derivation, aspect grid.
+ * Shared by the traversed hop and the Appendix B opposite directed pair (reverse of the hop on screen).
+ */
+function formalMetamodelInnerHtmlForPair(fromEl, toEl, activeCode, rigorPreset, narrativeOpts, semanticHop, hopStep) {
+  const activeCodeUpper = String(activeCode || "O").toUpperCase();
+  const rel = RELATIONSHIPS[activeCodeUpper];
+  const primaryRelName = rel?.name ?? activeCodeUpper;
+  const fromAspect = getAspect(fromEl);
+  const toAspect = getAspect(toEl);
+  const fromLayer = getLayer(fromEl);
+  const toLayer = getLayer(toEl);
+  const mmFrom = metamodelRoleLabelForElement(fromEl);
+  const mmTo = metamodelRoleLabelForElement(toEl);
+  const dirRules = RELATIONSHIP_DIRECTIONALITY[activeCodeUpper];
+  const layerRuleKey = getLayerRuleKey(fromEl, toEl);
+  const layerRule = LAYER_RULES[layerRuleKey];
+
+  let matrixDirectForUi = hopStep?.matrixDirectCodes ?? [];
+  let matrixDerivedForUi = hopStep?.matrixDerivedCodes ?? [];
+  if (typeof mergeMatrixRowForPair === "function") {
+    const row = mergeMatrixRowForPair(fromEl, toEl, true);
+    const md = (row.direct || []).map((c) => String(c).toUpperCase());
+    const mder = (row.derived || []).map((c) => String(c).toUpperCase());
+    if (md.length + mder.length > 0) {
+      matrixDirectForUi = md;
+      matrixDerivedForUi = mder;
+    }
+  }
+  const hopTier = pathStepWithCanonicalMatrixRow(hopStep, fromEl, toEl);
+
+  const mentorText = mentorInsightText(semanticHop, activeCodeUpper, rigorPreset, hopStep);
+  const mentorInsightInner = mentorText
+    ? `<div class="mentor-insight mentor-insight--formal" role="note">⚠️ ${escPathDiag(mentorText)}</div>`
+    : "";
+
+  const derivationInfo =
+    typeof DERIVATION_LOGIC_BY_CODE !== "undefined"
+      ? DERIVATION_LOGIC_BY_CODE[activeCodeUpper]
+      : null;
+  const choiceIsMatrixDerived =
+    activeCodeUpper !== "O" &&
+    !hopStep?.isAssociation &&
+    !!hopTier &&
+    !isActiveCodeDirectInMatrix(hopTier, activeCodeUpper);
+  const semanticLogicSentence = (() => {
+    if (semanticHop?.rule === "Derived" || choiceIsMatrixDerived) {
+      return derivationInfo?.studentText || "This is an Inferred relationship allowed by §5.7 derivation rules.";
+    }
+    if (semanticHop?.rule === "Association" || activeCodeUpper === "O" || hopStep?.isAssociation) {
+      const pedagogyOpts = mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper });
+      if (
+        typeof isAssociationHopPedagogySanctioned === "function" &&
+        isAssociationHopPedagogySanctioned(hopStep, semanticHop, pedagogyOpts)
+      ) {
+        const shFrom = semanticHop?.from ?? "";
+        const shTo = hopStep?.element ?? semanticHop?.to ?? "";
+        const vk = typeof window !== "undefined" && window.state?.viewpoint != null ? String(window.state.viewpoint) : "";
+        if (
+          typeof associationPedagogySanctionedForViewpointPalette === "function" &&
+          associationPedagogySanctionedForViewpointPalette(vk, shFrom, shTo)
+        ) {
+          return "This hop uses Association (§5.2.4). It is still a generic metamodel link, but the Information Structure viewpoint includes both elements, so the tool treats it as permitted for this scope—not as an informal modeling mistake.";
+        }
+        if (shFrom === "Value" || shFrom === "Meaning" || shTo === "Value" || shTo === "Meaning") {
+          return "This hop uses Association (§5.2.4). Generic links to or from Value or Meaning are normal in motivation modeling, so this is not flagged as an informal fallback.";
+        }
+        return "This hop uses Association (§5.2.4). Your viewpoint explicitly allows Association among its permitted relationship codes, so this is not treated as an informal shortcut.";
+      }
+      return "This uses a generic Association bridge under §5.2.4, which is semantically informal.";
+    }
+    if (typeof viewpointPaletteCapsDirectStrengthTier === "function") {
+      const cap = viewpointPaletteCapsDirectStrengthTier(
+        semanticHop,
+        hopStep,
+        mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper })
+      );
+      if (cap) {
+        return "This is a direct Appendix B relationship. For the Information Structure viewpoint, both elements are in the palette, so the strength label reflects in-viewpoint fit—not maximal cross-layer rigor.";
+      }
+    }
+    return "This is an Explicit relationship listed in Appendix B.";
+  })();
+  const violationSentence =
+    semanticHop?.violation && semanticHop.violation !== "None"
+      ? ` Mentor flag: ${semanticHop.violationExplain || semanticHop.violationLabel || "semantic rule exception detected."}`
+      : "";
+  const directCodesText = (matrixDirectForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
+  const derivedCodesText = (matrixDerivedForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
+  const derivationFormula =
+    derivationInfo?.formula
+    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
+      ? "§5.7 derivation chain inferred from this pair."
+      : "No derivation needed for a direct Appendix B hop.");
+  const derivationStudentText =
+    derivationInfo?.studentText
+    || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
+      ? "This hop is accepted as an inferred relation per §5.7."
+      : "This hop is explicit (Appendix B), so derivation chain math is not required.");
+  const derivationLogicSection = `<details class="explain-derivation-logic">
+      <summary>Derivation Logic</summary>
+      <div class="explain-derivation-logic-body">
+        <div><strong>Rule math:</strong> ${escPathDiag(derivationFormula)}</div>
+        <div style="margin-top:6px">${escPathDiag(derivationStudentText)}</div>
+        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · explicit: [${escPathDiag(directCodesText)}] · inferred: [${escPathDiag(derivedCodesText)}]</div>
+      </div>
+    </details>`;
+
+  return `
+      <p class="explain-formal-intro">${escPathDiag(semanticLogicSentence)}${violationSentence}</p>
+      ${mentorInsightInner}
+      <ul class="edge-bullets edge-bullets--formal">
+        <li><strong>Metamodel check</strong>: <em>${fromAspect}</em> → <em>${toAspect}</em> <button class="mm-jump" type="button" data-mm-from="${encodeURIComponent(fromEl)}" data-mm-to="${encodeURIComponent(toEl)}" data-mm-rel="${encodeURIComponent(primaryRelName)}">Show on metamodel</button></li>
+        ${mmFrom.label || mmTo.label ? `<li><strong>Metamodel roles</strong>: ${fromEl} = <em>${mmFrom.label ?? "—"}</em> → ${toEl} = <em>${mmTo.label ?? "—"}</em></li>` : ""}
+        ${dirRules ? `<li><strong>Direction rule</strong>: ${dirRules.rule} <cite>${dirRules.section}</cite></li>` : ""}
+        ${fromLayer !== toLayer && layerRule ? `<li><strong>Layer pattern</strong>: ${layerRule.explanation} <cite>${layerRule.section}</cite></li>` : ""}
+      </ul>
+      ${derivationLogicSection}
+      <div class="explain-formal-defs">${renderAspectGrid(fromAspect, toAspect, fromEl, toEl)}</div>`;
+}
+
 function mentorInsightText(semanticHop, activeCode, rigorPreset, step) {
   const violation = semanticHop?.violation || "None";
   if (violation === "V-Shape") {
@@ -5288,7 +5414,7 @@ function explainEdge(
       <div class="explain-formal-defs">${renderAspectGrid(fromAspect, toAspect, fromEl, toEl)}</div>`;
 
   const formalMetamodelAccordion = `<details class="explain-details explain-formal-metamodel">
-      <summary class="explain-formal-metamodel-summary">🔍 View Formal Metamodel Logic</summary>
+      <summary class="explain-formal-metamodel-summary"><span class="explain-formal-metamodel-summary-glyph" aria-hidden="true"></span>View Formal Metamodel Logic</summary>
       <div class="explain-formal-metamodel-inner">${formalMetamodelBody}</div>
     </details>`;
 

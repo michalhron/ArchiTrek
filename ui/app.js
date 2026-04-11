@@ -9330,10 +9330,22 @@ window.expandHopDetails = function expandHopDetails(hopIdx, opts = {}) {
   if (hopOuter) hopOuter.open = true;
   // Do not open details.explain-details (formal metamodel / definitions) here — only the user toggling
   // that summary should expand it; otherwise diagram/hop clicks feel like the glossary opens on its own.
-  const block = hopEl.closest('.explain-edge-block');
-  if (block && opts.scroll === true) {
-    block.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
+  if (opts.scroll !== true) return;
+
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const behavior = reducedMotion ? "auto" : "smooth";
+
+  const runScroll = () => {
+    const panel = document.getElementById("explanation-panel");
+    if (panel) panel.scrollIntoView({ behavior, block: "nearest" });
+    // Scroll the hop’s expanded body (matrix + narrative), not only the step summary — diagram clicks
+    // target the arrow, rel-label hit rect, and hop badge; opening <details> needs a frame before layout.
+    hopEl.scrollIntoView({ behavior, block: "start", inline: "nearest" });
+  };
+  requestAnimationFrame(() => requestAnimationFrame(runScroll));
 };
 
 window.focusMetamodel = function focusMetamodel(fromEl, toEl) {

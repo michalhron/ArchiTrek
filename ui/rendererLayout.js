@@ -252,7 +252,11 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
     const hasChoices = step.codes.length > 1;
     const badgeR = hasChoices ? 11 : 9;
     const textGap = Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE);
-    const textStartXEast = 2 * badgeR + textGap;
+    /** Match makeRelLabel: flip control between hop badge and relation name on vertical straddle. */
+    const _flipR = 10;
+    const _flipGap = 8;
+    const flipCorridor = 2 * _flipGap + 2 * _flipR;
+    const textStartXEast = 2 * badgeR + flipCorridor + textGap;
     const approxW = textStartXEast + approxTextW;
     const halfW = approxW / 2;
 

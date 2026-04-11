@@ -145,6 +145,10 @@
     const relLineH = 11.5;
     const badgeR = hasChoices ? 9 : 7;
     const showHop = hopIndex != null && showHopNumbers;
+    /** Match makeRelLabel vertical straddle: flip control (r=10) + gaps between badge and relation name. */
+    const FLIP_ICON_R = 10;
+    const FLIP_GAP = 8;
+    const flipCorridor = showHop ? 2 * FLIP_GAP + 2 * FLIP_ICON_R : 0;
     const textGap =
       straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)
         ? Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE)
@@ -153,8 +157,8 @@
     const nLines = lines.length === 0 ? 0 : Math.max(1, lines.length);
     const approxTextW =
       nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-    const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
-    const approxW = textStartXEast + approxTextW + 18;
+    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
+    const approxW = textStartXEast + approxTextW;
     const textHalfH =
       nLines === 0 ? 0 : Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
     const stackHalfH = Math.max((showHop ? badgeR : 0) + 2, textHalfH);

@@ -2148,6 +2148,22 @@ function relationshipPickerCodesFromMatrixCodes(matrixCodes) {
 }
 
 /**
+ * Appendix B codes for the reversed hop (to → from), after picker shaping.
+ * Empty when the matrix defines no relationship in that direction — same basis as the edge context menu flip action.
+ */
+function reverseRelationshipCodesForDirectedPair(fromElement, toElement) {
+  const from = String(fromElement ?? "").trim();
+  const to = String(toElement ?? "").trim();
+  if (!from || !to || from === to || typeof mergeMatrixRowForPair !== "function") return [];
+  const row = mergeMatrixRowForPair(to, from, true);
+  const merged = Array.isArray(row?.merged) ? row.merged : [];
+  if (!merged.length) return [];
+  const upper = merged.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+  const picker = upper.length > 1 ? relationshipPickerCodesFromMatrixCodes(upper) : upper;
+  return picker.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+}
+
+/**
  * {@code userChoices[hopIndex]} can be stale (different path alternative, session restore, etc.).
  * Only accept a stored choice if it appears in this hop's picker list (matrix codes, plus O when multi-option).
  */
@@ -2245,7 +2261,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   showFlipControls = true,
   showLockControls = true,
   /**
-   * Show relationship-type text on edges without hop badges or flip controls (diagram “names only” overlay mode).
+   * Show resolved relationship-type text on edges (diagram “relationship names” overlay); may combine with hop/flip overlays.
    */
   relationshipLabelsOnly = false,
   strokeOnly = false,
@@ -2333,7 +2349,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   edgeConstraints = null,
 } = {}) {
   const showCanvasLabels = showHopNumbers || showFlipControls || showLockControls || relationshipLabelsOnly;
-  const showInlineEdgeActionButtons = false;
+  const showInlineEdgeActionButtons = showFlipControls || showLockControls;
   const OUTER_BYPASS_RETURN_ELBOW_MIN_PX = 50;
   /**
    * Store holds FORCED_DIRECTION as user-chosen source→target. Path drawing uses semanticFrom→semanticTo
@@ -2684,13 +2700,15 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     swimlaneColElbow ||
     orthogonalCornerRoute;
 
+  const reverseCodesForFlip = reverseRelationshipCodesForDirectedPair(semanticFrom, semanticTo);
   /** Association (§5.2.4) is undirected in the metamodel — no meaningful direction flip on the diagram. */
   const flipEligible =
     !!semanticFrom &&
     !!semanticTo &&
     showFlipControls &&
     UPPER !== "O" &&
-    !isAssocBridge;
+    !isAssocBridge &&
+    reverseCodesForFlip.length > 0;
   /**
    * Association (O) is always solid. Serving (V) uses the §4.2-style solid stroke and open arrowhead
    * for every hop — not the derived-relationship dashed stroke — so it matches the language reference.
@@ -3181,22 +3199,20 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     if (!flipEligible) return null;
     const { iconX, iconY } = resolveControlAnchor();
     const btn = svgEl("g", {
-      class: "path-edge-flip path-edge-control",
+      class: "path-edge-flip",
       transform: `translate(${iconX}, ${iconY})`,
       "data-source": String(semanticFrom || ""),
       "data-target": String(semanticTo || ""),
-      "aria-label": "Flip edge direction",
-      role: "button",
-      style: "cursor:pointer;pointer-events:all;opacity:0.92;transition:opacity 120ms ease;",
+      "aria-hidden": "true",
+      style: "pointer-events:none;opacity:0.88;",
     });
-    btn.appendChild(svgEl("title", {}, "Flip direction for this hop (re-find path)"));
     btn.appendChild(svgEl("circle", {
       cx: "0",
       cy: "0",
       r: "10",
-      fill: "#f1f5f9",
-      stroke: "#475569",
-      "stroke-width": "1.35",
+      fill: "#f8fafc",
+      stroke: "#cbd5e1",
+      "stroke-width": "0.55",
     }));
     btn.appendChild(svgEl("text", {
       x: "0",
@@ -3205,18 +3221,9 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       "dominant-baseline": "middle",
       "font-size": "12",
       "font-weight": "800",
-      fill: "#0f172a",
+      fill: "#94a3b8",
       "pointer-events": "none",
     }, "⇄"));
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const src = String(semanticFrom || "").trim();
-      const dst = String(semanticTo || "").trim();
-      if (src && dst && typeof window.applyEdgeConstraintFlip === "function") {
-        window.applyEdgeConstraintFlip(src, dst);
-      }
-    });
     return btn;
   };
 
@@ -3325,8 +3332,6 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     const { lockBadge, unpinBtn, relTag } = makeLockControls();
     if (flipBtn) {
       g.appendChild(flipBtn);
-      g.addEventListener("mouseenter", () => { flipBtn.style.opacity = "1"; });
-      g.addEventListener("mouseleave", () => { flipBtn.style.opacity = "0.92"; });
     }
     if (relTag) g.appendChild(relTag);
     if (lockBadge) g.appendChild(lockBadge);
@@ -3354,8 +3359,6 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   const { lockBadge, unpinBtn, relTag } = makeLockControls();
   if (flipBtn) {
     g.appendChild(flipBtn);
-    g.addEventListener("mouseenter", () => { flipBtn.style.opacity = "1"; });
-    g.addEventListener("mouseleave", () => { flipBtn.style.opacity = "0.92"; });
   }
   if (relTag) g.appendChild(relTag);
   if (lockBadge) g.appendChild(lockBadge);
@@ -7036,3 +7039,4 @@ function getMetamodelBoxKey(role) {
 window.resolvedRelationshipCodeForHop = resolvedRelationshipCodeForHop;
 window.edgeChoiceCommittedForHop = edgeChoiceCommittedForHop;
 window.relationshipPickerCodesFromMatrixCodes = relationshipPickerCodesFromMatrixCodes;
+window.reverseRelationshipCodesForDirectedPair = reverseRelationshipCodesForDirectedPair;

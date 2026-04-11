@@ -20,8 +20,8 @@ window.state = {
   lastAutoOrderMetrics: null,
   loading: true,
   /**
-   * Diagram edge overlays: 0 = none, 1 = flip only, 2 = hop numbers only, 3 = both, 4 = relationship names only (no hop/flip).
-   * Cycles: 3 → 2 → 1 → 4 → 0 → 3.
+   * Diagram edge overlays: 0 none; 1 flip; 2 hop; 3 hop+flip; 4 rel names only;
+   * 5 hop+rel; 6 flip+rel; 7 hop+flip+rel. Toolbar cycle still uses 0–4 presets.
    */
   diagramOverlayMode: 3,
   /** Show lock/unpin markers on diagram edges for user-forced directions. */
@@ -1421,36 +1421,62 @@ function schedulePersistSession() {
 function clampDiagramOverlayMode(v) {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return 3;
-  return Math.max(0, Math.min(4, n));
+  return Math.max(0, Math.min(7, n));
 }
 
 function diagramOverlayShowsHop(mode) {
   const m = clampDiagramOverlayMode(mode);
-  return m === 2 || m === 3;
+  return m === 2 || m === 3 || m === 5 || m === 7;
 }
 
 function diagramOverlayShowsFlip(mode) {
   const m = clampDiagramOverlayMode(mode);
-  return m === 1 || m === 3;
+  return m === 1 || m === 3 || m === 6 || m === 7;
 }
 
-/** Maps session overlay mode to checkbox triple (hop / flip / relationship-names-only). */
+/** True when “Relationship names on arrows” should drive label text (modes 4–7). */
+function diagramOverlayShowsRelNames(mode) {
+  const m = clampDiagramOverlayMode(mode);
+  return m >= 4 && m <= 7;
+}
+
+/** Maps session overlay mode to checkbox triple (hop / flip / relationship names). */
 function overlayChecksFromMode(mode) {
   const m = clampDiagramOverlayMode(mode);
-  if (m === 4) return { hop: false, flip: false, relOnly: true };
-  return {
-    hop: m === 2 || m === 3,
-    flip: m === 1 || m === 3,
-    relOnly: false,
-  };
+  switch (m) {
+    case 0:
+      return { hop: false, flip: false, relOnly: false };
+    case 1:
+      return { hop: false, flip: true, relOnly: false };
+    case 2:
+      return { hop: true, flip: false, relOnly: false };
+    case 3:
+      return { hop: true, flip: true, relOnly: false };
+    case 4:
+      return { hop: false, flip: false, relOnly: true };
+    case 5:
+      return { hop: true, flip: false, relOnly: true };
+    case 6:
+      return { hop: false, flip: true, relOnly: true };
+    case 7:
+      return { hop: true, flip: true, relOnly: true };
+    default:
+      return { hop: true, flip: true, relOnly: false };
+  }
 }
 
-/** Relationship-names-only (mode 4) turns off hop and flip in the renderer. */
 function overlayModeFromChecks(hop, flip, relOnly) {
-  if (relOnly) return 4;
-  if (hop && flip) return 3;
-  if (hop && !flip) return 2;
-  if (!hop && flip) return 1;
+  const h = !!hop;
+  const f = !!flip;
+  const r = !!relOnly;
+  if (!h && !f && !r) return 0;
+  if (h && f && r) return 7;
+  if (h && f && !r) return 3;
+  if (h && !f && r) return 5;
+  if (h && !f && !r) return 2;
+  if (!h && f && r) return 6;
+  if (!h && f && !r) return 1;
+  if (!h && !f && r) return 4;
   return 0;
 }
 
@@ -9184,7 +9210,7 @@ function renderResults() {
       segmentPathIndex: pathIdx,
       showHopNumbers: diagramOverlayShowsHop(state.diagramOverlayMode),
       showFlipControls: diagramOverlayShowsFlip(state.diagramOverlayMode),
-      relationshipLabelsOnly: clampDiagramOverlayMode(state.diagramOverlayMode) === 4,
+      relationshipLabelsOnly: diagramOverlayShowsRelNames(state.diagramOverlayMode),
       showLockControls: state.showDiagramLockControls !== false,
       pathFlow: state.pathFlow,
       viewpointName: state.viewpoint ? (VIEWPOINTS?.[state.viewpoint]?.name || state.viewpoint) : "All elements",
@@ -10100,13 +10126,6 @@ function initDiagramToolbarOptions() {
       const relEl = document.getElementById("opt-rel-names");
       if (!hopEl || !flipEl || !relEl) return;
 
-      if (t.id === "opt-rel-names" && relEl.checked) {
-        hopEl.checked = false;
-        flipEl.checked = false;
-      } else if ((t.id === "opt-hop-numbers" || t.id === "opt-flip-controls") && (hopEl.checked || flipEl.checked)) {
-        relEl.checked = false;
-      }
-
       const next = overlayModeFromChecks(hopEl.checked, flipEl.checked, relEl.checked);
       if (clampDiagramOverlayMode(state.diagramOverlayMode) === next) return;
       state.diagramOverlayMode = next;
@@ -10324,6 +10343,9 @@ function initEdgeContextMenu() {
   }
 
   function reverseRelationshipCodesForPair(from, to) {
+    if (typeof window.reverseRelationshipCodesForDirectedPair === "function") {
+      return window.reverseRelationshipCodesForDirectedPair(from, to);
+    }
     const mergeFn =
       typeof window.mergeMatrixRowForPair === "function"
         ? window.mergeMatrixRowForPair
@@ -10413,6 +10435,7 @@ function initEdgeContextMenu() {
     const hasPinnedDirection = constraintState.hasAny;
     const canPinCurrent = !hasPinnedDirection;
 
+    flipWrap.hidden = !canFlip;
     setItemDisabled(flipBtn, !canFlip);
     if (canFlip) {
       buildFlipSubmenu(
@@ -10539,6 +10562,9 @@ function diagramOverlayExportLabel(mode, legacyShowBadges) {
       : legacyShowBadges === false
         ? 0
         : 3;
+  if (m === 7) return "hop numbers + flip + relationship names";
+  if (m === 6) return "flip + relationship names";
+  if (m === 5) return "hop numbers + relationship names";
   if (m === 3) return "both (hop numbers + flip)";
   if (m === 2) return "hop numbers only";
   if (m === 1) return "flip direction only";

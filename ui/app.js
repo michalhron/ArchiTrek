@@ -1944,6 +1944,8 @@ function buildDomainContextOptions() {
   return [...abstract, ...rest];
 }
 
+window.buildDomainContextOptions = buildDomainContextOptions;
+
 function repopulateDomainContextSelectorsFromScenarios() {
   const side = document.getElementById("domain-context-select");
   const top = document.getElementById("domain-context-top-select");
@@ -2293,15 +2295,18 @@ function wireHeaderChromeHovercardCore(shell, tip, opts) {
   };
 
   const scheduleHide = () => {
+    if (shell?.dataset?.headerRichMenuOpen === "1") return;
     cancelHide();
     hideTimer = window.setTimeout(() => {
       hideTimer = null;
+      if (shell?.dataset?.headerRichMenuOpen === "1") return;
       if (isHeaderChromeHovercardPointerActive(shell, tip)) return;
       hide();
     }, 50);
   };
 
   const show = () => {
+    if (shell?.dataset?.headerRichMenuOpen === "1") return;
     cancelHide();
     if (onOpen) {
       try {
@@ -2324,6 +2329,10 @@ function wireHeaderChromeHovercardCore(shell, tip, opts) {
       window.removeEventListener("resize", onMove);
     };
   };
+
+  shell._architrekHeaderHoverShow = show;
+  shell._architrekHeaderHoverHide = hide;
+  shell._architrekHeaderHoverCancelHide = cancelHide;
 
   shell.addEventListener("pointerenter", show);
   shell.addEventListener("pointerleave", scheduleHide);
@@ -2495,6 +2504,13 @@ function updateThemeHelpUi() {
   } catch (_) {
     /* ignore */
   }
+  try {
+    if (typeof window.refreshHeaderThemeRichSelectUI === "function") {
+      window.refreshHeaderThemeRichSelectUI();
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function updateViewpointHelpUi() {
@@ -2514,14 +2530,14 @@ function updateViewpointHelpUi() {
   } catch (_) {
     /* ignore */
   }
+  try {
+    if (typeof window.refreshHeaderViewpointRichSelectUI === "function") {
+      window.refreshHeaderViewpointRichSelectUI();
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
-
-window.onViewpointChangeFromHeader = function onViewpointChangeFromHeader() {
-  const main = document.getElementById("viewpoint-select");
-  const head = document.getElementById("header-viewpoint-select");
-  if (main && head) main.value = head.value;
-  window.onViewpointChange();
-};
 
 function updatePathOptionsTriggerSummary() {
   const el = document.getElementById("path-options-trigger-label");
@@ -5402,6 +5418,13 @@ function init() {
   state.domainContext = normalizeDomainContext(state.domainContext);
   repopulateDomainContextSelectorsFromScenarios();
   syncDomainContextSelectors();
+  try {
+    if (typeof window.initHeaderChromeRichSelects === "function") {
+      window.initHeaderChromeRichSelects();
+    }
+  } catch (e) {
+    console.warn("[ArchiTrek] header rich selects init:", e);
+  }
 
   initLayoutChrome();
   initPathOptionsOverlay();

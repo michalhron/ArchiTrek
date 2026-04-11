@@ -159,7 +159,7 @@
       nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
     /** Match makeRelLabel REL_NAME_STROKE_PAD when SVG measurement is unavailable. */
     const layoutTextW = nLines === 0 ? 0 : Math.min(170, approxInk + 7);
-    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
+    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + VERT_BADGE_NAME_GAP : 0;
     const approxW = effectiveVerticalStraddleWest
       ? showHop
         ? 2 * badgeR + textGap + layoutTextW

@@ -566,8 +566,12 @@ function makeRelLabel(mx, my, labelLines, {
         layoutTextW = approxTextW;
       }
     }
-    /** East: extra horizontal span for flip between badge and name. West: flip fits in text↔badge gap — do not add twice. */
-    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
+    /**
+     * East: badge → flip → name. {@link textGap} can grow to SPINE_TEXT_GAP_AFTER_BADGE for badge↔stroke
+     * clearance — that value must not stack *after* the flip slot or a large empty band appears before the name.
+     */
+    const gapFlipToNameEast = VERT_BADGE_NAME_GAP;
+    const textStartXEast = showHop ? 2 * badgeR + flipCorridor + gapFlipToNameEast : 0;
     const approxW = verticalStraddleWest
       ? showHop
         ? 2 * badgeR + textGap + layoutTextW

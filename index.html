@@ -107,28 +107,40 @@
   <div class="header-center" role="presentation">
     <div class="header-center-chrome">
       <div class="header-chrome-select header-chrome-select--viewpoint header-viewpoint-tip-wrap step-el-tip-wrap" id="header-viewpoint-shell">
-        <label class="header-chrome-label" for="header-viewpoint-select">Viewpoint</label>
+        <label class="header-chrome-label" id="header-viewpoint-rich-label" for="header-viewpoint-rich-trigger">Viewpoint</label>
         <div class="header-chrome-select-row">
-          <select id="header-viewpoint-select" class="header-chrome-control"
-            onchange="onViewpointChangeFromHeader()"></select>
+          <div class="header-rich-select">
+            <button type="button" id="header-viewpoint-rich-trigger" class="header-rich-select-trigger header-chrome-control"
+              aria-labelledby="header-viewpoint-rich-label" aria-haspopup="listbox" aria-expanded="false"
+              aria-controls="header-viewpoint-rich-listbox">
+              <span class="header-rich-select-text">
+                <span class="header-rich-select-primary" id="header-viewpoint-rich-primary"></span>
+                <span class="header-rich-select-secondary" id="header-viewpoint-rich-secondary"></span>
+              </span>
+              <span class="header-rich-select-chev" aria-hidden="true">▾</span>
+            </button>
+            <select id="header-viewpoint-select" class="header-native-select-hidden" tabindex="-1" aria-hidden="true"></select>
+          </div>
         </div>
         <div class="step-el-tip header-viewpoint-step-tip" id="header-viewpoint-hovercard" role="tooltip" aria-hidden="true">
           <span class="step-el-tip-inner" id="header-viewpoint-tip-inner"></span>
         </div>
       </div>
       <div class="header-chrome-select header-chrome-select--theme header-theme-tip-wrap step-el-tip-wrap" id="header-theme-shell">
-        <label class="header-chrome-label" for="domain-context-top-select">Theme</label>
+        <label class="header-chrome-label" id="header-theme-rich-label" for="header-theme-rich-trigger">Theme</label>
         <div class="header-chrome-select-row">
-          <select id="domain-context-top-select" class="header-chrome-control" onchange="onDomainContextChange(this.value)">
-            <option value="abstract" selected>Abstract</option>
-            <option value="bored">Bored</option>
-            <option value="circus">Circus</option>
-            <option value="death_star">Death Star</option>
-            <option value="f1_team">Formula One</option>
-            <option value="hospital">Hospital</option>
-            <option value="rebel_alliance">Star Wars Rebels</option>
-            <option value="university">University</option>
-          </select>
+          <div class="header-rich-select">
+            <button type="button" id="header-theme-rich-trigger" class="header-rich-select-trigger header-chrome-control"
+              aria-labelledby="header-theme-rich-label" aria-haspopup="listbox" aria-expanded="false"
+              aria-controls="header-theme-rich-listbox">
+              <span class="header-rich-select-text">
+                <span class="header-rich-select-primary" id="header-theme-rich-primary"></span>
+                <span class="header-rich-select-secondary" id="header-theme-rich-secondary"></span>
+              </span>
+              <span class="header-rich-select-chev" aria-hidden="true">▾</span>
+            </button>
+            <select id="domain-context-top-select" class="header-native-select-hidden" tabindex="-1" aria-hidden="true"></select>
+          </div>
           <button type="button" id="theme-shuffle-story-btn" class="header-chrome-icon-btn" onclick="onShuffleStoryCluster()"
             hidden aria-hidden="true" title="Shuffle story cluster" aria-label="Shuffle story cluster">↻</button>
         </div>
@@ -1114,6 +1126,7 @@
 <script src="./ui/components/waypointEditor.js"></script>
 <script src="./ui/components/coachOverlay.js"></script>
 <script src="./ui/components/perspectiveAccordion.js"></script>
+<script src="./ui/components/headerRichSelects.js"></script>
 <script src="./ui/controllers/exportController.js"></script>
 <script src="./ui/app.js"></script>
 </body>

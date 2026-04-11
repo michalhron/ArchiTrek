@@ -266,7 +266,7 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
     if (outer && Number.isFinite(outer.tx)) {
       const tx = outer.tx;
       const eastBus = tx > a.x + EL_W + 2;
-      const approxWEast = 2 * badgeR + flipCorridor + textGap + layoutTextW;
+      const approxWEast = 2 * badgeR + flipCorridor + VERT_BADGE_NAME_GAP + layoutTextW;
       const approxWWest = 2 * badgeR + textGap + layoutTextW;
       const approxWOuter = eastBus ? approxWEast : approxWWest;
       halfW = approxWOuter / 2;
@@ -277,7 +277,7 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
       const preferWest = verticalStraddleWestForCompactHop(fromEl, toEl, hop);
       const approxW = preferWest
         ? 2 * badgeR + textGap + layoutTextW
-        : 2 * badgeR + flipCorridor + textGap + layoutTextW;
+        : 2 * badgeR + flipCorridor + VERT_BADGE_NAME_GAP + layoutTextW;
       halfW = approxW / 2;
       centerX = preferWest
         ? anchorX - straddleExtraX - BADGE_LINE_CLEARANCE - halfW

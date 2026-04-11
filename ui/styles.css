@@ -2280,6 +2280,191 @@ path.graph-edge {
   outline-offset: 1px;
 }
 
+/* Header Viewpoint / Theme: two-line custom listbox (native <select> kept hidden for sync). */
+select.header-native-select-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.header-rich-select {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: min(280px, 36vw);
+}
+
+.header-rich-select-trigger.header-chrome-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: auto;
+  min-height: 30px;
+  padding: 4px 8px 4px 10px;
+  max-width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.2;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.header-rich-select-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.header-rich-select-primary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Subtitle only appears on listbox rows, not in the header trigger (keeps chrome lighter vs logo). */
+.header-rich-select-trigger .header-rich-select-secondary {
+  display: none;
+}
+
+.header-rich-select-secondary {
+  font-size: 10px;
+  font-weight: 500;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.header-rich-select-chev {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #475569;
+  opacity: 0.85;
+  margin-left: 2px;
+}
+
+.header-rich-select-popover {
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  z-index: 10100;
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+  pointer-events: none;
+}
+
+/* Popover fades/slides in after the hover tooltip exits (see .header-rich-select-popover--entered). */
+.header-rich-select-popover.header-rich-select-popover--open {
+  opacity: 0;
+  transform: translateY(-7px);
+  transition: opacity 0.2s ease, transform 0.22s cubic-bezier(0.2, 0.88, 0.2, 1);
+  pointer-events: none;
+}
+
+.header-rich-select-popover.header-rich-select-popover--open.header-rich-select-popover--entered {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header-rich-select-popover.header-rich-select-popover--open {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    pointer-events: auto;
+  }
+}
+
+.header-rich-select-menu {
+  padding: 4px 0;
+}
+
+.header-rich-select-group {
+  padding: 4px 0 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.header-rich-select-group:first-of-type {
+  border-top: none;
+}
+
+.header-rich-select-group-label {
+  padding: 3px 12px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.header-rich-select-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.header-rich-select-option:hover,
+.header-rich-select-option.header-rich-select-option--active {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.header-rich-select-option-primary {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+.header-rich-select-option-secondary {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3, #64748b);
+  line-height: 1.3;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.header-chrome-select--viewpoint .header-rich-select {
+  max-width: min(320px, 40vw);
+}
+
 .header-chrome-select--viewpoint,
 .header-chrome-select--theme {
   position: relative;
@@ -2345,6 +2530,28 @@ path.graph-edge {
   pointer-events: auto;
   cursor: default;
 }
+
+/*
+ * Rich listbox open: help hovercards are reparented into #header-chrome-tip-layer while visible,
+ * so they are NOT under .header-chrome-select — shell-only rules never matched. Lock the layer
+ * from painting those nodes until JS hide() runs (belt-and-suspenders vs listbox overlap).
+ */
+#header-chrome-tip-layer[data-rich-select-menu-open="1"] #header-viewpoint-hovercard,
+#header-chrome-tip-layer[data-rich-select-menu-open="1"] #header-theme-hovercard {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* If teardown briefly leaves the card inside the shell, keep it from painting too. */
+.header-chrome-select[data-header-rich-menu-open="1"] #header-viewpoint-hovercard,
+.header-chrome-select[data-header-rich-menu-open="1"] #header-theme-hovercard {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 /* Invisible strip between header and card (and under flipped card) so pointer isn’t lost in the gap */
 #header-viewpoint-hovercard.header-chrome-hovercard--open.step-el-tip.header-viewpoint-step-tip::before,
 #header-theme-hovercard.header-chrome-hovercard--open.step-el-tip.header-theme-step-tip::before {
@@ -2449,6 +2656,10 @@ path.graph-edge {
   .header-chrome-control {
     font-size: 11px;
     min-width: 100px;
+  }
+  /* Rich viewpoint/theme: keep app “small” scale (13px) — same class as .header-chrome-control above. */
+  .header-rich-select-trigger.header-chrome-control {
+    font-size: 13px;
   }
 }
 

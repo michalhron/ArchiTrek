@@ -88,6 +88,12 @@ window.state = {
   edgeConstraints: [],
   /** One-shot warning message set when a flip had to degrade to Association. */
   edgeConstraintWarning: null,
+  /** True when direction flips changed constraints since the last path recompute. */
+  pendingConstraintRecompute: false,
+  /** Number of post-recompute direction flips currently pending. */
+  pendingConstraintRecomputeCount: 0,
+  /** Find-run id snapshot when pendingConstraintRecompute was first set. */
+  pendingConstraintRecomputeSinceRunId: null,
   /** After a successful path from a one-shot relax CTA: which rules were temporarily used (Options stay strict). */
   lastPathTemporaryRelaxation: null,
   /** Snapshot while findPath runs with relaxed rules from overlay/diagnostics; restored after search completes. */
@@ -239,8 +245,12 @@ window.dispatch = function dispatch(action) {
     case "FIND_PATH": {
       // Bump run id so any in-flight async callbacks can be ignored if they complete later.
       state._findRunId = (state._findRunId | 0) + 1;
+      const findPathReason = typeof a.reason === "string" ? a.reason : "";
+      if (findPathReason !== "edge-flip") {
+        state._pendingEdgeFlipUserChoice = null;
+      }
       // Preserve existing global entrypoint for onclick handlers, but pass run context via state.
-      window.findPath?.({ runId: state._findRunId, reason: a.reason || "" });
+      window.findPath?.({ runId: state._findRunId, reason: findPathReason });
       return;
     }
     case "RENDER_RESULTS": {
@@ -253,15 +263,23 @@ window.dispatch = function dispatch(action) {
   }
 };
 
-window.applyEdgeConstraintFlip = function applyEdgeConstraintFlip(source, target) {
+window.applyEdgeConstraintFlip = function applyEdgeConstraintFlip(source, target, opts = {}) {
   const src = String(source || "").trim();
   const dst = String(target || "").trim();
   if (!src || !dst || src === dst || !window.store) return false;
+  const codeOpt =
+    opts &&
+    opts.relationshipCode != null &&
+    String(opts.relationshipCode).trim() !== ""
+      ? String(opts.relationshipCode).trim().toUpperCase()
+      : "";
+  const hopHint = opts && Number.isFinite(Number(opts.hopIndex)) ? Math.floor(Number(opts.hopIndex)) : null;
   const before = JSON.stringify(normalizedEdgeConstraintsFromState());
   const next = window.store.dispatch("FLIP_EDGE_DIRECTION", { source: src, target: dst });
   const afterList = Array.isArray(next?.edgeConstraints) ? next.edgeConstraints : [];
   const after = JSON.stringify(afterList);
   if (before === after) {
+    state._pendingEdgeFlipUserChoice = null;
     const msg = String(next?.edgeConstraintWarning || "").trim();
     if (msg) {
       state.edgeConstraintWarning = msg;
@@ -270,10 +288,36 @@ window.applyEdgeConstraintFlip = function applyEdgeConstraintFlip(source, target
     window.dispatch({ type: "RENDER_RESULTS" });
     return false;
   }
-  /** Same as cycling a hop’s relationship: keep explanation accordions / scroll after the re-find. */
+  /** Same as cycling a hop’s relationship: keep explanation accordions / scroll on redraw. */
   state._preserveExplainUiOnNextRender = true;
-  window.dispatch({ type: "FIND_PATH", reason: "edge-flip" });
+  state.pendingConstraintRecompute = true;
+  state.pendingConstraintRecomputeCount = Math.max(
+    1,
+    Number(state.pendingConstraintRecomputeCount || 0) + 1
+  );
+  if (state.pendingConstraintRecomputeSinceRunId == null) {
+    state.pendingConstraintRecomputeSinceRunId = state._findRunId;
+  }
+  state._pendingEdgeFlipUserChoice = null;
+  if (codeOpt && hopHint != null && state.segments?.length) {
+    const flat = flattenSegments(state.segments, state.activePathIdx ?? 0);
+    const picker = pickerCodesForHopWithConstraints(flat, hopHint, afterList);
+    const resolvedCode = resolvedPendingFlipChoiceForPicker(codeOpt, picker);
+    if (resolvedCode) {
+      window.store.dispatch("SET_USER_CHOICE", { hopIndex: hopHint, code: resolvedCode });
+    }
+  }
+  // Strict flip UX: preserve the current route composition and only redraw direction/labels.
+  window.dispatch({ type: "RENDER_RESULTS" });
   return true;
+};
+
+window.recomputePathAfterDirectionFlips = function recomputePathAfterDirectionFlips(ev) {
+  if (ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+  window.dispatch({ type: "FIND_PATH", reason: "edge-flip-recompute" });
 };
 
 window.applyEdgeConstraintPinCurrent = function applyEdgeConstraintPinCurrent(source, target) {
@@ -557,6 +601,104 @@ function normalizedEdgeConstraintsFromState() {
 
 function sameUndirectedEdgePair(a, b, c, d) {
   return (a === c && b === d) || (a === d && b === c);
+}
+
+/**
+ * Context-menu “flip + pick reverse row” schedules {@link state._pendingEdgeFlipUserChoice} for the
+ * in-flight findPath run. If that run is superseded or aborted, drop the pending payload so a stale
+ * choice cannot attach to a later path.
+ */
+function clearPendingEdgeFlipUserChoiceIfForRun(runId) {
+  const p = state._pendingEdgeFlipUserChoice;
+  if (p && Number(p.applyOnRunId) === Number(runId)) {
+    state._pendingEdgeFlipUserChoice = null;
+  }
+}
+
+function pickerCodesForHopWithConstraints(flatSteps, hopIndex, edgeConstraints) {
+  const i = Number(hopIndex);
+  if (!Array.isArray(flatSteps) || !Number.isInteger(i) || i < 1 || i >= flatSteps.length) return [];
+  const step = flatSteps[i];
+  const effective =
+    typeof window.appendixMatrixCodesForPathHopIndex === "function"
+      ? window.appendixMatrixCodesForPathHopIndex(flatSteps, i, edgeConstraints)
+      : Array.isArray(step?.codes)
+        ? step.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+        : [];
+  if (!effective.length) return [];
+  const validPicker =
+    effective.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+      ? window.relationshipPickerCodesFromMatrixCodes(effective)
+      : effective;
+  return validPicker.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+}
+
+/**
+ * For flip-first flows, keep the user-selected reverse code when valid; if routing degrades to a single
+ * allowed code (e.g. Association fallback), commit that canonical singleton instead of leaving the hop provisional.
+ */
+function resolvedPendingFlipChoiceForPicker(selectedCode, pickerCodes) {
+  const pickers = Array.isArray(pickerCodes)
+    ? pickerCodes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+    : [];
+  if (!pickers.length) return null;
+  const selected = String(selectedCode || "").toUpperCase();
+  if (selected && pickers.includes(selected)) return selected;
+  if (pickers.length === 1) return pickers[0];
+  return null;
+}
+
+/**
+ * After an edge-flip re-find, map the chosen Appendix B letter to the hop index for the same
+ * undirected element pair (connect-set reorder can shift hop indices).
+ */
+function applyPendingEdgeFlipUserChoiceAfterPathResolved(runId) {
+  const p = state._pendingEdgeFlipUserChoice;
+  if (!p || Number(p.applyOnRunId) !== Number(runId) || runId !== state._findRunId) return;
+  const code = String(p.code || "").trim().toUpperCase();
+  const elA = String(p.elA || "").trim();
+  const elB = String(p.elB || "").trim();
+  const hopHint = Number.isFinite(Number(p.hopHint)) ? Math.floor(Number(p.hopHint)) : null;
+  state._pendingEdgeFlipUserChoice = null;
+  if (!code || !elA || !elB || !state.segments?.length || !window.store) return;
+
+  const flat = flattenSegments(state.segments, state.activePathIdx ?? 0);
+  const ec = normalizedEdgeConstraintsFromState();
+  const matches = [];
+  for (let i = 1; i < flat.length; i++) {
+    const prev = String(flat[i - 1]?.element || "").trim();
+    const curr = String(flat[i]?.element || "").trim();
+    if (!sameUndirectedEdgePair(prev, curr, elA, elB)) continue;
+    const validPicker = pickerCodesForHopWithConstraints(flat, i, ec);
+    const resolvedCode = resolvedPendingFlipChoiceForPicker(code, validPicker);
+    if (!resolvedCode) continue;
+    matches.push({ hopIndex: i, code: resolvedCode });
+  }
+  let chosen = null;
+  if (matches.length === 1) {
+    chosen = matches[0];
+  } else if (matches.length > 1 && hopHint != null) {
+    const exact = matches.find((m) => m.hopIndex === hopHint);
+    if (exact) chosen = exact;
+    else {
+      chosen = matches.reduce((best, entry) =>
+        Math.abs(entry.hopIndex - hopHint) < Math.abs(best.hopIndex - hopHint) ? entry : best
+      );
+    }
+  } else if (matches.length > 1) {
+    // Deterministic fallback for repeated undirected pairs when no hop hint was provided.
+    chosen = matches[0];
+  }
+  if (chosen) {
+    window.store.dispatch("SET_USER_CHOICE", { hopIndex: chosen.hopIndex, code: chosen.code });
+  } else {
+    console.warn("[edge-flip] pending reverse relationship could not be committed", {
+      code,
+      elA,
+      elB,
+      hopHint,
+    });
+  }
 }
 
 function removeEdgeConstraintPair(source, target, { reason = "edge-unpin" } = {}) {
@@ -7085,8 +7227,13 @@ window.findPath = function(opts = {}) {
   }
 
   const findReason = (opts && typeof opts.reason === "string" && opts.reason) || "";
+  const recomputeKeepWaypointChain = findReason === "edge-flip-recompute";
   /** Same waypoints + constraint tweak: keep hop disambiguation; full find clears it. */
-  const preserveUserChoices = findReason === "edge-flip";
+  const preserveUserChoices =
+    findReason === "edge-flip" || recomputeKeepWaypointChain;
+  if (preserveUserChoices && state._pendingEdgeFlipUserChoice?.code) {
+    state._pendingEdgeFlipUserChoice.applyOnRunId = runId;
+  }
 
   trackEvent("find_path", {
     selectionMode: state.selectionMode,
@@ -7121,8 +7268,12 @@ window.findPath = function(opts = {}) {
     let findPathRunApplied = false;
     try {
     // If a newer run started while we were waiting for the UI to paint, ignore this callback.
-    if (runId !== state._findRunId) return;
+    if (runId !== state._findRunId) {
+      clearPendingEdgeFlipUserChoiceIfForRun(runId);
+      return;
+    }
     if (!isPathSearchInputReady()) {
+      clearPendingEdgeFlipUserChoiceIfForRun(runId);
       invalidatePathSearchResults();
       checkReady();
       return;
@@ -7153,7 +7304,7 @@ window.findPath = function(opts = {}) {
       edgeConstraints: normalizedEdgeConstraintsFromState(),
     };
     let searchStatus = "no_path";
-    if (state.selectionMode === 'set') {
+    if (state.selectionMode === 'set' && !recomputeKeepWaypointChain) {
       const res = findBestChainForSet(searchGraph, picked, searchOptions);
       segs = res?.segments ?? [];
       pathIsFallback = !!res?.isFallback;
@@ -7203,11 +7354,17 @@ window.findPath = function(opts = {}) {
     }
 
     // Guard against stale async completion (e.g. user toggles options rapidly).
-    if (runId !== state._findRunId) return;
+    if (runId !== state._findRunId) {
+      clearPendingEdgeFlipUserChoiceIfForRun(runId);
+      return;
+    }
 
     state.segments = segs;
     state.lastPathSearchStatus = searchStatus;
     state.lastPathIsFallback = !hasNoPath && pathIsFallback;
+    state.pendingConstraintRecompute = false;
+    state.pendingConstraintRecomputeCount = 0;
+    state.pendingConstraintRecomputeSinceRunId = null;
 
     trackEvent("find_path_result", {
       ok: !hasNoPath,
@@ -7237,7 +7394,14 @@ window.findPath = function(opts = {}) {
         state.lastPathTemporaryRelaxation = null;
       }
     }
-    state.activePathIdx = 0;
+    if (!recomputeKeepWaypointChain) {
+      state.activePathIdx = 0;
+    } else if (state.segments?.length) {
+      const maxAlts = Math.max(...state.segments.map((s) => s.paths.length), 1);
+      state.activePathIdx = Math.max(0, Math.min(Number(state.activePathIdx) || 0, maxAlts - 1));
+    } else {
+      state.activePathIdx = 0;
+    }
     computeAndSetPathFailureHints(
       hasNoPath,
       picked,
@@ -7265,6 +7429,13 @@ window.findPath = function(opts = {}) {
         state.activePathIdx = Math.max(0, Math.min(Math.floor(ex.activePathIdx), maxAlts - 1));
       }
       sanitizeUserChoicesForActivePath();
+    }
+    if (findReason === "edge-flip") {
+      if (hasNoPath) {
+        clearPendingEdgeFlipUserChoiceIfForRun(runId);
+      } else {
+        applyPendingEdgeFlipUserChoiceAfterPathResolved(runId);
+      }
     }
     // Single render after all state (including session extras) is applied.
     scheduleRenderResults();
@@ -8968,6 +9139,8 @@ function buildPathResultBanners() {
   const hasTemp = t && (t.derived || t.association);
   const isFallback = state.lastPathIsFallback;
   const edgeConstraintWarning = String(state.edgeConstraintWarning || "").trim();
+  const pendingRecompute = !!state.pendingConstraintRecompute;
+  const pendingRecomputeCount = Math.max(0, Number(state.pendingConstraintRecomputeCount) || 0);
   const mergeAssocOneShot =
     isFallback && hasTemp && t.association;
   const assocSanctioned = activeRouteAssociationHopsAllPedagogySanctioned();
@@ -8988,6 +9161,13 @@ function buildPathResultBanners() {
   }
 
   let html = "";
+  if (pendingRecompute) {
+    const repeatFlipText =
+      pendingRecomputeCount >= 2
+        ? ` You flipped ${pendingRecomputeCount} directions since the last recompute.`
+        : "";
+    html += `<div class="path-temp-relax-banner path-temp-relax-banner--recompute" role="status">⚠️ Direction flips changed path constraints.${repeatFlipText} This route and explanation may no longer match your intended direction set. <button type="button" class="path-recompute-btn" onclick="window.recomputePathAfterDirectionFlips(event)">Recompute path now</button></div>`;
+  }
   if (edgeConstraintWarning) {
     html += `<div class="path-temp-relax-banner" role="status">⚠️ ${escapeHtml(edgeConstraintWarning)}</div>`;
   }
@@ -9338,6 +9518,7 @@ function renderResults() {
       perspectiveTitles: getPerspectiveTitlesForDomain(),
       domainContext: state.domainContext,
       rigorPreset: state.searchRigorPreset,
+      staleAfterDirectionFlips: !!state.pendingConstraintRecompute,
     });
     setExplanationRouteColumn(explained.routeColumn);
     explainEl.innerHTML = pathResultBanners + explained.detailColumn + connectSetRoutingFooter;
@@ -9575,7 +9756,7 @@ function highlightHop(hopIdx) {
   const multiHop = codeList.length > 1;
   const edgeCommitted =
     typeof window.edgeChoiceCommittedForHop === "function"
-      ? window.edgeChoiceCommittedForHop(hopIdx, codes)
+      ? window.edgeChoiceCommittedForHop(hopIdx, codes, state.edgeConstraints)
       : true;
   const primaryCodeRaw =
     multiHop && !edgeCommitted
@@ -9813,7 +9994,7 @@ function updateMetamodelHighlight(segments, pathIdx) {
       const multiHop = codeList.length > 1;
       const edgeCommitted =
         typeof window.edgeChoiceCommittedForHop === "function"
-          ? window.edgeChoiceCommittedForHop(i, codes)
+          ? window.edgeChoiceCommittedForHop(i, codes, state.edgeConstraints)
           : true;
       const primaryCodeRaw =
         multiHop && !edgeCommitted
@@ -10488,14 +10669,13 @@ function initEdgeContextMenu() {
       row.type = "button";
       row.className = "edge-context-submenu-item";
       row.setAttribute("role", "menuitem");
-      row.innerHTML = `${relationshipPreviewSvg(code, "reverse")}<span>${relName}</span>`;
+      row.innerHTML = `${relationshipPreviewSvg(code, "forward")}<span>${relName}</span>`;
+      row.title = "Apply reverse direction and commit this relationship.";
       row.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        const flipped =
-          typeof window.applyEdgeConstraintFlip === "function" && window.applyEdgeConstraintFlip(from, to);
-        if (flipped && window.store) {
-          window.store.dispatch("SET_USER_CHOICE", { hopIndex, code });
+        if (typeof window.applyEdgeConstraintFlip === "function") {
+          window.applyEdgeConstraintFlip(from, to, { relationshipCode: code, hopIndex });
         }
         closeMenu();
       });
@@ -10514,6 +10694,10 @@ function initEdgeContextMenu() {
 
     const relCodes = stateRef.relationshipCodes;
     const relEnabled = relCodes.length > 1;
+    const relationshipCommitted =
+      typeof window.edgeChoiceCommittedForHop === "function"
+        ? !!window.edgeChoiceCommittedForHop(stateRef.hopIndex, relCodes, state.edgeConstraints)
+        : true;
     relWrap.hidden = !relEnabled;
     setItemDisabled(relTrigger, !relEnabled);
     if (relEnabled) {
@@ -10523,29 +10707,62 @@ function initEdgeContextMenu() {
     }
 
     const constraintState = directedConstraintState(stateRef.from, stateRef.to);
-    const isAssocHop = !!meta.step?.isAssociation;
-    const canFlip = !isAssocHop && stateRef.currentCode !== "O" && stateRef.reverseRelationshipCodes.length > 0;
+    const isAssociationSelection = !!meta.step?.isAssociation || stateRef.currentCode === "O";
+    let filteredFlipCodes = [];
+    if (!isAssociationSelection && stateRef.reverseRelationshipCodes.length > 0) {
+      const flat = getFlatSteps();
+      const nextConstraints = normalizedEdgeConstraintsFromState()
+        .filter((c) => !sameUndirectedEdgePair(c.sourceId, c.targetId, stateRef.from, stateRef.to));
+      nextConstraints.push({ sourceId: stateRef.to, targetId: stateRef.from, type: "FORCED_DIRECTION" });
+      const validAfterFlip = new Set(
+        pickerCodesForHopWithConstraints(flat, stateRef.hopIndex, nextConstraints)
+      );
+      filteredFlipCodes = stateRef.reverseRelationshipCodes.filter((code) =>
+        validAfterFlip.has(String(code || "").toUpperCase())
+      );
+    }
+    const requiresRelationshipChoiceFirst = relEnabled && !relationshipCommitted;
+    const canFlip = !requiresRelationshipChoiceFirst && filteredFlipCodes.length > 0;
+    const showFlipSection = isAssociationSelection || requiresRelationshipChoiceFirst || canFlip;
     const hasPinnedDirection = constraintState.hasAny;
-    const canPinCurrent = !hasPinnedDirection;
+    const directionalActionsAllowed = !isAssociationSelection;
+    const directionChoiceCommitted = !relEnabled || relationshipCommitted;
+    const canPinCurrent = directionalActionsAllowed && directionChoiceCommitted && !hasPinnedDirection;
+    const showUnpin = directionalActionsAllowed && directionChoiceCommitted && hasPinnedDirection;
 
-    flipWrap.hidden = !canFlip;
-    setItemDisabled(flipBtn, !canFlip);
-    if (canFlip) {
+    flipWrap.hidden = !showFlipSection;
+    if (isAssociationSelection) {
+      setItemDisabled(flipBtn, true);
+      flipBtn.title = "Association is undirected, so flip is not applicable.";
+      flipPanel.innerHTML = "";
+      flipPanel.hidden = true;
+      flipBtn.setAttribute("aria-expanded", "false");
+    } else if (requiresRelationshipChoiceFirst) {
+      setItemDisabled(flipBtn, true);
+      flipBtn.title = "Choose a relationship type first.";
+      flipPanel.innerHTML = "";
+      flipPanel.hidden = true;
+      flipBtn.setAttribute("aria-expanded", "false");
+    } else if (canFlip) {
+      setItemDisabled(flipBtn, false);
+      flipBtn.title = "";
       buildFlipSubmenu(
-        stateRef.reverseRelationshipCodes,
+        filteredFlipCodes,
         stateRef.hopIndex,
         stateRef.from,
         stateRef.to
       );
     } else {
+      setItemDisabled(flipBtn, true);
+      flipBtn.title = "";
       flipPanel.innerHTML = "";
       flipPanel.hidden = true;
       flipBtn.setAttribute("aria-expanded", "false");
     }
     pinBtn.hidden = !canPinCurrent;
     setItemDisabled(pinBtn, !canPinCurrent);
-    unpinBtn.hidden = !hasPinnedDirection;
-    setItemDisabled(unpinBtn, !hasPinnedDirection);
+    unpinBtn.hidden = !showUnpin;
+    setItemDisabled(unpinBtn, !showUnpin);
 
     menu.hidden = false;
     menu.setAttribute("aria-hidden", "false");

@@ -136,7 +136,7 @@ function compositeObstaclesVerticalCompact(pos, elementName, { includeMain = tru
   return out;
 }
 
-function computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex) {
+function computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex, pathStepCodes = null) {
   const a = positions[vFrom];
   const b = positions[vTo];
   const { x1, y1, x2, y2 } = layerGravityHopPorts(a, b, fromEl, toEl);
@@ -146,11 +146,11 @@ function computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl
   const len = Math.abs(y2 - y1);
   const srcCy = a.cy;
   const tgtCy = b.cy;
+  const applyVertStartInset = hopCodesIncludeAppendixStartMarker(pathStepCodes);
 
   if (crossLane) {
     if (sameX) {
-      const isLv = len > 8;
-      const insetStart = isLv ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+      const insetStart = verticalSameColumnStartMarkerInset(len, applyVertStartInset);
       let y1s = y1;
       let y2s = y2;
       if (y1 < y2) y1s = y1 + insetStart;
@@ -164,8 +164,7 @@ function computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl
     }
   } else {
     if (sameX && len > 1e-6) {
-      const isLongVertical = len > 8;
-      const insetStart = isLongVertical ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+      const insetStart = verticalSameColumnStartMarkerInset(len, applyVertStartInset);
       let y1s = y1;
       let y2s = y2;
       if (y1 < y2) y1s = y1 + insetStart;
@@ -376,7 +375,7 @@ function computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, so
     if (vFrom == null || vTo == null || vFrom === vTo) continue;
     const fromEl = steps[vFrom].element;
     const toEl = steps[vTo].element;
-    const needGeomBypass = computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hop);
+    const needGeomBypass = computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hop, step.codes);
     const needStairBypass = badgeStairWantsOuterBypass(positions, steps, vFrom, vTo, hop, badgeOffsetByHop);
     const a = positions[vFrom];
     const b = positions[vTo];
@@ -426,8 +425,8 @@ function computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, so
 }
 
 /** Rough outer-bus X for layout scoring (no stagger). */
-function computeVerticalCompactOuterArcTrackX(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex) {
-  if (!computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex)) return null;
+function computeVerticalCompactOuterArcTrackX(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex, pathStepCodes = null) {
+  if (!computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hopIndex, pathStepCodes)) return null;
   return estimateVerticalCompactOuterArcTx(
     positions,
     steps,
@@ -691,7 +690,7 @@ function computeVerticalRotatedLaneLayout(flatSteps) {
   };
 }
 
-function estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outerArcTxOrShape = null) {
+function estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outerArcTxOrShape = null, pathStepCodes = null) {
   const { x1, y1, x2, y2 } = layerGravityHopPorts(a, b, fromEl, toEl);
   const crossLane = a.bandId !== b.bandId;
   const westByDirection = !crossLane && b.x < a.x;
@@ -722,8 +721,8 @@ function estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outerArcTxOrShape
   let ySegLo = Math.min(y1, y2);
   let ySegHi = Math.max(y1, y2);
   if (sameColumnVertical && !outerBypassShape && !sameColumnOuter && lenPorts > 1e-6) {
-    const isLongVertical = lenPorts > 8;
-    const insetStart = isLongVertical ? Math.min(VERT_EDGE_INSET, lenPorts * 0.28) : 0;
+    const applyVertStartInset = hopCodesIncludeAppendixStartMarker(pathStepCodes);
+    const insetStart = verticalSameColumnStartMarkerInset(lenPorts, applyVertStartInset);
     let y1s = y1;
     let y2s = y2;
     if (y1 < y2) y1s = y1 + insetStart;
@@ -783,8 +782,8 @@ function scoreVerticalLayoutReadability(layout, flatSteps) {
     const b = positions[hop];
     const fromEl = steps[hop - 1].element;
     const toEl = steps[hop].element;
-    const arcX = computeVerticalCompactOuterArcTrackX(positions, steps, hop - 1, hop, fromEl, toEl, hop);
-    labels.push(estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, arcX));
+    const arcX = computeVerticalCompactOuterArcTrackX(positions, steps, hop - 1, hop, fromEl, toEl, hop, step.codes);
+    labels.push(estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, arcX, step.codes));
   }
 
   for (let i = 0; i < labels.length; i++) {
@@ -845,7 +844,7 @@ function computeVerticalLabelNudges(pathFlatSteps, steps, positions, sortedIndic
     const fromEl = steps[vFrom].element;
     const toEl = steps[vTo].element;
     const arcX = outerArcTrackByHop?.get(hop) ?? null;
-    const base = estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, arcX);
+    const base = estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, arcX, step.codes);
     base.x += badgeOffsetByHop.get(hop) || 0;
     rows.push(base);
   }

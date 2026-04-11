@@ -153,6 +153,11 @@ body {
   font-weight: 600;
   vertical-align: baseline;
 }
+.explain-path-meta .tag.tag-recompute-stale {
+  background: rgba(180, 83, 9, 0.12);
+  color: #8a3f00;
+  border: 1px solid rgba(180, 83, 9, 0.3);
+}
 
 .edge-architect-notes {
   margin-top: 8px;
@@ -708,6 +713,25 @@ body {
   color: var(--text-2, #334155);
   font-size: 13px;
   line-height: 1.45;
+}
+.path-temp-relax-banner.path-temp-relax-banner--recompute {
+  border-color: rgba(180, 83, 9, 0.45);
+  background: rgba(180, 83, 9, 0.12);
+  color: #7c2d12;
+}
+.path-recompute-btn {
+  margin-left: 8px;
+  border: 1px solid rgba(124, 45, 18, 0.45);
+  background: #fff;
+  color: #7c2d12;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.path-recompute-btn:hover {
+  background: rgba(124, 45, 18, 0.08);
 }
 
 .path-failure-suggestions {

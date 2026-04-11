@@ -2136,6 +2136,38 @@ function describeRelCodesForDiagramLabel(codes) {
 // ARROW DRAWING (Restored Interaction & Orthogonal Routing)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Slide the path’s first vertex along the opening segment so marker-start (Appendix B composition,
+ * aggregation, triggering) clears the source element. Relationship strokes are drawn under node
+ * layers; without this, a horizontal hop reads as a plain line because the rhombus sits under the
+ * source box. Short first legs still get a small inset whenever a start marker is active so the
+ * diamond is not clipped at degenerate spans.
+ */
+function hopPathStartInsetAlongAxis(from, toward, apply) {
+  if (!apply || !Number.isFinite(from) || !Number.isFinite(toward)) return from;
+  const span = Math.abs(toward - from);
+  if (!(span > 1e-6)) return from;
+  const insetMax = Math.min(VERT_EDGE_INSET, span * 0.38);
+  const inset = Math.min(insetMax, span - 0.35);
+  if (inset <= 1e-6) return from;
+  return from + Math.sign(toward - from) * inset;
+}
+
+/** Inset the first point toward (xT, yT) along the chord (diagonal or first leg of a chord route). */
+function hopPathStartInsetAlongChord(x1, y1, xT, yT, apply) {
+  if (!apply) return { x: x1, y: y1 };
+  const dx = xT - x1;
+  const dy = yT - y1;
+  const chordLen = Math.hypot(dx, dy);
+  if (!(chordLen > 1e-6)) return { x: x1, y: y1 };
+  const insetMax = Math.min(VERT_EDGE_INSET, chordLen * 0.38);
+  const inset = Math.min(insetMax, chordLen - 0.35);
+  if (inset <= 1e-6) return { x: x1, y: y1 };
+  const ux = dx / chordLen;
+  const uy = dy / chordLen;
+  return { x: x1 + ux * inset, y: y1 + uy * inset };
+}
+
 /** Whether `activeCode` is a direct (Appendix B) vs §5.7 derived relationship for this hop. */
 function isActiveCodeDirectInMatrix(step, activeCode) {
   if (!activeCode || !step) return step?.isDirect ?? true;
@@ -2231,8 +2263,22 @@ function resolvedRelationshipCodeForHop(step, hopIndex, fromElement, edgeConstra
   }
 
   const pathCodes = Array.isArray(step?.codes) ? step.codes : [];
-  const toEl = String(step?.element || "").trim();
-  const fromStr = fromEl != null ? String(fromEl).trim() : "";
+  let toEl = String(step?.element || "").trim();
+  let fromStr = fromEl != null ? String(fromEl).trim() : "";
+  /**
+   * {@link drawArrow} often passes only `{ codes }` (no `element`). Without the hop target, we cannot
+   * merge {@link matrixCodesForPathAppendixBRow} — the picker shrinks to pathfinder letters, user picks
+   * (e.g. Composition) fall out of that list, and {@link edgeChoiceCommittedForHop} keeps the edge
+   * “provisional” (no markers) while the explanation panel still shows the chosen type.
+   */
+  if ((!toEl || !fromStr) && hopIndex != null && typeof window !== "undefined" && window.state?.segments) {
+    const flat = flattenSegments(window.state.segments, window.state.activePathIdx ?? 0);
+    const ix = Number(hopIndex);
+    if (Number.isInteger(ix) && ix >= 1 && ix < flat.length) {
+      if (!fromStr) fromStr = String(flat[ix - 1]?.element || "").trim();
+      if (!toEl) toEl = String(flat[ix]?.element || "").trim();
+    }
+  }
   const matrixCodes =
     fromStr && toEl
       ? matrixCodesForPathAppendixBRow(fromStr, toEl, pathCodes, ec)
@@ -2251,14 +2297,32 @@ function resolvedRelationshipCodeForHop(step, hopIndex, fromElement, edgeConstra
   return exact != null ? String(exact).toUpperCase() : u;
 }
 
-/** True when the user has explicitly picked a code for this hop (multi-code hops only). */
-function edgeChoiceCommittedForHop(hopIndex, codesList) {
-  if (hopIndex == null || !codesList || codesList.length <= 1) return true;
+/**
+ * True when the user has explicitly picked a code for this hop (multi-code hops only).
+ * When {@code window.state.segments} is available, validates against {@link appendixMatrixCodesForPathHopIndex}
+ * so picks line up with the same Appendix B row as {@link resolvedRelationshipCodeForHop} (path segment
+ * `codes` alone can omit letters the matrix row still allows).
+ */
+function edgeChoiceCommittedForHop(hopIndex, codesList, edgeConstraints) {
+  if (hopIndex == null) return true;
+  let effective = Array.isArray(codesList)
+    ? codesList.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+    : [];
+  if (typeof window !== "undefined" && Array.isArray(window.state?.segments)) {
+    const flat = flattenSegments(window.state.segments, window.state.activePathIdx ?? 0);
+    const ix = Number(hopIndex);
+    if (Number.isInteger(ix) && ix >= 1 && ix < flat.length) {
+      const ec = edgeConstraints !== undefined ? edgeConstraints : window.state?.edgeConstraints;
+      const ap = appendixMatrixCodesForPathHopIndex(flat, hopIndex, ec);
+      if (ap.length) effective = ap;
+    }
+  }
+  if (!effective.length || effective.length <= 1) return true;
   if (typeof window === "undefined") return false;
   const raw = window.state?.userChoices?.[hopIndex];
   if (raw == null || raw === "") return false;
   const u = String(raw).toUpperCase();
-  const pickerCodes = relationshipPickerCodesFromMatrixCodes(codesList);
+  const pickerCodes = relationshipPickerCodesFromMatrixCodes(effective);
   return pickerCodes.some((c) => String(c).toUpperCase() === u);
 }
 
@@ -2276,9 +2340,18 @@ function estimateSwimlaneHopLabelWidthPx(step, hopIndex, flatSteps = null, edgeC
         : [];
   if (!codesList.length) return SWIMLANE_COMPACT_COL_GAP;
   const choiceUndecided =
-    hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
+    hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList, ec);
   const active =
-    hopIndex != null ? resolvedRelationshipCodeForHop({ codes: codesList }, hopIndex) : String(codesList[0] ?? "O");
+    hopIndex != null
+      ? resolvedRelationshipCodeForHop(
+          flatSteps && hopIndex != null
+            ? { codes: codesList, element: flatSteps[hopIndex]?.element }
+            : { codes: codesList },
+          hopIndex,
+          flatSteps && hopIndex != null ? flatSteps[hopIndex - 1]?.element : undefined,
+          ec,
+        )
+      : String(codesList[0] ?? "O");
   const labelLines = wrapLabel(
     choiceUndecided ? describeRelCodesForDiagramLabel(codesList) : describeRelCodesForDiagramLabel([active])
   );
@@ -2347,10 +2420,45 @@ function appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, edgeConstraints
   return matrixCodesForPathAppendixBRow(prevEl, currEl, pathCodes, edgeConstraints);
 }
 
+/**
+ * Shared “does this hop still need a relationship pick?” basis for diagram + explanation.
+ * Uses Appendix B row codes when available; falls back to path step codes when Appendix data is absent.
+ */
+function hopRelationshipChoiceState(flatSteps, hopIndex, edgeConstraints) {
+  const i = Number(hopIndex);
+  if (!Number.isInteger(i) || i < 1 || !Array.isArray(flatSteps) || i >= flatSteps.length) {
+    return {
+      appendixCodes: [],
+      choiceBasisCodes: [],
+      pickerCodes: [],
+      hasChoices: false,
+      needsPick: false,
+    };
+  }
+  const stepCodes = Array.isArray(flatSteps[i]?.codes)
+    ? flatSteps[i].codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+    : [];
+  const appendixCodes = appendixMatrixCodesForPathHopIndex(flatSteps, i, edgeConstraints);
+  const choiceBasisCodes = appendixCodes.length ? appendixCodes : stepCodes;
+  const pickerCodes =
+    choiceBasisCodes.length > 1
+      ? relationshipPickerCodesFromMatrixCodes(choiceBasisCodes)
+      : choiceBasisCodes;
+  const hasChoices = pickerCodes.length > 1;
+  const needsPick = hasChoices && !edgeChoiceCommittedForHop(i, choiceBasisCodes, edgeConstraints);
+  return {
+    appendixCodes,
+    choiceBasisCodes,
+    pickerCodes,
+    hasChoices,
+    needsPick,
+  };
+}
+
 /** Like {@link edgeChoiceCommittedForHop} but uses flattened path steps (respects direction flip). */
 function edgeChoiceCommittedForPathHop(hopIndex, flatSteps, edgeConstraints) {
   const codesList = appendixMatrixCodesForPathHopIndex(flatSteps, hopIndex, edgeConstraints);
-  return edgeChoiceCommittedForHop(hopIndex, codesList);
+  return edgeChoiceCommittedForHop(hopIndex, codesList, edgeConstraints);
 }
 
 /**
@@ -2492,23 +2600,39 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     if (row?.merged?.length) codesList = row.merged.map((c) => String(c).toUpperCase());
   }
 
+  const appendixForChoice =
+    hopIndex != null && typeof window !== "undefined" && Array.isArray(window.state?.segments)
+      ? appendixMatrixCodesForPathHopIndex(
+          flattenSegments(window.state.segments, window.state.activePathIdx ?? 0),
+          hopIndex,
+          edgeConstraints ?? window.state?.edgeConstraints,
+        )
+      : [];
+  const codesForChoiceBasis = appendixForChoice.length ? appendixForChoice : codesForUserChoice;
+
   const choiceUndecided =
     hopIndex != null &&
-    codesForUserChoice.length > 1 &&
-    !edgeChoiceCommittedForHop(hopIndex, codesForUserChoice);
+    codesForChoiceBasis.length > 1 &&
+    !edgeChoiceCommittedForHop(hopIndex, codesForUserChoice, edgeConstraints);
   /** No arrowheads until the user picks a code — path should meet ports without marker clearance gaps. */
   const markerTargetClr = choiceUndecided ? 0 : ARROW_MARKER_TARGET_CLEARANCE;
   const activeCode =
     hopIndex != null
-      ? resolvedRelationshipCodeForHop({ codes: codesForUserChoice }, hopIndex)
+      ? resolvedRelationshipCodeForHop(
+          { codes: codesForUserChoice, element: semanticTo },
+          hopIndex,
+          semanticFrom,
+          edgeConstraints,
+        )
       : (codesList[0] ?? "O");
   const UPPER = activeCode.toUpperCase();
   const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
   /**
-   * Vertical same-column paths shorten the start so a drawn start marker sits in the gap (see VERT_EDGE_INSET).
-   * Most relationship codes have no start marker — applying that inset anyway made shafts look truncated.
+   * Shorten the path start along its opening segment so marker-start sits in the channel (see
+   * {@link VERT_EDGE_INSET} for vertical; {@link hopPathStartInsetAlongAxis} for horizontal/diagonal).
+   * Most codes have no start marker — applying inset anyway would truncate “plain” shafts.
    */
-  const applyVertStartInset =
+  const applyStartMarkerInset =
     !choiceUndecided && style.startMarker != null && style.startMarker !== "none";
   let rowMd = matrixDirectCodes;
   let rowMder = matrixDerivedCodes;
@@ -2600,7 +2724,11 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       // Ensure the marker-end lands on a clearly horizontal "return leg" (two right angles).
       txC = exR + Math.sign(txC - exR || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
     }
-    d = `M ${sx} ${sy} L ${txC} ${sy} L ${txC} ${ey} L ${exR} ${ey}`;
+    const sx0 =
+      Math.abs(sx - txC) > 0.5
+        ? hopPathStartInsetAlongAxis(sx, txC, applyStartMarkerInset)
+        : sx;
+    d = `M ${sx0} ${sy} L ${txC} ${sy} L ${txC} ${ey} L ${exR} ${ey}`;
     orthoMidX = txC;
     orthoVertical = true;
     swimlaneColElbow = true;
@@ -2618,8 +2746,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       // Inset only the path start so the start marker sits in the gap; end at the target edge so
       // marker-end (arrow/triangle) touches the destination box — symmetric inset on both ends
       // leaves both markers floating mid-gap (reads as “random” placement).
-      const insetStart =
-        isLv && applyVertStartInset ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+      const insetStart = verticalSameColumnStartMarkerInset(len, applyStartMarkerInset);
       if (y1 < y2) {
         y1s = y1 + insetStart;
         y2s = y2;
@@ -2634,7 +2761,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       const clrE = markerTargetClr;
       const y2e =
         Math.abs(y2 - ym) > clrE ? y2 - Math.sign(y2 - ym) * clrE : y2;
-      d = `M ${x1} ${y1} L ${x1} ${ym} L ${x2} ${ym} L ${x2} ${y2e}`;
+      const y1a = hopPathStartInsetAlongAxis(y1, ym, applyStartMarkerInset);
+      d = `M ${x1} ${y1a} L ${x1} ${ym} L ${x2} ${ym} L ${x2} ${y2e}`;
       orthoMidX = midX;
       orthoVertical = len > 10;
       swimlaneColElbow = true;
@@ -2648,10 +2776,12 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       if (sameLaneSideJog) {
         const jogRise = Math.max(22, Math.ceil(EL_H * 0.75));
         const jogY = y1 - jogRise;
-        d = `M ${x1} ${y1} L ${x1} ${jogY} L ${x2} ${jogY} L ${x2f} ${y2}`;
+        const y1a = hopPathStartInsetAlongAxis(y1, jogY, applyStartMarkerInset);
+        d = `M ${x1} ${y1a} L ${x1} ${jogY} L ${x2} ${jogY} L ${x2f} ${y2}`;
         orthoVertical = true;
       } else {
-        d = `M ${x1} ${y1} L ${x2f} ${y2}`;
+        const x1a = hopPathStartInsetAlongAxis(x1, x2f, applyStartMarkerInset);
+        d = `M ${x1a} ${y1} L ${x2f} ${y2}`;
       }
     } else if (smoothCrossLane) {
       orthoMidX = midX;
@@ -2676,11 +2806,14 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       const dxAbs = Math.abs(vx);
       const pullBase = Math.min(dxAbs * 0.38, chordLen * 0.36);
       const pull = Math.min(88, Math.max(20, pullBase));
-      const c1x = x1 + ux * pull;
-      const c1y = y1 + uy * pull;
+      const p0 = hopPathStartInsetAlongChord(x1, y1, x2b, y2b, applyStartMarkerInset);
+      const duX = p0.x - x1;
+      const duY = p0.y - y1;
+      const c1x = x1 + ux * pull + duX;
+      const c1y = y1 + uy * pull + duY;
       const c2x = x2b - ux * pull;
       const c2y = y2b - uy * pull;
-      d = `M ${x1} ${y1} C ${c1x} ${c1y} ${c2x} ${c2y} ${x2b} ${y2b}`;
+      d = `M ${p0.x} ${p0.y} C ${c1x} ${c1y} ${c2x} ${c2y} ${x2b} ${y2b}`;
       pathCurved = true;
       orthoVertical = len > 8;
     } else if (orthogonalPin === "source") {
@@ -2707,7 +2840,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       x2Bus =
         Math.abs(x2 - tx) > clrS ? x2 - Math.sign(x2 - tx) * clrS : x2;
       orthoMidX = tx;
-      d = `M ${x1} ${y1} L ${tx} ${y1} L ${tx} ${y2} L ${x2Bus} ${y2}`;
+      const x1a = hopPathStartInsetAlongAxis(x1, tx, applyStartMarkerInset);
+      d = `M ${x1a} ${y1} L ${tx} ${y1} L ${tx} ${y2} L ${x2Bus} ${y2}`;
       orthoVertical = len > 8;
       swimlaneColElbow = true;
     } else {
@@ -2729,13 +2863,13 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       }
       orthoMidX = busX;
       x2m = x2mForBus(busX);
-      d = `M ${x1} ${y1} L ${orthoMidX} ${y1} L ${orthoMidX} ${y2} L ${x2m} ${y2}`;
+      const x1b = hopPathStartInsetAlongAxis(x1, orthoMidX, applyStartMarkerInset);
+      d = `M ${x1b} ${y1} L ${orthoMidX} ${y1} L ${orthoMidX} ${y2} L ${x2m} ${y2}`;
       orthoVertical = len > 10;
     }
   } else if (sameX) {
     const isLongVertical = len > 8;
-    const insetStart =
-      isLongVertical && applyVertStartInset ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+    const insetStart = verticalSameColumnStartMarkerInset(len, applyStartMarkerInset);
     if (y1 < y2) {
       y1s = y1 + insetStart;
       y2s = y2;
@@ -2764,7 +2898,16 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         ye = y2 - (dy / len) * clrD;
       }
     }
-    d = `M ${x1} ${y1} L ${xe} ${ye}`;
+    let x1o = x1;
+    let y1o = y1;
+    if (flatH && Math.abs(xe - x1) > 1e-6) {
+      x1o = hopPathStartInsetAlongAxis(x1, xe, applyStartMarkerInset);
+    } else if (!flatH && !flatV) {
+      const p0 = hopPathStartInsetAlongChord(x1, y1, xe, ye, applyStartMarkerInset);
+      x1o = p0.x;
+      y1o = p0.y;
+    }
+    d = `M ${x1o} ${y1o} L ${xe} ${ye}`;
   }
   }
 
@@ -2784,26 +2927,30 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       txArc = x2Bus + Math.sign(txArc - x2Bus || 1) * OUTER_BYPASS_RETURN_ELBOW_MIN_PX;
     }
     if (verticalSwimlanePorts && sameX) {
-      d = `M ${x1} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
+      const x1a = hopPathStartInsetAlongAxis(x1, txArc, applyStartMarkerInset);
+      d = `M ${x1a} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
       orthoMidX = txArc;
       orthoVertical = true;
       swimlaneColElbow = true;
       straightVerticalInset = false;
       pathCurved = false;
     } else if (verticalSwimlanePorts && !sameX) {
-      d = `M ${x1} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
+      const x1a = hopPathStartInsetAlongAxis(x1, txArc, applyStartMarkerInset);
+      d = `M ${x1a} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
       orthoMidX = txArc;
       orthoVertical = true;
       swimlaneColElbow = true;
       pathCurved = false;
     } else if (!verticalSwimlanePorts && orthogonal && !sameX && Math.abs(y1 - y2) >= 0.5 && orthogonalPin === "source") {
-      d = `M ${x1} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
+      const x1a = hopPathStartInsetAlongAxis(x1, txArc, applyStartMarkerInset);
+      d = `M ${x1a} ${y1} L ${txArc} ${y1} L ${txArc} ${y2} L ${x2Bus} ${y2}`;
       orthoMidX = txArc;
       orthoVertical = true;
       swimlaneColElbow = true;
       pathCurved = false;
     } else if (sameX && !verticalSwimlanePorts) {
-      d = `M ${x1} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
+      const x1a = hopPathStartInsetAlongAxis(x1, txArc, applyStartMarkerInset);
+      d = `M ${x1a} ${y1s} L ${txArc} ${y1s} L ${txArc} ${y2s} L ${x2Bus} ${y2s}`;
       orthoMidX = txArc;
       orthoVertical = true;
       swimlaneColElbow = true;
@@ -2877,6 +3024,11 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         isAssocBridge ? " archimate-arrow--association-bridge" : ""
       }`,
     });
+    /**
+     * Visible strokes live in this layer (under nodes in compact/swimlane). {@link renderWithAnimation}
+     * must resolve `path.graph-edge` → hop id the same way as `.clickable-arrow[data-hop]` overlays.
+     */
+    if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
     g.appendChild(mkStrokePath());
     return g;
   }
@@ -3587,6 +3739,7 @@ function ensureMarkers(svg) {
       refY: "4",
       orient: "auto",
       markerUnits: "strokeWidth",
+      overflow: "visible",
     });
     m.appendChild(svgEl("polygon", { points:"0 4, 4 0, 8 4, 4 8", fill: color }));
     return m;
@@ -3601,6 +3754,7 @@ function ensureMarkers(svg) {
       refY: "4",
       orient: "auto",
       markerUnits: "strokeWidth",
+      overflow: "visible",
     });
     m.appendChild(svgEl("polygon", {
       points:"0 4, 4 0, 8 4, 4 8",
@@ -3769,7 +3923,7 @@ function renderVerticalCompactDiagram(
         maxX = Math.max(maxX, outer.tx + pad);
       }
 
-      const lab = estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outer);
+      const lab = estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outer, step.codes);
       lab.x += (badgeOffsetByHop.get(hop) || 0) + (verticalLabelNudgesByHop.get(hop)?.x || 0);
       lab.y += (verticalLabelNudgesByHop.get(hop)?.y || 0);
       const left = lab.x - lab.w / 2;
@@ -4690,7 +4844,8 @@ function renderWithAnimation(diagramEl, newSegments, renderOptions = {}) {
 
   const edgeEls = [];
   for (const edge of diagramEl.querySelectorAll("path.graph-edge")) {
-    const hopG = edge.closest(".clickable-arrow[data-hop]");
+    /** Stroke-only layers use `data-hop` on {@code archimate-arrow-stroke-layer}, not `.clickable-arrow`. */
+    const hopG = edge.closest("[data-hop]");
     const hop = hopG?.getAttribute?.("data-hop");
     if (hop != null && oldArrowCenterByHop.has(hop)) {
       continue;
@@ -5673,7 +5828,7 @@ function characterisePath(flatSteps, edgeConstraints = null) {
     const prev = flatSteps[i - 1];
     const codes = appendixMatrixCodesForPathHopIndex(flatSteps, i, ec);
     if (!codes.length) continue;
-    if (codes.length > 1 && !edgeChoiceCommittedForHop(i, codes)) continue;
+    if (codes.length > 1 && !edgeChoiceCommittedForHop(i, codes, ec)) continue;
     const chosen = resolvedRelationshipCodeForHop(step, i, prev.element, ec);
     const u = String(chosen).toUpperCase();
     counts[u] = (counts[u] ?? 0) + 1;
@@ -5787,7 +5942,11 @@ function layerSlugForStepPill(layerName) {
   }
 }
 
-function explainPath(segments, selectedPathIndex = 0, { constrained = true, perspectiveMeta = null, perspectiveTitles = null, rigorPreset = "academic" } = {}) {
+function explainPath(
+  segments,
+  selectedPathIndex = 0,
+  { constrained = true, perspectiveMeta = null, perspectiveTitles = null, rigorPreset = "academic", staleAfterDirectionFlips = false } = {}
+) {
   try {
     if (!segments || segments.length === 0) return { routeColumn: "", detailColumn: "" };
     const flatSteps = flattenSegments(segments, selectedPathIndex);
@@ -5837,6 +5996,9 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
     metaLine += derivedCount > 0
       ? ` · <span class="tag tag-derived">${derivedCount} inferred (§5.7)</span>`
       : ` · <span class="tag tag-direct">All explicit (Appendix B)</span>`;
+    if (staleAfterDirectionFlips) {
+      metaLine += ` · <span class="tag tag-recompute-stale">Needs recompute after direction flips</span>`;
+    }
     const educationalContrast = (() => {
       if (hopCount < 2 || derivedCount > 0) return "";
       if (typeof mergeMatrixRowForPair !== "function") return "";
@@ -6125,8 +6287,9 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const waypointBadge = isJunction
         ? `<span class="tag tag-waypoint explain-badge-tip" data-explain-tip="waypoint" tabindex="0" role="note" aria-label="Waypoint marker at step ${i}">Waypoint</span>`
         : "";
-      const safeCodes = appendixMatrixCodesForPathHopIndex(flatSteps, i, edgeConstraintsExplain);
-      const hasChoices = safeCodes.length > 1;
+      const choiceState = hopRelationshipChoiceState(flatSteps, i, edgeConstraintsExplain);
+      const safeCodes = choiceState.choiceBasisCodes;
+      const hasChoices = choiceState.hasChoices;
       const activeCode = resolvedRelationshipCodeForHop(curr, i, prev.element, edgeConstraintsExplain);
       const hopMetaForPedagogy = curr.semanticHop
         ? { ...curr.semanticHop, from: narrFrom, to: narrTo }
@@ -6144,7 +6307,10 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const weakBadge = weakAssoc
         ? `<span class="tag tag-weak-link explain-badge-tip" data-explain-tip="association" tabindex="0" role="note">Generic link</span>`
         : "";
-      const isProvisional = hasChoices && !edgeChoiceCommittedForHop(i, safeCodes);
+      const hasPinnedDirectionForHop =
+        hasDirectedEdgeConstraint(edgeConstraintsExplain, prev.element, curr.element, "FORCED_DIRECTION") ||
+        hasDirectedEdgeConstraint(edgeConstraintsExplain, curr.element, prev.element, "FORCED_DIRECTION");
+      const isProvisional = choiceState.needsPick;
 
       const illustrationPathKey = String(selectedPathIndex);
       const architectNoteParts = [];
@@ -6161,7 +6327,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const architectNotesHtml = architectNoteParts.filter(Boolean).join(" ");
 
       const relHeaderName = isProvisional
-        ? "Relationship Pending"
+        ? (hasPinnedDirectionForHop ? "Relationship Choice Pending" : "Relationship Pending")
         : RELATIONSHIPS[String(activeCode || "O").toUpperCase()]?.name ?? String(activeCode);
       const narrFromScenario = getScenarioDisplayName(narrFrom);
       const narrToScenario = getScenarioDisplayName(narrTo);
@@ -6171,10 +6337,12 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const showThematicRoute =
         domainKey !== "abstract" && (narrFromDisp !== narrFrom || narrToDisp !== narrTo);
       const actionRequiredTag = isProvisional
-        ? `<span class="tag tag-action-required">Action Required</span>`
+        ? hasPinnedDirectionForHop
+          ? `<span class="tag tag-action-required" title="Direction is pinned for this hop; choose the relationship type." aria-label="Relationship choice required while direction is pinned">Choose relationship</span>`
+          : `<span class="tag tag-action-required">Action Required</span>`
         : "";
-      const forcedDirBadge = forcedReverse
-        ? `<span class="tag tag-forced-direction explain-badge-tip" data-explain-tip="forced-direction" tabindex="0" role="note" aria-label="Waypoint constraint: read this hop in the shown direction">Forced direction</span>`
+      const pinnedDirBadge = hasPinnedDirectionForHop
+        ? `<span class="tag tag-forced-direction explain-badge-tip" data-explain-tip="forced-direction" tabindex="0" role="note" aria-label="Direction for this hop is pinned">${forcedReverse ? "Pinned direction (reversed)" : "Pinned direction"}</span>`
         : "";
       const summaryCodeHtml = isProvisional
         ? ""
@@ -6203,7 +6371,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
               <span class="explain-hop-summary-body">
                 <div class="explain-hop-summary-top">
                   <h3 class="explain-hop-summary-rel">${escPathDiag(relHeaderName)}${summaryCodeHtml}</h3>
-                  <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}${forcedDirBadge}</div>
+                  <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}${pinnedDirBadge}</div>
                 </div>
                 ${routeCaptionHtml}
                 ${reverseSummaryLine}
@@ -6246,7 +6414,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
         flatSteps.slice(1).flatMap((s, idx) => {
           const hopIdx = idx + 1;
           const hopCodes = appendixMatrixCodesForPathHopIndex(flatSteps, hopIdx, edgeConstraintsExplain);
-          if (hopCodes.length > 1 && !edgeChoiceCommittedForHop(hopIdx, hopCodes)) return [];
+          if (hopCodes.length > 1 && !edgeChoiceCommittedForHop(hopIdx, hopCodes, edgeConstraintsExplain)) return [];
           return [
             String(
               resolvedRelationshipCodeForHop(

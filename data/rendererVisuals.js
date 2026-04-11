@@ -63,6 +63,18 @@ const VERTICAL_ROW_SWIMLANE_LABEL_W = 118;
 const VERT_BADGE_NAME_GAP = 5;
 /** Shorten vertical edges so relationship markers sit fully in the gap (clear of lane borders and box edges). */
 const VERT_EDGE_INSET = 14;
+
+/**
+ * Same-column vertical segment: nudge the path start from the source port toward the target so
+ * `marker-start` (Appendix B C / G / I) sits in the gap. Short hops used to keep M at the port,
+ * so the diamond sat under the source card (strokes render below nodes in z-order).
+ * @param {number} len - |y2 − y1| along the spine
+ * @param {boolean} apply - true when this hop draws a start marker
+ */
+function verticalSameColumnStartMarkerInset(len, apply) {
+  if (!apply || !(len > 1e-6)) return 0;
+  return Math.min(VERT_EDGE_INSET, len * 0.35, Math.max(0, len - 0.65));
+}
 /** When a hop’s default polyline pierces another path node, jog to a vertical bus outside all boxes (east or west). */
 const OUTER_ROUTE_MARGIN = (window.RENDER_GEOMETRY && Number.isFinite(window.RENDER_GEOMETRY.OUTER_ROUTE_MARGIN))
   ? window.RENDER_GEOMETRY.OUTER_ROUTE_MARGIN
@@ -482,6 +494,20 @@ const ARROW_STYLES = {
   F: { line: "dashed", startMarker: "none",           endMarker: "arrow-filled" },
   S: { line: "solid",  startMarker: "none",           endMarker: "triangle-open" },
 };
+
+/**
+ * True when any path Appendix B code on this hop uses a non-`none` start marker (layout must match drawArrow).
+ * @param {string[]|null|undefined} codes
+ */
+function hopCodesIncludeAppendixStartMarker(codes) {
+  const list = Array.isArray(codes) ? codes : [];
+  for (const raw of list) {
+    const c = String(raw || "").toUpperCase();
+    const sm = ARROW_STYLES[c]?.startMarker;
+    if (sm && sm !== "none") return true;
+  }
+  return false;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §4.2 metamodel diagram (renderMetamodelDiagram in ui/renderer.js)

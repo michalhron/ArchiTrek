@@ -389,7 +389,9 @@ const ICONS = {
   "Application Component":     () => `<rect x="2" y="2" width="8" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="0" y="3.5" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/><rect x="0" y="7" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/>`,
   "Application Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
   "Application Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Application Function":      () => `<path d="M3,2 L3,10 M3,6 L9,6 M9,2 L9,10" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
+  // Upward chevron (120×80 artwork) fitted to 12×12 corner badge.
+  "Application Function": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><polygon points="60,10 110,50 85,50 60,30 35,50 10,50" fill="#ccffff" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></g>`,
   "Application Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
   "Application Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
   "Application Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,

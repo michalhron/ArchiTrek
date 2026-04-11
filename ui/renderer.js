@@ -2418,6 +2418,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
 
   const choiceUndecided =
     hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
+  /** No arrowheads until the user picks a code — path should meet ports without marker clearance gaps. */
+  const markerTargetClr = choiceUndecided ? 0 : ARROW_MARKER_TARGET_CLEARANCE;
   const activeCode =
     hopIndex != null
       ? resolvedRelationshipCodeForHop({ codes: codesList }, hopIndex)
@@ -2428,7 +2430,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    * Vertical same-column paths shorten the start so a drawn start marker sits in the gap (see VERT_EDGE_INSET).
    * Most relationship codes have no start marker — applying that inset anyway made shafts look truncated.
    */
-  const applyVertStartInset = style.startMarker != null && style.startMarker !== "none";
+  const applyVertStartInset =
+    !choiceUndecided && style.startMarker != null && style.startMarker !== "none";
   let rowMd = matrixDirectCodes;
   let rowMder = matrixDerivedCodes;
   if (reverseLayout && typeof mergeMatrixRowForPair === "function") {
@@ -2510,7 +2513,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     [outerArcCShape.sx, outerArcCShape.sy, outerArcCShape.ex, outerArcCShape.ey].every(Number.isFinite)
   ) {
     let { tx: txC, sx, sy, ex, ey } = outerArcCShape;
-    const clr = ARROW_MARKER_TARGET_CLEARANCE;
+    const clr = markerTargetClr;
     const segDx = ex - txC;
     const exR =
       Math.abs(segDx) > clr ? ex - Math.sign(segDx || 1) * clr : ex;
@@ -2550,7 +2553,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       straightVerticalInset = isLv;
     } else {
       const ym = (y1 + y2) / 2;
-      const clrE = ARROW_MARKER_TARGET_CLEARANCE;
+      const clrE = markerTargetClr;
       const y2e =
         Math.abs(y2 - ym) > clrE ? y2 - Math.sign(y2 - ym) * clrE : y2;
       d = `M ${x1} ${y1} L ${x1} ${ym} L ${x2} ${ym} L ${x2} ${y2e}`;
@@ -2561,7 +2564,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   } else if (orthogonal && !sameX) {
     if (Math.abs(y1 - y2) < 0.5) {
       orthoMidX = midX;
-      const clrF = ARROW_MARKER_TARGET_CLEARANCE;
+      const clrF = markerTargetClr;
       const x2f =
         Math.abs(x2 - x1) > clrF ? x2 + Math.sign(x1 - x2) * clrF : x2;
       if (sameLaneSideJog) {
@@ -2579,7 +2582,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
        * If both inner controls share y with P0/P3, the end tangent is forced horizontal and
        * marker-end orient="auto" draws a flat arrowhead while the stroke still looks diagonal.
        */
-      const clrB = ARROW_MARKER_TARGET_CLEARANCE;
+      const clrB = markerTargetClr;
       const vx0 = x2 - x1;
       const vy0 = y2 - y1;
       const chordLen0 = Math.hypot(vx0, vy0) || 1;
@@ -2607,7 +2610,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       // horizontal out → vertical bus → horizontal return into target (with a real return leg).
       //
       // This avoids the "lazy L" that makes open markers (triangle/arrow) look like floating tips.
-      const clrS = ARROW_MARKER_TARGET_CLEARANCE;
+      const clrS = markerTargetClr;
       let tx =
         swimlaneOrthogonalBusX != null && Number.isFinite(swimlaneOrthogonalBusX)
           ? swimlaneOrthogonalBusX
@@ -2630,7 +2633,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       orthoVertical = len > 8;
       swimlaneColElbow = true;
     } else {
-      const clrM = ARROW_MARKER_TARGET_CLEARANCE;
+      const clrM = markerTargetClr;
       const x2mForBus = (bx) =>
         Math.abs(x2 - bx) > clrM ? x2 - Math.sign(x2 - bx) * clrM : x2;
       let busX =
@@ -2665,7 +2668,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     d = `M ${x1} ${y1s} L ${x2} ${y2s}`;
     straightVerticalInset = isLongVertical;
   } else {
-    const clrD = ARROW_MARKER_TARGET_CLEARANCE;
+    const clrD = markerTargetClr;
     let xe = x2;
     let ye = y2;
     const flatH = Math.abs(y1 - y2) < 0.5;
@@ -2692,7 +2695,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       ? outerArcTrackX
       : null;
   if (txArc != null) {
-    const clrTx = ARROW_MARKER_TARGET_CLEARANCE;
+    const clrTx = markerTargetClr;
     const x2Bus = (() => {
       const span = Math.abs(x2 - txArc);
       return span > clrTx ? x2 - Math.sign(x2 - txArc) * clrTx : x2;
@@ -2762,7 +2765,9 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    */
   const isDash =
     !isAssocBridge &&
-    (style.line === "dashed" || (!isDirectForStroke && UPPER !== "O" && UPPER !== "V"));
+    (choiceUndecided ||
+      style.line === "dashed" ||
+      (!isDirectForStroke && UPPER !== "O" && UPPER !== "V"));
 
   const mkStrokePath = () => {
     const attrs = {
@@ -2776,11 +2781,15 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         ? "archimate-arrow-stroke archimate-arrow-stroke--association-bridge graph-edge"
         : "archimate-arrow-stroke graph-edge",
       "stroke-dasharray": isAssocBridge ? "none" : isDash ? "6,3" : "none",
-      "marker-end": style.endMarker === "none" ? "" : `url(#end-${UPPER}-${isDirectForStroke ? "d" : "r"})`,
-      "marker-start": style.startMarker === "none" ? "" : `url(#start-${UPPER})`,
+      "marker-end":
+        choiceUndecided || style.endMarker === "none"
+          ? ""
+          : `url(#end-${UPPER}-${isDirectForStroke ? "d" : "r"})`,
+      "marker-start":
+        choiceUndecided || style.startMarker === "none" ? "" : `url(#start-${UPPER})`,
       "pointer-events": "none",
     };
-    if (choiceUndecided || pathCurved || isAssocBridge) attrs["stroke-linecap"] = "round";
+    if (!choiceUndecided && (pathCurved || isAssocBridge)) attrs["stroke-linecap"] = "round";
     return svgEl("path", attrs);
   };
 
@@ -4918,7 +4927,7 @@ function getUndecidedRelationSnippet(opts = {}) {
   const dash = solidInSummary ? "none" : "3 5";
   return (
     `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: #8b99af; flex-shrink:0;" aria-hidden="true">` +
-    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="${dash}" stroke-linecap="round" /></svg>`
+    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="${dash}" stroke-linecap="butt" /></svg>`
   );
 }
 

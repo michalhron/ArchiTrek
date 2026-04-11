@@ -1878,6 +1878,9 @@ path.graph-edge {
 .archimate-arrow-stroke-layer.provisional path.archimate-arrow-stroke {
   stroke: #a0aabf !important;
   stroke-dasharray: 3, 5 !important;
+  marker-end: none !important;
+  marker-start: none !important;
+  stroke-linecap: butt !important;
 }
 
 .archimate-arrow.provisional .rel-label-badge circle {
@@ -8683,15 +8686,17 @@ cite {
     border-radius: 8px;
   }
 
+  /* iPad and other coarse-pointer devices still match this; keep closer to desktop
+     chrome so +/− do not dominate the toolbar (pinch/wheel zoom remains available). */
   .diagram-zoom-btn {
-    min-width: 44px;
-    height: 44px;
-    padding: 0 10px;
-    font-size: 18px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    font-size: 16px;
   }
 
   .diagram-zoom-reset {
-    font-size: 17px;
+    font-size: 15px;
   }
 
   .diagram-tools {
@@ -8871,12 +8876,19 @@ cite {
   color: var(--accent);
 }
 
-/* Settings gear: slightly larger than default 14px so it matches the download + fullscreen pair optically */
-.diagram-icon-btn.diagram-icon-btn--options {
-  font-size: 17px;
+/* Toolbar glyphs (SVG): consistent sizing next to download tray */
+.diagram-icon-btn .diagram-toolbar-svg {
+  display: block;
+  flex-shrink: 0;
 }
 
-/* Download tray icon: ~same visual weight as the ⛶ fullscreen glyph at 14px */
+.diagram-icon-btn .diagram-options-icon,
+.diagram-icon-btn .diagram-fullscreen-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Download tray icon */
 .diagram-icon-btn .diagram-download-icon {
   display: block;
   flex-shrink: 0;

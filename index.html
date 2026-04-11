@@ -263,8 +263,6 @@
 
     <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
       <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
-      <p class="help-labels-precision-summary"><strong>Simplified</strong> — Hides the technical "plumbing" to focus on the big picture. Use this when communicating with business stakeholders or when you need a high-level summary of how distant layers connect.</p>
-      <p class="help-labels-precision-summary"><strong>Ground-Truth</strong> — Follows strict, step-by-step structural relationships. Use this when you need absolute precision for engineering, solution design, or auditing the exact mechanics of how a system is wired.</p>
       <div id="help-labels-body" class="path-labels-body"></div>
     </div>
   </div>
@@ -889,7 +887,10 @@
                 aria-haspopup="dialog"
                 aria-expanded="false"
                 aria-controls="diagram-options-popover"
-              >⚙</button>
+              ><svg class="diagram-toolbar-svg diagram-options-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg></button>
               <div
                 id="diagram-options-popover"
                 class="diagram-download-popover diagram-options-popover path-mode-popover"
@@ -977,7 +978,9 @@
                 >Copy share link</button>
               </div>
             </div>
-            <button type="button" class="diagram-icon-btn" onclick="toggleFullScreen()" title="Full screen" aria-label="Full screen">⛶</button>
+            <button type="button" class="diagram-icon-btn" onclick="toggleFullScreen()" title="Full screen" aria-label="Full screen"><svg class="diagram-toolbar-svg diagram-fullscreen-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+                <path d="M4 10V4h6M14 4h6v6M4 14v6h6M14 20h6v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg></button>
           </div>
         </div>
       </div>

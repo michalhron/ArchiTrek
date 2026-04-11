@@ -23,6 +23,9 @@
   --invalid-bg:   #fdf0f0;
   --derived:      #7a4f00;
   --derived-bg:   #fff8ec;
+  /* §5.2.4 Association bridge hops in path diagrams (last-resort / informal) */
+  --path-association-warning-stroke: #c27820;
+  --path-association-warning-stroke-muted: #b45309;
   --waypoint:     #4a2d8a;
   --waypoint-bg:  #f4f0ff;
   --shadow-sm:    0 1px 4px rgba(0,0,0,0.06);
@@ -38,10 +41,9 @@
   --layer-motivation:     #dcdcff;
   --layer-strategy:       #e8d4b8;
   --layer-business:       #f5e87a;
-  --layer-application:    #a8d4a8;
-  --layer-technology:     #a0c4e8;
-  --layer-physical:       #d4c8a0;
-  --layer-implementation: #e8b8b8;
+  --layer-application:    #BFFFFF;
+  --layer-technology:     #c1ffb1;
+  --layer-implementation: #FCE4E4;
   --results-shell-bg:     #f8fafc;
   --results-surface:      #ffffff;
   --results-border:       #e5e7eb;
@@ -76,6 +78,33 @@ body {
   margin-bottom: 1.5rem;
   padding-bottom: 1.25rem;
   border-bottom: 1px solid #f1f5f9;
+}
+
+/* Route-level mentor note when §5.2.4 Association bridges appear on the path */
+.explain-association-route-warning {
+  margin: 0 0 1rem 0;
+  padding: 0.75rem 1rem 0.75rem 0.85rem;
+  border-left: 4px solid var(--path-association-warning-stroke, #c27820);
+  background: var(--derived-bg, #fff8ec);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.path-dead-end__academic-block {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem 0.85rem 0.9rem;
+  border-left: 4px solid var(--invalid, #b81c1c);
+  background: var(--invalid-bg, #fdf0f0);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.55;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.explain-no-path .explain-no-path__academic {
+  margin-bottom: 0.75rem;
 }
 
 /* Left rail (wide layout): element chips only — title & narrative live in the main explanation column */
@@ -280,6 +309,18 @@ body {
   user-select: none;
   line-height: 1;
 }
+/* Segment header & hop summary: destination shown as canonical ArchiMate name only (no second stacked chip). */
+.panel-segment-route-end-name {
+  font-weight: 600;
+  color: #374151;
+  font-size: inherit;
+  line-height: inherit;
+}
+.explain-hop-summary-endpoint.explain-hop-summary-endpoint--plain.panel-segment-route-end-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .explain-steps-section h4.panel-section-heading:first-child {
   margin-top: 0;
 }
@@ -413,6 +454,40 @@ body {
   border: 1px solid var(--border-light);
 }
 
+.study-scenario-provenance .study-prov-lead {
+  margin-bottom: 12px;
+  color: var(--text);
+}
+.study-scenario-provenance .study-prov-dl {
+  margin: 0 0 12px 0;
+  display: grid;
+  grid-template-columns: minmax(7rem, 9.5rem) 1fr;
+  gap: 6px 14px;
+  align-items: start;
+}
+.study-scenario-provenance .study-prov-dl dt {
+  margin: 0;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.study-scenario-provenance .study-prov-dl dd {
+  margin: 0 0 8px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.study-scenario-provenance .study-prov-k {
+  font-weight: 500;
+  opacity: 0.85;
+}
+.study-scenario-provenance .study-prov-muted {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 10px;
+}
+
 .explain-edge-block {
   border: none;
   border-bottom: 1px solid #f1f5f9;
@@ -431,6 +506,7 @@ body {
   margin-bottom: 0.75rem;
   padding-bottom: 0;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  min-width: 0;
 }
 .explain-hop-justification {
   border-radius: 0;
@@ -506,15 +582,17 @@ body {
   color: #1f2937;
   line-height: 1.4;
   margin-top: 0.125rem;
+  min-width: 0;
 }
 /* One row: endpoint chips + spec-accurate relationship SVG (replaces text → + duplicate diagram). */
 .explain-hop-summary-route--single {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 0.35rem;
+  column-gap: 0.5rem;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
 }
 .explain-hop-summary-route--single > .explain-hop-summary-endpoint:first-of-type {
   justify-self: end;
@@ -528,16 +606,22 @@ body {
   justify-self: center;
 }
 .explain-hop-summary-endpoint.step-el-tip-wrap {
-  max-width: none;
+  /* Stay inside the grid column (max-width:none was letting chips ignore the fr track and overflow the card). */
+  max-width: 100%;
   width: 100%;
   min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
 }
 .explain-hop-summary-endpoint .step-el.path-node-chip--stacked {
   max-width: 100%;
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
   text-align: left;
   align-items: stretch;
+  overflow: hidden;
 }
 .explain-hop-summary-endpoint .path-node-chip-line--head {
   min-width: 0;
@@ -564,6 +648,10 @@ body {
 }
 .explain-hop-summary-connector svg.explain-edge-connector-svg {
   margin: 0 2px !important;
+}
+/* Markers (arrowheads) extend past the line’s bbox; hidden overflow clips filled heads — keep visible. */
+.explain-hop-summary-route--single .explain-hop-summary-connector svg.explain-edge-connector-svg {
+  overflow: visible;
 }
 .explain-hop-summary-connector svg.explain-edge-connector-svg line {
   stroke: currentColor;
@@ -628,6 +716,21 @@ body {
   color: #7c2d12;
   font-size: 13px;
   line-height: 1.45;
+}
+
+/* Viewpoint-safe Association notice: mirror the softer mentor-note styling. */
+.path-fallback-banner.path-fallback-banner--viewpoint-sanctioned {
+  margin: 0 0 1rem 0;
+  padding: 0.75rem 1rem 0.75rem 0.85rem;
+  border-left: 4px solid var(--path-association-warning-stroke, #c27820);
+  border-top: 1px solid color-mix(in srgb, var(--path-association-warning-stroke, #c27820) 22%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--path-association-warning-stroke, #c27820) 22%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--path-association-warning-stroke, #c27820) 22%, transparent);
+  background: var(--derived-bg, #fff8ec);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.5;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .path-temp-relax-banner {
@@ -829,6 +932,11 @@ body {
 }
 
 /* Association [O] / generic informal — slightly stronger amber signal vs other Informal tiers */
+.semantic-strength-badge--informal.semantic-strength-badge--route-chain-capped {
+  border-color: var(--path-association-warning-stroke, #c27820);
+  background: linear-gradient(135deg, #fff8ec 0%, #fff4e0 100%);
+}
+
 .semantic-strength-badge--informal.semantic-strength-badge--generic-association {
   color: #9a3412;
   background: linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%);
@@ -1080,6 +1188,13 @@ body {
   flex: 0 0 auto;
   opacity: 0.96;
 }
+/* Path strip: colored tile + glyph (matches diagram element fill); compact size */
+.step-el-icon--glyph svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  opacity: 0.96;
+}
 .step-el-name {
   font-weight: 650;
   font-size: 12px;
@@ -1128,10 +1243,6 @@ button.step-el.step-el--crumb.el-info-trigger {
 .step-el--crumb.step-el--layer-technology {
   border-left: 3px solid var(--layer-technology);
   background: color-mix(in srgb, var(--layer-technology) 14%, var(--surface));
-}
-.step-el--crumb.step-el--layer-physical {
-  border-left: 3px solid var(--layer-physical);
-  background: color-mix(in srgb, var(--layer-physical) 14%, var(--surface));
 }
 .step-el--crumb.step-el--layer-implementation {
   border-left: 3px solid var(--layer-implementation);
@@ -1293,8 +1404,8 @@ button.step-el.step-el--crumb.el-info-trigger {
 }
 
 .archi-hover-tip__icon {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1383,6 +1494,13 @@ button.step-el.step-el--crumb.el-info-trigger {
   background: #f8fafc;
   color: #64748b;
   border-color: #e2e8f0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.tag.tag-forced-direction {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
   font-size: 0.6875rem;
   font-weight: 600;
 }
@@ -1601,6 +1719,24 @@ details[open].explain-derivation-logic > summary::before {
   --lbl-stroke: var(--surface);
 }
 
+[data-node-id].is-animating {
+  transition: transform 0.4s ease, opacity 0.4s ease;
+}
+
+/* Hop row: stroke, relationship label, hop badge, and flip control share one animated group.
+   --hop-slide-ms set in JS when movement exceeds dead zone (otherwise no slide). */
+.clickable-arrow.is-animating {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  transition:
+    transform var(--hop-slide-ms, 380ms) cubic-bezier(0.22, 0.92, 0.28, 1),
+    opacity 320ms cubic-bezier(0.25, 0.85, 0.35, 1);
+}
+
+path.graph-edge {
+  transition: opacity 0.4s ease;
+}
+
 .archimate-arrow.active {
   --lbl-fill: #ffffff;
   --lbl-stroke: #152a45;
@@ -1631,7 +1767,6 @@ details[open].explain-derivation-logic > summary::before {
 .explain-edge-block.active .step-el--layer-business { border-left-color: var(--layer-business); }
 .explain-edge-block.active .step-el--layer-application { border-left-color: var(--layer-application); }
 .explain-edge-block.active .step-el--layer-technology { border-left-color: var(--layer-technology); }
-.explain-edge-block.active .step-el--layer-physical { border-left-color: var(--layer-physical); }
 .explain-edge-block.active .step-el--layer-implementation { border-left-color: var(--layer-implementation); }
 .explain-edge-block.active .step-el--layer-composite,
 .explain-edge-block.active .step-el--layer-unknown {
@@ -1715,6 +1850,17 @@ details[open].explain-derivation-logic > summary::before {
 .element-card .element-label { font-size: 16px; }
 
 
+/* §5.2.4 Association bridge — warning color; line stays solid per ArchiMate Association notation */
+.archimate-arrow--association-bridge path.archimate-arrow-stroke--association-bridge {
+  stroke: var(--path-association-warning-stroke, #c27820);
+  stroke-dasharray: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.archimate-arrow--association-bridge.archimate-arrow.active path.archimate-arrow-stroke--association-bridge {
+  stroke: var(--path-association-warning-stroke-muted, #b45309);
+}
+
 /* ── Provisional (Undecided) Arrows ── */
 .archimate-arrow.provisional line,
 .archimate-arrow.provisional path.archimate-arrow-stroke,
@@ -1751,27 +1897,23 @@ details[open].explain-derivation-logic > summary::before {
   color: #fff;
   padding: 0 12px;
   min-height: var(--header-height);
-  display: flex;
+  display: grid;
+  /* Brand | growing center (chrome aligns end) | actions */
+  grid-template-columns: minmax(132px, auto) minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: nowrap;
+  gap: 8px 12px;
   position: sticky;
   top: 0;
   z-index: 100;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   scrollbar-width: thin;
-}
-
-.app-header {
-  position: sticky;
 }
 
 /* (logo no longer centered; brand stays left-aligned) */
 
-.header-logo-link {
+.header-logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1779,12 +1921,7 @@ details[open].explain-derivation-logic > summary::before {
   min-width: 0;
   padding: 0;
   line-height: 0;
-  text-decoration: none;
   border-radius: 6px;
-}
-
-.header-logo-link:hover .header-logo-img {
-  opacity: 0.92;
 }
 
 .header-logo-img {
@@ -1878,6 +2015,7 @@ details[open].explain-derivation-logic > summary::before {
   flex-wrap: nowrap;
   min-width: 0;
   flex-shrink: 1;
+  justify-self: start;
 }
 
 .explore-shell {
@@ -1952,6 +2090,74 @@ details[open].explain-derivation-logic > summary::before {
   white-space: nowrap;
 }
 
+/* Undo / redo — left = back (undo), right = forward (redo), beside “Edit path” */
+.history-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: 0 2px 0 0;
+}
+.history-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.88;
+  transition: background 0.15s, opacity 0.15s;
+}
+.history-arrow:hover:not(.history-arrow--inactive) {
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+}
+.history-arrow:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+.history-arrow:disabled {
+  opacity: 0.28;
+  cursor: default;
+  pointer-events: none;
+}
+/* Clickable but visually muted — native disabled + pointer-events:none prevented undo/redo from receiving clicks. */
+.history-arrow.history-arrow--inactive {
+  opacity: 0.28;
+  cursor: default;
+  pointer-events: auto;
+}
+.icon-history-back,
+.icon-history-forward {
+  display: block;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+/* Chevron pointing left — undo / step back in history */
+.icon-history-back {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' d='M10 3.5L5.5 8l4.5 4.5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' d='M10 3.5L5.5 8l4.5 4.5'/%3E%3C/svg%3E");
+}
+/* Chevron pointing right — redo / step forward in history */
+.icon-history-forward {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' d='M6 3.5l4.5 4.5L6 12.5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round' d='M6 3.5l4.5 4.5L6 12.5'/%3E%3C/svg%3E");
+}
+
 .header-brand-divider {
   width: 1px;
   height: 28px;
@@ -1968,28 +2174,35 @@ details[open].explain-derivation-logic > summary::before {
   font-weight: 300;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px 14px;
-  flex-wrap: nowrap;
-  margin-left: auto;
+.header-center {
+  /* Keep Viewpoint + Theme grouped toward the actions side (away from the logo) */
+  justify-self: end;
   min-width: 0;
-  flex-shrink: 0;
+  max-width: min(720px, 92vw);
 }
 
-.header-theme {
+.header-center-chrome {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px 16px;
+  justify-content: flex-end;
+}
+
+/* Viewpoint + Theme: label + control only (no panel chrome) */
+.header-chrome-select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  border: none;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
-.header-theme label {
+.header-chrome-label {
   color: rgba(255, 255, 255, 0.92);
   font-size: 11px;
   font-weight: 700;
@@ -1998,8 +2211,49 @@ details[open].explain-derivation-logic > summary::before {
   white-space: nowrap;
 }
 
-.header-theme select {
-  min-width: 145px;
+.header-chrome-select-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Micro-cluster shuffle: glyph only — no filled box (onclick unchanged) */
+.header-chrome-icon-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.header-chrome-icon-btn:hover {
+  color: #fff;
+  background: transparent;
+}
+
+.header-chrome-icon-btn:focus-visible {
+  outline: 1px dotted rgba(255, 255, 255, 0.85);
+  outline-offset: 4px;
+}
+
+.header-chrome-icon-btn:active {
+  opacity: 0.88;
+}
+
+.header-chrome-control {
+  min-width: 132px;
+  max-width: min(200px, 28vw);
   height: 30px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.45);
@@ -2010,17 +2264,222 @@ details[open].explain-derivation-logic > summary::before {
   padding: 4px 8px;
 }
 
-.header-theme select:focus-visible {
+.header-chrome-control:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.9);
   outline-offset: 1px;
 }
 
+.header-chrome-select--viewpoint,
+.header-chrome-select--theme {
+  position: relative;
+}
+/* Invisible hit-area bridge below shell (no extra layout height — keeps sibling chrome aligned). */
+#header-viewpoint-shell::after,
+#header-theme-shell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 14px;
+  pointer-events: auto;
+}
+
+/*
+ * Portaled under #header-chrome-tip-layer (see ui/app.js) so cards are not trapped under
+ * .app-header’s stacking context while .selector-panel-wrap uses z-index 102.
+ */
+.header-chrome-tip-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 150;
+}
+
+/* Viewpoint + Theme hover: same .step-el-tip system as path chips; coordinates set in JS (fixed). */
+.header-viewpoint-tip-wrap.step-el-tip-wrap,
+.header-theme-tip-wrap.step-el-tip-wrap {
+  max-width: none;
+  align-items: center;
+}
+.header-viewpoint-tip-wrap.step-el-tip-wrap:hover,
+.header-viewpoint-tip-wrap.step-el-tip-wrap:focus-within,
+.header-theme-tip-wrap.step-el-tip-wrap:hover,
+.header-theme-tip-wrap.step-el-tip-wrap:focus-within {
+  z-index: 200;
+}
+#header-viewpoint-hovercard.step-el-tip.header-viewpoint-step-tip,
+#header-theme-hovercard.step-el-tip.header-theme-step-tip {
+  /* Override generic “tip above chip” anchoring; JS sets fixed top/left while hovered */
+  bottom: auto !important;
+  right: auto;
+  /* position/top/left/transform come from inline styles while hovered */
+  min-width: 220px;
+  max-width: min(320px, 92vw);
+  max-height: min(420px, 72vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  /* visible so ::before hit-bridge isn’t clipped; scrolling stays on .step-el-tip-inner */
+  overflow: visible;
+  /* .app-header sets color:#fff; force body text on the light popover */
+  color: var(--text);
+}
+#header-viewpoint-hovercard.step-el-tip.header-viewpoint-step-tip.header-chrome-hovercard--open,
+#header-theme-hovercard.step-el-tip.header-theme-step-tip.header-chrome-hovercard--open {
+  opacity: 1;
+  visibility: visible;
+  /* avoid fighting JS positioning; receive pointer so the card stays open while reading */
+  transform: none;
+  pointer-events: auto;
+  cursor: default;
+}
+/* Invisible strip between header and card (and under flipped card) so pointer isn’t lost in the gap */
+#header-viewpoint-hovercard.header-chrome-hovercard--open.step-el-tip.header-viewpoint-step-tip::before,
+#header-theme-hovercard.header-chrome-hovercard--open.step-el-tip.header-theme-step-tip::before {
+  content: "";
+  position: absolute;
+  left: 8%;
+  width: 84%;
+  height: 18px;
+  pointer-events: auto;
+  bottom: 100%;
+  top: auto;
+}
+#header-viewpoint-hovercard.header-chrome-hovercard--open.header-viewpoint-step-tip--above::before,
+#header-theme-hovercard.header-chrome-hovercard--open.header-theme-step-tip--above::before {
+  bottom: auto;
+  top: 100%;
+}
+#header-viewpoint-hovercard .step-el-tip-inner,
+#header-theme-hovercard .step-el-tip-inner {
+  display: block;
+  border-radius: inherit;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: min(380px, calc(72vh - 24px));
+  padding: 12px 14px 10px;
+  user-select: text;
+  -webkit-user-select: text;
+  color: var(--text);
+}
+/* Default: caret on top edge, pointing up (popover below anchor) */
+#header-viewpoint-hovercard.step-el-tip.header-viewpoint-step-tip::after,
+#header-theme-hovercard.step-el-tip.header-theme-step-tip::after {
+  top: -6px;
+  bottom: auto;
+  border-top: none;
+  border-bottom: 7px solid var(--surface);
+  filter: drop-shadow(0 -1px 0 var(--border));
+}
+#header-viewpoint-hovercard.step-el-tip.header-viewpoint-step-tip.header-viewpoint-step-tip--above::after,
+#header-theme-hovercard.step-el-tip.header-theme-step-tip.header-theme-step-tip--above::after {
+  top: auto;
+  bottom: -6px;
+  border-bottom: none;
+  border-top: 7px solid var(--surface);
+  filter: drop-shadow(0 1px 0 var(--border));
+}
+.header-viewpoint-tip-value {
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.header-viewpoint-tip-palette {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.header-chrome-select:not(.header-chrome-select--viewpoint) .header-chrome-control {
+  min-width: 145px;
+  max-width: none;
+}
+
+.header-app-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.header-app-mode-segmented {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.header-app-mode-btn {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.header-app-mode-btn:hover {
+  color: #fff;
+}
+
+.header-app-mode-btn.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.header-app-mode-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+}
+
+.path-viewpoint-inline.path-viewpoint-inline--in-options {
+  flex: 0 0 auto !important;
+  width: 100%;
+  max-width: 100%;
+  margin-bottom: 10px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 14px;
+  flex-wrap: nowrap;
+  justify-self: end;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
 @media (max-width: 920px) {
-  .header-theme label {
+  .header-chrome-label {
     display: none;
   }
-  .header-theme select {
-    min-width: 122px;
+  .header-chrome-control {
+    min-width: 112px;
+    max-width: min(160px, 36vw);
+  }
+  .header-center {
+    max-width: min(640px, 96vw);
+  }
+}
+
+@media (max-width: 520px) {
+  .header-center-chrome {
+    gap: 6px 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .header-chrome-control {
+    font-size: 11px;
+    min-width: 100px;
   }
 }
 
@@ -2065,6 +2524,27 @@ button.header-link {
   padding: 24px 16px;
   overflow-y: auto;
   box-sizing: border-box;
+}
+
+/* Above .picker-overlay (500): path/options/chrome overlays otherwise eat clicks on the no-path dialog. */
+#path-fail-modal.feedback-modal {
+  z-index: 560;
+}
+#path-fail-modal .feedback-modal-backdrop {
+  z-index: 0;
+}
+#path-fail-modal .feedback-modal-card {
+  position: relative;
+  z-index: 1;
+}
+
+/* Keep the card above the full-viewport backdrop so the header close control stays clickable (same stacking idea as path-fail). */
+#feedback-modal .feedback-modal-backdrop {
+  z-index: 0;
+}
+#feedback-modal .feedback-modal-card {
+  position: relative;
+  z-index: 1;
 }
 
 .feedback-modal-backdrop {
@@ -2312,6 +2792,149 @@ button.header-link {
   filter: none;
 }
 
+/* Mobile blocker: ArchiTrek is desktop-first; narrow viewports see this instead of the app */
+.mobile-blocker {
+  display: none;
+  position: fixed;
+  inset: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  z-index: 2147483000;
+  align-items: center;
+  justify-content: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(0.85rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(0.85rem, env(safe-area-inset-left));
+  background: var(--bg);
+  color: var(--text);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
+}
+
+.mobile-blocker-inner {
+  width: 100%;
+  max-width: 26rem;
+  margin: auto;
+  text-align: center;
+  min-width: 0;
+}
+
+.mobile-blocker-logo {
+  display: block;
+  margin: 0 auto 1rem;
+  max-width: min(200px, 88vw);
+  height: auto;
+}
+
+.mobile-blocker-logo-tagline {
+  display: none;
+}
+
+.mobile-blocker-headline {
+  font-family: "DM Serif Display", Georgia, serif;
+  font-size: clamp(1.15rem, 4.5vw, 1.6rem);
+  font-weight: 400;
+  line-height: 1.28;
+  margin: 0 0 0.75rem;
+  color: var(--text);
+}
+
+.mobile-blocker-body {
+  text-align: left;
+  color: var(--text-2);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0 0 1.15rem;
+}
+
+.mobile-reminder-form {
+  text-align: left;
+  margin-top: 0.25rem;
+}
+
+.mobile-reminder-form .feedback-label {
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.mobile-reminder-form .feedback-input {
+  margin-top: 0.35rem;
+}
+
+.mobile-reminder-form .feedback-btn {
+  margin-top: 0.65rem;
+  width: 100%;
+}
+
+.mobile-reminder-form .feedback-status {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+/* Secondary escape hatch — only on the mobile gate (was globally hidden with !important) */
+.mobile-try-anyway-btn {
+  display: none;
+  margin-top: 0.5rem;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.mobile-try-anyway-btn:hover {
+  filter: brightness(0.98);
+}
+
+/* JS + media: keep shell out of tab order and paint when the gate is active */
+html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) #app-shell {
+  display: none !important;
+}
+
+html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-blocker {
+  display: flex !important;
+}
+
+html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-blocker .mobile-try-anyway-btn {
+  display: block;
+}
+
+@media (max-width: 767px) {
+  html:not(.architrek-force-desktop-shell) #app-shell {
+    display: none !important;
+  }
+
+  html:not(.architrek-force-desktop-shell) .mobile-blocker {
+    display: flex;
+  }
+
+  html:not(.architrek-force-desktop-shell) .mobile-blocker .mobile-try-anyway-btn {
+    display: block;
+  }
+
+  html.architrek-force-desktop-shell #app-shell {
+    display: flex !important;
+  }
+
+  html.architrek-force-desktop-shell .mobile-blocker {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) and (max-height: 520px) {
+  .mobile-blocker-inner {
+    padding-bottom: 0.25rem;
+  }
+
+  .mobile-blocker-body {
+    display: none;
+  }
+
+  .mobile-blocker-headline {
+    margin-bottom: 0.5rem;
+    font-size: 1.15rem;
+  }
+}
+
 /* First-visit welcome splash (examples + consent) */
 .welcome-modal-card {
   max-width: 520px;
@@ -2372,7 +2995,7 @@ button.header-link {
 .help-modal {
   position: fixed;
   inset: 0;
-  z-index: 330; /* above header/options overlays; similar stack to feedback modal */
+  z-index: 405; /* aligned with former path-labels overlay; above header/options */
   display: none;
 }
 
@@ -2415,6 +3038,56 @@ button.header-link {
   padding: 16px 18px;
   border-bottom: 1px solid var(--border-light, #e2e8f0);
   background: linear-gradient(180deg, rgba(45, 95, 138, 0.10), rgba(45, 95, 138, 0.02));
+}
+
+.help-modal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 18px 0;
+  border-bottom: 1px solid var(--border-light, #e2e8f0);
+  background: var(--surface, #fff);
+}
+
+.help-modal-tab {
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface-2, #f8fafc);
+  color: var(--text-2, #475569);
+  font-size: 12px;
+  font-weight: 650;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.help-modal-tab:hover {
+  background: rgba(45, 95, 138, 0.08);
+  color: var(--accent, #1e3a5f);
+  border-color: rgba(45, 95, 138, 0.25);
+}
+
+.help-modal-tab--active {
+  background: linear-gradient(180deg, rgba(45, 95, 138, 0.14), rgba(45, 95, 138, 0.06));
+  color: var(--accent, #1e3a5f);
+  border-color: rgba(45, 95, 138, 0.35);
+}
+
+.help-modal-pane--labels {
+  padding-top: 14px;
+}
+
+.help-labels-intro {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(45, 95, 138, 0.06);
+  border: 1px solid rgba(30, 58, 95, 0.1);
+  color: var(--text-2);
+  line-height: 1.45;
+  font-size: 13px;
 }
 
 .help-modal-title {
@@ -2519,6 +3192,7 @@ button.header-link {
   .help-grid-2 { grid-template-columns: 1fr; }
   .help-modal-body { padding: 14px 14px 18px; }
   .help-modal-head { padding: 14px 14px; }
+  .help-modal-tabs { padding: 10px 14px 0; gap: 6px; }
 }
 
 /* ── Semantic Rigor guide modal (preset vs logic gates) ───────────────────── */
@@ -2743,17 +3417,82 @@ button.header-link {
   color: var(--text-2, #475569);
 }
 
+.theme-splash-scenario {
+  margin-top: 2px;
+  margin-bottom: 4px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-light, #e2e8f0);
+  background: linear-gradient(
+    165deg,
+    var(--surface-2, #f1f5f9) 0%,
+    var(--surface-1, #f8fafc) 55%,
+    var(--surface-2, #f1f5f9) 100%
+  );
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.theme-splash-scenario-kicker {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3, #64748b);
+}
+
+.theme-splash-scenario-line {
+  margin: 0;
+  color: var(--text-1, #0f172a);
+}
+
+.theme-splash-scenario-line--primary {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.theme-splash-scenario-line--secondary {
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-2, #334155);
+}
+
 .theme-splash-intro {
   margin-top: 6px;
 }
 
+.theme-splash-meta {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2, #475569);
+}
+
 .theme-splash-note {
-  margin-top: 10px;
+  margin-top: 14px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border-light, #e2e8f0);
   background: var(--surface-2, #f8fafc);
   color: var(--text-2, #475569);
+}
+
+.theme-splash-note-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3, #64748b);
+  margin-bottom: 6px;
+}
+
+.theme-splash-note-p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .theme-splash-glossary {
@@ -2825,10 +3564,19 @@ button.header-link {
   left: 0;
   right: 0;
   bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
-  z-index: 95;
+  /* Below .app-header (100) so viewpoint/theme hit-bridges keep working; above results chrome (<95) */
+  z-index: 99;
   background: rgba(15, 23, 42, 0.28);
   -webkit-backdrop-filter: blur(1px);
   backdrop-filter: blur(1px);
+  cursor: pointer;
+  user-select: none;
+  /*
+   * Visual scrim only: if this layer receives hits, it blocks the whole results area (diagram,
+   * path splitter, explanations) while the top drawer is open. Outside-dismiss is handled on
+   * document capture (dismissPathPanelFromOutsidePointerIfNeeded).
+   */
+  pointer-events: none;
 }
 
 .top-drawer-backdrop[hidden] {
@@ -3013,6 +3761,8 @@ button.header-link {
 .app-layout.layout-sidebar .panel-resize-handle--vertical {
   grid-column: 2;
   grid-row: 1;
+  /* Above .results-panel (z-index 6) so the gutter always receives drags */
+  z-index: 10;
 }
 
 /* Hide only the top-bar chrome handle; keep #results-split-resize (same class) visible */
@@ -3041,7 +3791,6 @@ button.header-link {
   right: 0;
   width: 100%;
   max-width: none;
-  z-index: 96;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -3055,10 +3804,22 @@ button.header-link {
   border-radius: 0 0 14px 14px;
   transform: translateY(0);
   transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.25s ease;
+  /*
+   * Above .app-header (z-index 100). Header viewpoint/theme shells use ::after hit-bridges
+   * (pointer-events: auto) that extend below the bar; at 96 those stole clicks on the drawer’s
+   * Options / Interface options column (right strip in top layout).
+   */
+  z-index: 102;
 }
 
 .app-layout.layout-top.panel-collapsed .selector-panel-wrap {
-  transform: translateY(calc(-100% - 8px));
+  /*
+   * Drawer is position:fixed with top: var(--header-height). translateY(-100% - 8px) only moves the
+   * box up by its height + 8px, so the bottom edge lands at (header-height - 8px) — a large band
+   * stayed visible at the top of the viewport and, at z-index 102, painted over the sticky header.
+   * Subtract header height again so the collapsed strip clears the menu bar entirely.
+   */
+  transform: translateY(calc(-100% - var(--header-height) - 8px));
   pointer-events: none;
   box-shadow: none;
 }
@@ -3109,7 +3870,8 @@ button.header-link {
 .panel-resize-handle--vertical {
   cursor: col-resize;
   width: 6px;
-  margin: 0 -3px;
+  /* No negative margin: overlap into #results-panel sat under it (z-index 6) and stole pointer events */
+  margin: 0;
   position: relative;
 }
 
@@ -3170,6 +3932,8 @@ button.header-link {
   padding: 0 12px;
   font-size: 13px;
   line-height: 1;
+  /* Above .app-header (100): header can grow past --header-height; otherwise it steals clicks on this tab. */
+  z-index: 105;
 }
 
 .selector-panel-wrap .selector-panel {
@@ -3321,6 +4085,98 @@ button.header-link {
   min-height: 0;
   overflow: visible;
 }
+
+/* Top bar: Options + Interface stacked; Viewpoint beside them. Sidebar: display:contents so order matches DOM */
+.layout-sidebar .path-controls-toolbar {
+  display: contents;
+}
+
+.layout-sidebar .path-controls-triggers-stack {
+  display: contents;
+}
+
+.layout-top .path-controls-triggers-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.layout-top .path-controls-triggers-stack > .sidebar-controls-collapsible {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+.layout-top .path-controls-toolbar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.layout-top .path-controls-toolbar .path-options-trigger,
+.layout-top .path-controls-toolbar .path-chrome-trigger {
+  margin-bottom: 0;
+}
+
+.path-viewpoint-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.layout-sidebar .path-viewpoint-inline {
+  order: 1;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 0 12px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.layout-top .path-viewpoint-inline {
+  flex: 1 1 140px;
+  min-width: 72px;
+}
+
+.path-viewpoint-inline-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.layout-sidebar .path-viewpoint-inline-label {
+  font-size: 12px;
+}
+
+.layout-top .path-viewpoint-inline .viewpoint-select {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 26px 6px 8px;
+  background-position: right 8px center;
+}
+
+.layout-top .selector-panel-right--compact .path-viewpoint-inline-label {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+
+.layout-top .selector-panel-right--compact .path-viewpoint-inline .viewpoint-select {
+  font-size: 10px;
+  padding: 4px 22px 4px 5px;
+  background-position: right 6px center;
+}
+
 .layout-top .path-chrome-trigger {
   padding: 6px 8px;
   margin: 0 0 4px;
@@ -3394,7 +4250,7 @@ button.header-link {
   align-self: stretch;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 38px 8px 10px;
+  padding: 10px 8px 10px;
   gap: 8px;
   border-left: 1px solid var(--border);
   background: var(--surface-2);
@@ -3408,7 +4264,7 @@ button.header-link {
   width: 124px;
   max-width: min(136px, 22vw);
   min-width: 104px;
-  padding: 36px 4px 8px;
+  padding: 8px 4px 8px;
   gap: 4px;
 }
 
@@ -3420,6 +4276,11 @@ button.header-link {
 .layout-top .selector-panel-right--compact .path-options-trigger .name {
   font-size: 9px;
   letter-spacing: 0.02em;
+}
+
+.layout-top .selector-panel-right--compact .path-controls-toolbar .path-options-trigger,
+.layout-top .selector-panel-right--compact .path-controls-toolbar .path-chrome-trigger {
+  margin-bottom: 0;
 }
 
 .layout-top .selector-panel-right--compact .control-label {
@@ -3607,6 +4468,28 @@ button.header-link {
   color: var(--text-3);
 }
 
+.search-advanced-restore-btn {
+  margin-top: 4px;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.search-advanced-restore-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-advanced-restore-btn:active {
+  transform: scale(0.99);
+}
+
 .search-field {
   display: flex;
   flex-direction: column;
@@ -3693,34 +4576,6 @@ button.header-link {
   width: 100%;
 }
 
-.layout-sidebar .topbar-collapse-btn {
-  display: none;
-}
-
-.topbar-collapse-btn {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 30px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.65);
-  color: var(--text-2);
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-  z-index: 2;
-}
-
-.topbar-collapse-btn:hover {
-  background: var(--surface);
-  color: var(--accent);
-  border-color: var(--accent-2);
-}
-
 /* Waypoint row: chain only; “+ Add element” lives in selector-panel-footer with Find / Clear */
 .waypoint-chain-row {
   display: flex;
@@ -3739,6 +4594,96 @@ button.header-link {
 .layout-top .waypoint-chain-row .waypoint-chain {
   flex: 1;
   min-width: 0;
+}
+
+.header-study-generate-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.header-study-generate-wrap .study-generate-btn {
+  width: auto;
+  max-width: min(320px, 56vw);
+  white-space: nowrap;
+}
+
+.study-generate-options {
+  position: relative;
+}
+
+.study-generate-options > summary {
+  list-style: none;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.study-generate-options > summary::-webkit-details-marker {
+  display: none;
+}
+
+.study-generate-options[open] > summary {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.study-generate-options-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 190;
+  min-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  background: #1e3a5f;
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.35);
+}
+
+.study-generate-options-body .search-field {
+  margin: 0 0 8px;
+}
+
+.study-generate-options-body .search-field:last-child {
+  margin-bottom: 0;
+}
+
+.study-generate-options-body .search-field-label {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.study-generate-options-body .viewpoint-select {
+  width: 100%;
+}
+
+.app-shell--study-mode .app-header {
+  grid-template-columns: minmax(132px, auto) auto;
+  /* Let study “Options” <details> dropdown extend below the bar; default overflow-x:auto clips overflow-y. */
+  overflow: visible;
+}
+
+.app-shell--study-mode .header-center {
+  display: none !important;
+}
+
+.app-shell--study-mode #btn-header-show-controls {
+  display: none !important;
+}
+
+.app-shell--study-mode #waypoints-panel-label,
+.app-shell--study-mode .waypoint-chain-row,
+.app-shell--study-mode #selector-panel-footer,
+.app-shell--study-mode #quick-examples-block,
+.app-shell--study-mode #quick-examples-show-row {
+  display: none !important;
 }
 
 .selector-panel-footer .waypoint-add-col {
@@ -3811,11 +4756,13 @@ button.header-link {
   z-index: 2;
   flex-shrink: 0;
   margin: auto 0 0;
-  padding: 8px 0 0;
+  /* Extra top padding so wave translateY isn’t clipped by .selector-panel-right overflow */
+  padding: 12px 0 0;
   border: none;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow: 0 -8px 16px -10px rgba(0, 0, 0, 0.12);
   background: var(--surface-2);
+  overflow: visible;
 }
 
 .layout-top .selector-panel-footer .find-path-btn {
@@ -3847,6 +4794,79 @@ button.header-link {
   color: var(--text-3);
   box-shadow: none;
   cursor: not-allowed;
+}
+
+.layout-top .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(30, 58, 95, 0.38);
+  cursor: wait;
+  opacity: 1;
+}
+
+.layout-top .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-label,
+.layout-top .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-char {
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+/* Let wave motion paint above the sticky footer seam (scroll parent uses overflow-y: auto) */
+.layout-top .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled {
+  position: relative;
+  z-index: 3;
+  overflow: visible;
+}
+
+/* Vertical panels (sidebar): mirror top-bar footer so wave “Finding…” stays white on accent (same specificity as :disabled above) */
+.layout-sidebar .selector-panel-footer .find-path-btn {
+  width: 100%;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 10px rgba(30, 58, 95, 0.38);
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn:hover:not(:disabled) {
+  background: #16324f;
+  color: #fff;
+  box-shadow: 0 3px 12px rgba(30, 58, 95, 0.45);
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn:active:not(:disabled) {
+  background: #142d47;
+  transform: scale(0.99);
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn:disabled {
+  background: var(--border);
+  color: var(--text-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(30, 58, 95, 0.38);
+  cursor: wait;
+  opacity: 1;
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-label,
+.layout-sidebar .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-char {
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+.layout-sidebar .selector-panel-footer .find-path-btn.find-path-btn--wave-active:disabled {
+  position: relative;
+  z-index: 3;
+  overflow: visible;
 }
 
 .layout-top .selector-panel-footer .clear-all-btn {
@@ -3999,7 +5019,10 @@ button.header-link {
   );
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
   position: relative;
-  z-index: 6;
+  /* Above .results-lower, diagram stack, and .top-drawer-backdrop visual layer */
+  z-index: 40;
+  pointer-events: auto;
+  touch-action: none;
 }
 .results-split-handle::after {
   content: "";
@@ -4058,9 +5081,9 @@ button.header-link {
   padding: 0.75rem;
   border: 1px solid var(--results-border);
   border-radius: 0.75rem;
-  /* Above .results-split-handle (z-index 6) so breadcrumbs/tooltips can extend over the split strip */
+  /* Below .results-split-handle (z-index 8) so the splitter stays draggable where flex rows meet */
   position: relative;
-  z-index: 7;
+  z-index: 5;
 }
 
 .results-lower-scroll {
@@ -4518,12 +5541,23 @@ input[type="number"].search-weight-input.viewpoint-select {
 /* Overlay picker (popover) — behaves like a native dropdown */
 .picker-overlay {
   position: fixed;
-  inset: 0;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
   background: rgba(18,18,16,0.28);
   z-index: 500;
   display: none;
 }
 .picker-overlay.open { display: block; }
+
+/* Element picker should not block panel trigger clicks behind the backdrop. */
+#picker-overlay {
+  pointer-events: none;
+}
+#picker-overlay .picker-popover {
+  pointer-events: auto;
+}
 
 .picker-popover {
   position: fixed;
@@ -4558,6 +5592,109 @@ input[type="number"].search-weight-input.viewpoint-select {
   overflow-y: auto;
   max-height: min(360px, calc(100vh - 120px));
   -webkit-overflow-scrolling: touch;
+}
+
+.edge-context-menu {
+  position: fixed;
+  min-width: 0;
+  width: max-content;
+  max-width: 240px;
+  background: #eef2f7;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  padding: 3px;
+  z-index: 1200;
+}
+.edge-context-menu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.25;
+  border-radius: 7px;
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.edge-context-menu-item:hover,
+.edge-context-menu-item:focus-visible {
+  background: rgba(59, 130, 246, 0.14);
+  outline: none;
+}
+.edge-context-menu-item.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+.edge-context-menu-check {
+  opacity: 0;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+.edge-context-menu-item.is-checked .edge-context-menu-check {
+  opacity: 1;
+}
+.edge-context-menu-caret {
+  font-size: 12px;
+  color: var(--muted, #64748b);
+  margin-left: auto;
+}
+.edge-context-menu-submenu-wrap {
+  position: relative;
+}
+.edge-context-menu-submenu-wrap--under .edge-context-submenu {
+  left: 0;
+  top: calc(100% + 2px);
+  min-width: 100%;
+}
+.edge-context-submenu {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 4px);
+  min-width: 164px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #eef2f7;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  padding: 3px;
+}
+.edge-context-submenu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  border-radius: 7px;
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.edge-context-submenu-item.is-current {
+  background: rgba(59, 130, 246, 0.14);
+  font-weight: 700;
+}
+.edge-context-submenu-item:hover,
+.edge-context-submenu-item:focus-visible {
+  background: rgba(59, 130, 246, 0.14);
+  outline: none;
+}
+.edge-context-arrow-preview {
+  width: 22px;
+  height: 10px;
+  flex: 0 0 22px;
+  display: inline-block;
 }
 
 .path-options-popover-body .sidebar-controls-body {
@@ -4634,6 +5771,16 @@ input[type="number"].search-weight-input.viewpoint-select {
 }
 .element-card .element-icon { display: none; }
 .element-card .element-label { display: none; }
+.element-card-fallback-label {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-2);
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
 
 .element-card .element-meta {
   display: block;
@@ -4745,28 +5892,6 @@ input[type="number"].search-weight-input.viewpoint-select {
 }
 .mm-modal[aria-hidden="false"]{ display: block; }
 
-.path-labels-modal{ z-index: 405; }
-.path-labels-modal .mm-modal-card.path-labels-card{
-  width: min(640px, calc(100vw - 40px));
-  padding: 16px 18px 20px;
-  background: linear-gradient(165deg, #ffffff 0%, var(--surface-2) 55%, #ffffff 100%);
-  border: 1px solid rgba(30, 58, 95, 0.12);
-  box-shadow:
-    0 4px 24px rgba(30, 58, 95, 0.08),
-    0 20px 50px rgba(0, 0, 0, 0.12);
-}
-.path-labels-modal .mm-modal-sub{
-  margin: 8px 0 14px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(45, 95, 138, 0.06);
-  border: 1px solid rgba(30, 58, 95, 0.1);
-  color: var(--text-2);
-  line-height: 1.45;
-}
-.path-labels-card{
-  width: min(520px, calc(100vw - 40px));
-}
 .path-tabs-help{
   padding: 6px 20px 0;
   background: var(--surface);
@@ -4881,8 +6006,7 @@ input[type="number"].search-weight-input.viewpoint-select {
   background: linear-gradient(
     180deg,
     var(--layer-application) 0%,
-    var(--layer-technology) 50%,
-    var(--layer-physical) 100%
+    var(--layer-technology) 100%
   );
 }
 .path-labels-route-card--cross::before{
@@ -5611,6 +6735,51 @@ button.step-el.el-info-trigger:focus-visible{
 .find-path-btn:active  { transform: scale(0.99); }
 .find-path-btn:disabled { background: var(--border); color: var(--text-3); cursor: default; }
 
+/* Brighter "active" look while wave runs so motion isn’t lost in disabled gray */
+.find-path-btn.find-path-btn--wave-active:disabled {
+  background: var(--accent);
+  color: #fff;
+  cursor: wait;
+  opacity: 1;
+}
+
+/* Explicit white on nested spans (inherit can lose to other disabled rules in some themes) */
+.find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-label,
+.find-path-btn.find-path-btn--wave-active:disabled .find-path-btn__wave-char {
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+/* Wave motion on "Finding…" while path search runs (see setLoading in app.js) */
+.find-path-btn__wave-label {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.find-path-btn__wave-char {
+  display: inline-block;
+  will-change: transform;
+  animation: find-path-wave 1.35s ease-in-out infinite;
+  animation-delay: calc(var(--wave-i) * 0.1s);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+@media (prefers-reduced-motion: reduce) {
+  .find-path-btn__wave-char {
+    animation: none;
+  }
+}
+@keyframes find-path-wave {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-11px) scale(1.06);
+  }
+}
+
 /* ── Diagram Area ─────────────────────────────────────────────────────────── */
 .diagram-area {
   display: flex;
@@ -5694,6 +6863,13 @@ button.step-el.el-info-trigger:focus-visible{
 }
 
 /* Pan/zoom canvas + no-path overlay (overlay is above surface — not inside #path-diagram) */
+.diagram-stack,
+.diagram-viewport-wrap,
+.diagram-pan-viewport,
+.diagram-pan-surface,
+#path-diagram {
+  pointer-events: auto;
+}
 .diagram-viewport-wrap {
   flex: 1 1 0;
   min-height: 160px;
@@ -5706,6 +6882,20 @@ button.step-el.el-info-trigger:focus-visible{
   flex: 1 1 0;
   min-height: 0;
 }
+
+/* First successful path diagram after empty canvas — soft fade-in (JS adds .path-diagram--entrance-fade; prefers-reduced-motion skips in app.js) */
+#path-diagram.path-diagram--entrance-fade {
+  animation: path-diagram-entrance-fade 0.48s ease-out both;
+}
+@keyframes path-diagram-entrance-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .diagram-no-path-overlay {
   position: absolute;
   inset: 0;
@@ -5725,6 +6915,7 @@ button.step-el.el-info-trigger:focus-visible{
 }
 .diagram-no-path-overlay[hidden] {
   display: none !important;
+  pointer-events: none !important;
 }
 .diagram-no-path-overlay__card {
   width: 100%;
@@ -6110,6 +7301,23 @@ svg .composite-illustration-more {
   border-bottom: 1px solid var(--border-light);
 }
 
+.path-perspective-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.path-perspective-scope-tag {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-weight: 600;
+}
+
 .path-perspective-head::-webkit-details-marker {
   display: none;
 }
@@ -6216,6 +7424,17 @@ svg .composite-illustration-more {
   background: #eef2f8;
 }
 
+.path-perspective-suggestion-chip--viewpoint {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #312e81;
+}
+
+.path-perspective-suggestion-chip--viewpoint:hover {
+  border-color: #a5b4fc;
+  background: #e6ebff;
+}
+
 .path-perspective-suggestion-plus {
   width: 14px;
   height: 14px;
@@ -6280,9 +7499,11 @@ svg .composite-illustration-more {
   background: var(--surface);
   padding: 4px 7px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 6px;
+  row-gap: 4px;
   cursor: pointer;
   text-align: left;
   color: var(--text-2);
@@ -6300,11 +7521,13 @@ svg .composite-illustration-more {
 
 .path-perspective-item-main {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   font-size: 12px;
   line-height: 1.2;
-  min-width: 0;
+  /* Do not use min-width:0 here: it lets this flex item shrink under badge row and overlap pills. */
+  min-width: min-content;
 }
 
 .path-perspective-item-main .hop-badge {
@@ -6319,6 +7542,7 @@ svg .composite-illustration-more {
   flex-wrap: wrap;
   justify-content: flex-end;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .path-perspective-coach {
@@ -6373,6 +7597,30 @@ svg .composite-illustration-more {
   color: var(--text-2);
 }
 
+.path-perspective--viewpoint-constrained {
+  border-color: var(--border);
+}
+
+.path-perspective--viewpoint-constrained .path-perspective-head {
+  background: var(--surface-2);
+  border-bottom-color: var(--border-light);
+}
+
+.path-perspective--viewpoint-constrained[open] {
+  border-color: #fcd34d;
+}
+
+.path-perspective--viewpoint-constrained[open] .path-perspective-head {
+  background: #fff8e8;
+  border-bottom-color: #fde68a;
+}
+
+.path-perspective--viewpoint-constrained[open] .path-perspective-scope-tag {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
 .path-badge {
   font-size: 11px;
   line-height: 1.2;
@@ -6401,9 +7649,9 @@ svg .composite-illustration-more {
 }
 
 .path-badge--layer-application {
-  background: #cffafe;
-  border-color: #a5f3fc;
-  color: #155e75;
+  background: #BFFFFF;
+  border-color: #5ec4c4;
+  color: #0f172a;
 }
 
 .path-badge--layer-tech {
@@ -6487,6 +7735,84 @@ svg .composite-illustration-more {
 .algorithm-debug-panel.show {
   display: block;
 }
+
+.algorithm-path-rank-wrap {
+  margin-top: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.algorithm-path-rank-title {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.algorithm-path-rank-weights {
+  padding: 0 10px 8px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-3);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+}
+.algorithm-path-rank-scroll {
+  overflow: auto;
+  max-height: min(360px, 50vh);
+  -webkit-overflow-scrolling: touch;
+}
+.algorithm-path-rank-table {
+  width: max(100%, 1020px);
+  min-width: 1020px;
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-2);
+}
+.algorithm-path-rank-table th,
+.algorithm-path-rank-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  vertical-align: middle;
+}
+.algorithm-path-rank-table thead th {
+  border-top: none;
+  font-weight: 600;
+  color: var(--text-2);
+  background: rgba(30, 58, 95, 0.07);
+  white-space: nowrap;
+}
+.algorithm-path-rank-cell--idx {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.algorithm-path-rank-cell--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.algorithm-path-rank-cell--total-cost {
+  border-left: 1px solid rgba(0, 0, 0, 0.1);
+  font-weight: 700;
+}
+.algorithm-path-rank-table thead th.algorithm-path-rank-cell--total-cost {
+  font-weight: 700;
+}
+.connect-set-note-syntax-base {
+  font-weight: 400;
+  color: var(--text-3);
+  font-size: 10px;
+}
+.algorithm-path-rank-row--current td {
+  background: rgba(30, 58, 95, 0.1);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.algorithm-path-rank-row--current td.algorithm-path-rank-cell--num {
+  font-weight: 700;
+}
+
 .connect-set-note-tech-headrow,
 .path-search-report__head-row {
   display: flex;
@@ -6921,7 +8247,7 @@ cite {
     align-items: stretch;
     justify-content: center;
     gap: 8px;
-    padding: 38px 14px 12px;
+    padding: 12px 14px 12px;
   }
   .layout-top .selector-panel-footer .find-path-btn {
     width: 100%;
@@ -7039,7 +8365,7 @@ cite {
   min-width: 0;
   width: 100%;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }
@@ -7100,6 +8426,27 @@ cite {
   font-size: 13px;
 }
 
+@media (pointer: coarse) {
+  .diagram-zoom-controls {
+    border-radius: 8px;
+  }
+
+  .diagram-zoom-btn {
+    min-width: 44px;
+    height: 44px;
+    padding: 0 10px;
+    font-size: 18px;
+  }
+
+  .diagram-zoom-reset {
+    font-size: 17px;
+  }
+
+  .diagram-tools {
+    gap: 8px;
+  }
+}
+
 .diagram-tools {
   display: flex;
   align-items: center;
@@ -7112,6 +8459,129 @@ cite {
   border-left: 1px solid var(--border);
   flex-wrap: nowrap;
   flex-shrink: 0;
+}
+
+.diagram-download-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Fixed + JS placement: escapes .diagram-toolbar-row overflow-x:auto clipping */
+.diagram-download-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  margin: 0;
+  /* Wide enough for five format chips in one row (PNG SVG PDF CSV XML). */
+  min-width: 270px;
+  max-width: min(24rem, 92vw);
+  z-index: 8500;
+  padding: 10px;
+  border-left-width: 2px;
+}
+
+.diagram-download-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+.diagram-download-title--follow {
+  margin-top: 12px;
+}
+
+.diagram-download-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.diagram-download-chip {
+  min-height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  padding-inline: 4px;
+}
+
+.diagram-download-chip:hover {
+  border-color: rgba(45, 95, 138, 0.35);
+  color: var(--accent);
+  background: rgba(45, 95, 138, 0.06);
+}
+
+.diagram-download-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.diagram-download-chip--block {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
+  line-height: 1.25;
+  padding-block: 6px;
+}
+
+.diagram-options-section {
+  margin-top: 12px;
+}
+
+.diagram-options-section:first-child {
+  margin-top: 0;
+}
+
+.diagram-options-path-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diagram-options-radio,
+.diagram-options-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.diagram-options-radio input,
+.diagram-options-check input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.diagram-options-hint {
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-3);
+}
+
+.diagram-options-popover.diagram-download-popover {
+  max-height: min(420px, 86vh);
+  overflow-y: auto;
 }
 
 .diagram-tool-btn {
@@ -7147,6 +8617,19 @@ cite {
 .diagram-icon-btn:hover {
   border-color: var(--accent-2);
   color: var(--accent);
+}
+
+/* Settings gear: slightly larger than default 14px so it matches the download + fullscreen pair optically */
+.diagram-icon-btn.diagram-icon-btn--options {
+  font-size: 17px;
+}
+
+/* Download tray icon: ~same visual weight as the ⛶ fullscreen glyph at 14px */
+.diagram-icon-btn .diagram-download-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 18px;
 }
 
 .diagram-view-btn {

@@ -228,7 +228,7 @@ const ELEMENT_DEFINITIONS = {
     section: "§10.3.2", aspect: "Passive Structure",
   },
 
-  // ── PHYSICAL ───────────────────────────────────────────────────────────────
+  // ── §10.4 Equipment & facility (Technology layer in this app) ────────────────
 
   "Equipment": {
     definition: "Represents one or more physical machines, tools, or instruments that can create, use, store, move, or transform materials.",
@@ -276,9 +276,9 @@ const ELEMENT_DEFINITIONS = {
     definition: "Represents a conceptual or physical place or position where concepts are located or where behavior is performed.",
     section: "§11.1.1", aspect: "Composite",
   },
-  "Grouping": {
-    definition: "Represents an aggregation of concepts that belong together based on some common characteristic.",
-    section: "§11.1.2", aspect: "Composite",
-  },
+  // "Grouping": {
+  //   definition: "Represents an aggregation of concepts that belong together based on some common characteristic.",
+  //   section: "§11.1.2", aspect: "Composite",
+  // },
 
 };

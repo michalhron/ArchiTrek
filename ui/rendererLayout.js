@@ -214,7 +214,8 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
   sortedIndices.forEach((origIdx, visualIdx) => origToVisual.set(origIdx, visualIdx));
 
   // Include staggered outer-bypass buses (these can push labels further out than content bounds).
-  const outerByHop = computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices);
+  const badgeStairForBounds = computeVerticalBadgeStairOffsetsByHop(pathFlatSteps, positions, sortedIndices);
+  const outerByHop = computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices, badgeStairForBounds);
 
   let minX = Infinity;
   let maxX = -Infinity;
@@ -287,10 +288,70 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
 }
 
 /**
+ * Badge horizontal staircase offsets (same-band hops) — must match {@link renderVerticalCompactDiagram}.
+ * @returns {Map<number, number>}
+ */
+function computeVerticalBadgeStairOffsetsByHop(pathFlatSteps, positions, sortedIndices) {
+  const origToVisual = new Map();
+  sortedIndices.forEach((origIdx, visualIdx) => origToVisual.set(origIdx, visualIdx));
+  const badgeOffsetByHop = new Map();
+  const BADGE_STAIR_STEP_PX = 15;
+  const BADGE_STAIR_MAX_Y_GAP = Math.max(24, Math.ceil(EL_H * 0.65));
+  const verticalHopRows = [];
+  for (let hop = 1; hop < pathFlatSteps.length; hop++) {
+    const step = pathFlatSteps[hop];
+    if (!step.codes) continue;
+    const vFrom = origToVisual.get(hop - 1);
+    const vTo = origToVisual.get(hop);
+    if (vFrom == null || vTo == null || vFrom === vTo) continue;
+    const a = positions[vFrom];
+    const b = positions[vTo];
+    verticalHopRows.push({
+      hop,
+      rawY: (a.cy + b.cy) / 2,
+      fromBand: a.bandId,
+      toBand: b.bandId,
+    });
+  }
+  verticalHopRows.sort((p, q) => p.rawY - q.rawY);
+  let prevBadgeSeq = null;
+  for (const row of verticalHopRows) {
+    const sameBandSeq = row.fromBand === row.toBand;
+    if (
+      prevBadgeSeq &&
+      sameBandSeq &&
+      prevBadgeSeq.sameBandSeq &&
+      Math.abs(row.rawY - prevBadgeSeq.rawY) <= BADGE_STAIR_MAX_Y_GAP
+    ) {
+      badgeOffsetByHop.set(row.hop, prevBadgeSeq.offset + BADGE_STAIR_STEP_PX);
+    } else {
+      badgeOffsetByHop.set(row.hop, 0);
+    }
+    prevBadgeSeq = { rawY: row.rawY, sameBandSeq, offset: badgeOffsetByHop.get(row.hop) || 0 };
+  }
+  return badgeOffsetByHop;
+}
+
+/**
+ * Same-column vertical hops with badge stair offsets: east straddle + fixed spine x fights clearance — prefer outer bypass.
+ */
+function badgeStairWantsOuterBypass(positions, steps, vFrom, vTo, hop, badgeOffsetByHop) {
+  if (!badgeOffsetByHop || (badgeOffsetByHop.get(hop) || 0) === 0) return false;
+  const a = positions[vFrom];
+  const b = positions[vTo];
+  if (!a || !b || a.bandId !== b.bandId) return false;
+  const fromEl = steps[vFrom]?.element;
+  const toEl = steps[vTo]?.element;
+  const { x1, x2 } = layerGravityHopPorts(a, b, fromEl, toEl);
+  return Math.abs(x1 - x2) < 0.5;
+}
+
+/**
  * Per-hop outer C-shape: side ports at main-box faces, bus at tx. Stagger parallel east/west bypasses.
+ * @param {Map<number, number>|null} [badgeOffsetByHop] Optional staircase offsets — when non-zero on same-column same-band hops, triggers bypass over straddle nudging.
  * @returns {Map<number, { tx: number, sx: number, sy: number, ex: number, ey: number }>}
  */
-function computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices) {
+function computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices, badgeOffsetByHop = null) {
   const origToVisual = new Map();
   sortedIndices.forEach((origIdx, visualIdx) => origToVisual.set(origIdx, visualIdx));
   const { minL, maxR } = layoutHorizontalExtentVerticalCompact(positions, steps);
@@ -307,17 +368,31 @@ function computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, so
     if (vFrom == null || vTo == null || vFrom === vTo) continue;
     const fromEl = steps[vFrom].element;
     const toEl = steps[vTo].element;
-    if (!computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hop)) continue;
+    const needGeomBypass = computeVerticalCompactBypassNeeded(positions, steps, vFrom, vTo, fromEl, toEl, hop);
+    const needStairBypass = badgeStairWantsOuterBypass(positions, steps, vFrom, vTo, hop, badgeOffsetByHop);
+    const a = positions[vFrom];
+    const b = positions[vTo];
+    const crossLane = a.bandId !== b.bandId;
+    const { x1: xA, x2: xB } = layerGravityHopPorts(a, b, fromEl, toEl);
+    const sameColumn = Math.abs(xA - xB) < 0.5;
+    // Obstacle hits are rare on a clean single-column layer stack (segments sit in band gaps). Without a
+    // bypass, every hop shares one spine x — connectors and labels collapse visually. Stagger when the
+    // path has multiple steps so routes alternate west/east like the original H–V–H outer-track design.
+    const needAestheticStagger =
+      pathFlatSteps.length >= 3 && crossLane && sameColumn;
+    if (!needGeomBypass && !needStairBypass && !needAestheticStagger) continue;
     const preferWest = (bypassSeq % 2) === 0;
     bypassSeq++;
     pending.push({ hop, preferWest, vFrom, vTo });
   }
 
-  let eastIx = 0;
-  let westIx = 0;
   const map = new Map();
-  for (const p of pending) {
-    const stagger = (p.preferWest ? westIx++ : eastIx++) * OUTER_ROUTE_STAGGER_PX;
+  // Index-based stagger: when a hop between two cross-band segments is routed on the center spine (no
+  // pending entry), west/west hops are no longer adjacent in the westIx counter — separate counters
+  // could both use offset 0 and overlap. One slot per bypass keeps every outer track distinct.
+  for (let pi = 0; pi < pending.length; pi++) {
+    const p = pending[pi];
+    const stagger = pi * OUTER_ROUTE_STAGGER_PX;
     // Two-right-angles rule: the bus must be far enough out that the final horizontal leg
     // into the target side is at least 50px after applying marker clearance.
     const minReturnLegPx =
@@ -353,11 +428,12 @@ function computeVerticalCompactOuterArcTrackX(positions, steps, vFrom, vTo, from
 }
 
 function getScaffoldBandId(layerId) {
-  if (layerId === "Motivation" || layerId === "Strategy") return "top";
-  if (layerId === "Business") return "midUpper";
-  if (layerId === "Application") return "midLower";
-  if (layerId === "Technology" || layerId === "Physical") return "bottom";
-  if (layerId === "Implementation") return "bottom";
+  const L = layerId === "Implementation & Migration" ? "Implementation" : layerId;
+  if (L === "Motivation" || L === "Strategy") return "top";
+  if (L === "Business") return "midUpper";
+  if (L === "Application") return "midLower";
+  if (L === "Technology") return "bottom";
+  if (L === "Implementation") return "impl";
   return "midUpper";
 }
 
@@ -438,19 +514,14 @@ function computeVerticalCompactLayout(flatSteps) {
 
   const topPad = 20;
   const bottomPad = 40;
-  const { minL: relMin, span: contentSpan } = verticalLaneContentBoundsFromSteps(steps);
+  const { minL: relMin, maxR: relMax, span: contentSpan } = verticalLaneContentBoundsFromSteps(steps);
   const laneCoreW = verticalLaneColumnWidthPx(contentSpan);
   /** Tight side margin for hop labels / outer routing (vertical aspect ratio). */
   const labelSideReserve = Math.min(72, Math.max(32, Math.floor(VERT_LABEL_TEXT_RESERVE * 0.26)));
   const hasComposite =
     showSubsForLayout && steps.some((s) => !!COMPOSITE_PATTERNS[s?.element]);
   const compositeRightFlankW = hasComposite ? (COMPOSITE_H_GAP + EL_W) : 0;
-  // Strict alternation means ~half the bypasses will go East; reserve enough width for
-  // the east-side outer bus + its stagger tracks + a safety padding.
-  const maxEastTracks = Math.max(0, Math.ceil((flatSteps.length - 1) / 2) - 1);
-  const bypassTrackW = OUTER_ROUTE_BASE_GAP + (maxEastTracks * OUTER_ROUTE_STAGGER_PX);
   const leftPad = labelSideReserve;
-  const rightPad = labelSideReserve + compositeRightFlankW + bypassTrackW + 40;
   const spineX = leftPad + (laneCoreW - contentSpan) / 2 - relMin;
   const laneMetrics = {};
   let currentY = topPad;
@@ -476,6 +547,17 @@ function computeVerticalCompactLayout(flatSteps) {
     return { x, y, cy: y + EL_H / 2, cx: x + EL_W / 2, bandId };
   });
 
+  /** Only reserve east-side bypass track width when at least one hop actually uses an outer C-route. */
+  const badgeOffsetByHopForPad = computeVerticalBadgeStairOffsetsByHop(flatSteps, positions, sortedIndices);
+  const outerArcByHopForPad = computeVerticalCompactOuterArcByHop(steps, positions, flatSteps, sortedIndices, badgeOffsetByHopForPad);
+  let bypassTrackW = 0;
+  if (outerArcByHopForPad.size > 0) {
+    // East-side buses use slot index 0…n−1; reserve enough width for the furthest track (see computeVerticalCompactOuterArcByHop).
+    bypassTrackW =
+      OUTER_ROUTE_BASE_GAP + Math.max(0, outerArcByHopForPad.size - 1) * OUTER_ROUTE_STAGGER_PX;
+  }
+  const rightPad = labelSideReserve + compositeRightFlankW + bypassTrackW + 40;
+
   // Expand container width based on furthest relationship label reach (east/west),
   // plus a global safety buffer so text never kisses lane/viewBox edges.
   let totalW = leftPad + laneCoreW + rightPad;
@@ -491,15 +573,16 @@ function computeVerticalCompactLayout(flatSteps) {
       }
     }
     // After shifting for west overflow, recompute the required lane width so lane boundaries track labels.
-    // LaneWidth = max(Box_Widths, (SpineX - Furthest_West_Label), (Furthest_East_Label - SpineX) * 2)
+    // Use union of node row extents (relMin/relMax) and estimated label stacks — do not double the east reach.
     const spineXAbs = spineX + needLeft;
     const minXAbs = minX + needLeft;
     const maxXAbs = maxX + needLeft;
-    const laneWidthByLabels = Math.max(
-      laneCoreW,
-      (spineXAbs - (minXAbs - pad)),
-      (maxXAbs + pad - spineXAbs) * 2
-    );
+    const nodeLeftAbs = spineXAbs + relMin;
+    const nodeRightAbs = spineXAbs + relMax;
+    const sceneLeft = Math.min(minXAbs - pad, nodeLeftAbs);
+    const sceneRight = Math.max(maxXAbs + pad, nodeRightAbs);
+    const sceneSpan = sceneRight - sceneLeft;
+    const laneWidthByLabels = Math.max(laneCoreW, sceneSpan);
     totalW = Math.max(totalW + needLeft + needRight, leftPad + laneWidthByLabels + rightPad);
   } catch (_) {
     // Layout must remain robust even if relationship metadata is missing.
@@ -541,6 +624,8 @@ function computeVerticalRotatedLaneLayout(flatSteps) {
   const leftPad = 50;
   const rightPad = 50;
   const bandInnerPad = 14;
+  /** Space below lane band top for {@link drawSwimlaneColumnLabel} (clip height 34px) before first node. */
+  const columnLaneLabelTopReserve = 40;
   const sameBandStepGap = Math.max(24, Math.ceil(EL_H * 0.58));
   const laneGap = 36;
   const { span: contentSpan } = verticalLaneContentBoundsFromSteps(steps);
@@ -550,7 +635,7 @@ function computeVerticalRotatedLaneLayout(flatSteps) {
   for (const bid of usedBandIds) {
     const count = bandCounts[bid] ?? 0;
     const stackH = count > 0
-      ? (2 * bandInnerPad) + count * EL_H + Math.max(0, count - 1) * sameBandStepGap
+      ? columnLaneLabelTopReserve + (2 * bandInnerPad) + count * EL_H + Math.max(0, count - 1) * sameBandStepGap
       : 0;
     laneHeightsById[bid] = Math.max(LANE_H_MIN, stackH);
   }
@@ -578,7 +663,7 @@ function computeVerticalRotatedLaneLayout(flatSteps) {
     const slot = stepIndexByBand[bandId] ?? 0;
     stepIndexByBand[bandId] = slot + 1;
     const x = m.x + (m.w - EL_W) / 2;
-    const y = m.y + bandInnerPad + slot * (EL_H + sameBandStepGap);
+    const y = m.y + bandInnerPad + columnLaneLabelTopReserve + slot * (EL_H + sameBandStepGap);
     return { x, y, cy: y + EL_H / 2, cx: x + EL_W / 2, bandId };
   });
 
@@ -624,13 +709,29 @@ function estimateVerticalHopLabelRect(a, b, fromEl, toEl, hop, outerArcTxOrShape
       : sameColumnVertical || sameColumnOuter
         ? VERT_STRADDLE_PAST_MAIN
         : 0;
+  /** Match drawArrow same-column vertical inset so nudge / viewBox estimates align with rendered labels. */
+  const lenPorts = Math.abs(y2 - y1);
+  let ySegLo = Math.min(y1, y2);
+  let ySegHi = Math.max(y1, y2);
+  if (sameColumnVertical && !outerBypassShape && !sameColumnOuter && lenPorts > 1e-6) {
+    const isLongVertical = lenPorts > 8;
+    const insetStart = isLongVertical ? Math.min(VERT_EDGE_INSET, lenPorts * 0.28) : 0;
+    let y1s = y1;
+    let y2s = y2;
+    if (y1 < y2) y1s = y1 + insetStart;
+    else if (y1 > y2) y1s = y1 - insetStart;
+    ySegLo = Math.min(y1s, y2s);
+    ySegHi = Math.max(y1s, y2s);
+  }
   const baseY =
     outerArcTxOrShape != null &&
     typeof outerArcTxOrShape === "object" &&
     Number.isFinite(outerArcTxOrShape.sy) &&
     Number.isFinite(outerArcTxOrShape.ey)
       ? (outerArcTxOrShape.sy + outerArcTxOrShape.ey) / 2
-      : ((y1 + y2) / 2) + (crossLane ? (y2 > y1 ? -4 : 4) : 0);
+      : sameColumnVertical && !outerBypassShape
+        ? (ySegLo + ySegHi) / 2
+        : ((y1 + y2) / 2) + (crossLane ? (y2 > y1 ? -4 : 4) : 0);
   const stackHalfW = 66;
   const stackHalfH = 16;
   const columnAnchorX = arcTx != null ? arcTx : x1;

@@ -46,23 +46,14 @@ const ARROW_MARKER_TARGET_CLEARANCE = 6;
  * Minimum horizontal gap between the relationship stroke (spine or outer bus at tx) and the numbered badge
  * so the circle + stroke never visually merge.
  */
-const BADGE_LINE_CLEARANCE = 12;
+const BADGE_LINE_CLEARANCE = 10;
 
 /** Max horizontal drift of spine-column label stack from column center (same-column / non-bypass hops). */
 const SPINE_LABEL_MAX_NUDGE_X = 40;
 
 /**
- * Optional diagnostic hook used by some renderer code paths.
- * Kept as a no-op to avoid runtime crashes when debug ingestion is not present.
- */
-function __agentLog(_location, _message, _data, _runId, _hypothesisId) {
-  // no-op
-}
-
-/**
  * When true, composite elements render as a single main box (no illustrated sub-components).
- * Reasons: user toggle off, pathFlow "compact", or horizontal path with swimlane bands (forced for layout
- * clarity; does not change `showCompositeSubs` — leaving that mode restores the saved preference).
+ * Reasons: user toggle off, or pathFlow "compact" (orthogonal compact lanes keep a single-row layout).
  */
 function shouldHideCompositeIllustrations() {
   if (typeof window === "undefined") return false;
@@ -70,7 +61,6 @@ function shouldHideCompositeIllustrations() {
   if (!s) return false;
   if (s.showCompositeSubs === false) return true;
   if (s.pathFlow === "compact") return true;
-  if (s.pathFlow === "horizontal" && s.mode === "swimlane") return true;
   return false;
 }
 
@@ -90,20 +80,36 @@ function layoutElementBBox(pos, w = EL_W, h = EL_H) {
 }
 
 /**
+ * Y of the visible front bottom edge for cube/Facility nodes (isometric base), not the layout bbox bottom.
+ * Matches {@link DEPTH_3D_Y_PX} / drawShape `cube`.
+ */
+function hopCubePerspectiveBottomY(posY, elementName, h = EL_H) {
+  const el = String(elementName || "");
+  const cube = typeof SHAPES !== "undefined" && SHAPES[el]?.type === "cube";
+  const d =
+    cube && typeof DEPTH_3D_Y_PX === "number"
+      ? DEPTH_3D_Y_PX
+      : 0;
+  return posY + h - d;
+}
+
+/**
  * Vertical compact: hops **into** a flanked-composite step (Communication Network, Path, collaborations)
  * place relationship notes west of the spine so they do not cover the right-hand illustration box;
  * hops **out** use the default east straddle. Two wide steps in a row alternate by hop index.
  */
 function verticalStraddleWestForCompactHop(prevEl, curEl, hopIndex) {
-  // Prefer strict left/right alternation to keep hop notes balanced and reduce collisions with the spine.
-  // (Even hops east, odd hops west; matches the outer-bypass alternation intent.)
-  if (typeof hopIndex === "number" && Number.isFinite(hopIndex)) return (hopIndex % 2) === 1;
   const srcP = COMPOSITE_PATTERNS[prevEl];
   const tgtP = COMPOSITE_PATTERNS[curEl];
   const srcWide = !!srcP;
   const tgtWide = !!tgtP;
+  // West straddle only when entering a flanked-composite row (labels must clear illustration boxes).
   if (tgtWide && !srcWide) return true;
-  if (srcWide && tgtWide) return hopIndex % 2 === 1;
+  if (srcWide && tgtWide && typeof hopIndex === "number" && Number.isFinite(hopIndex)) {
+    return (hopIndex % 2) === 1;
+  }
+  if (srcWide && !tgtWide) return false;
+  // Ordinary hops: keep labels east of the spine for consistent, tight placement.
   return false;
 }
 
@@ -116,19 +122,36 @@ function isCyStrictlyBetweenHopSpan(otherCy, srcCy, tgtCy) {
 }
 
 /**
+ * Layer id from logic/graph.js ELEMENTS — does not depend on ui/renderer.js `getLayer` (load order safe).
+ * Normalizes UI/waypoint aliases to the ids used by LAYERS / scaffold bands.
+ */
+function registryElementLayerForSwimlane(elementName) {
+  const el = String(elementName || "").trim();
+  let layer = "Unknown";
+  if (typeof getElementLayer === "function") {
+    layer = getElementLayer(el);
+  } else if (typeof ELEMENTS !== "undefined" && ELEMENTS?.[el]) {
+    layer = ELEMENTS[el].layer ?? "Unknown";
+  }
+  if (layer === "Implementation & Migration") layer = "Implementation";
+  if (layer === "Physical") layer = "Technology";
+  return layer;
+}
+
+/**
  * Swimlane band placement: there is no separate “composition layer” in the ArchiMate layer stack.
  * Location and Grouping are registered with layer "Composite" for filtering, but in swimlanes they
  * should sit in the lane of an adjacent non-Composite step (or Business as a last resort).
  */
 function getSwimlaneLayer(elementName, index, flatSteps) {
-  const raw = getLayer(elementName);
+  const raw = registryElementLayerForSwimlane(elementName);
   if (raw !== "Composite") return raw;
   for (let j = index - 1; j >= 0; j--) {
-    const L = getLayer(flatSteps[j].element);
+    const L = registryElementLayerForSwimlane(flatSteps[j].element);
     if (L !== "Composite") return L;
   }
   for (let j = index + 1; j < flatSteps.length; j++) {
-    const L = getLayer(flatSteps[j].element);
+    const L = registryElementLayerForSwimlane(flatSteps[j].element);
     if (L !== "Composite") return L;
   }
   return "Business";
@@ -159,7 +182,7 @@ function horizontalSwimlaneHopPorts(a, b, compactPacking, fromEl, toEl, laneAlig
     if (sameCol && Math.abs(a.cy - b.cy) > 2) {
       const cx = (cxA + cxB) / 2;
       if (a.cy > b.cy) {
-        const y2 = B.bottom + c;
+        const y2 = hopCubePerspectiveBottomY(b.y, toEl, EL_H) + c;
         return { x1: cx, y1: A.top, x2: cx, y2 };
       }
       if (a.cy < b.cy) {
@@ -439,19 +462,29 @@ function pickSwimlaneCompositeSubLayout(stepIndex, positions, flatSteps, swimlan
   return { mode: "below-diag", diagOnRight: true };
 }
 
-/** Vertical layer-gravity hops: same-lane use side ports; cross-lane use top/bottom centers. */
+/** Vertical layer-gravity hops: same-row (aligned mid-Y) use east/west faces; cross-lane use top/bottom centers. */
 function layerGravityHopPorts(a, b, fromEl, toEl) {
   void fromEl;
-  void toEl;
   const A = layoutElementBBox(a);
   const B = layoutElementBBox(b);
   const c = ARROW_MARKER_TARGET_CLEARANCE;
-  const sameLane = Math.abs(a.cy - b.cy) < 1;
-  if (sameLane) {
-    let x1 = A.right;
+  /** Same visual row (e.g. column swimlanes): route horizontally between facing sides. */
+  const sameRow = Math.abs(a.cy - b.cy) < 1.5;
+  if (sameRow) {
+    let x1;
     let y1 = A.midY;
-    let x2 = B.left;
+    let x2;
     let y2 = B.midY;
+    const bEastOfA = B.cx > A.cx;
+    if (bEastOfA) {
+      // Leave source east → enter target west (typical left-to-right columns).
+      x1 = A.right;
+      x2 = B.left;
+    } else {
+      // Target sits to the west: leave source west → enter target east (no shaft through either box).
+      x1 = A.left;
+      x2 = B.right;
+    }
     const spanH = Math.abs(x2 - x1);
     if (spanH > c && x2 !== x1) {
       x2 += Math.sign(x1 - x2) * c;
@@ -462,7 +495,7 @@ function layerGravityHopPorts(a, b, fromEl, toEl) {
   let x1 = A.cx;
   let y1 = goingUp ? A.top : A.bottom;
   let x2 = B.cx;
-  let y2 = goingUp ? B.bottom + c : B.top - c;
+  let y2 = goingUp ? hopCubePerspectiveBottomY(b.y, toEl, EL_H) + c : B.top - c;
   return { x1, y1, x2, y2 };
 }
 

@@ -16,3 +16,11 @@
 Archive.zip
 Untitled
 **/Untitled
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+
+# Node (dev dependencies — never commit)
+node_modules/

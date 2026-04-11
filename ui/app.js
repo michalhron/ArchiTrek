@@ -3,6 +3,7 @@
 // ── App state ───────────────────────────────────────────────────────────────
 // We use window.state to ensure the HTML dropdowns can see it
 window.state = {
+  appMode:        "designer",
   mode:           'compact',
   /** When true, pathfinding also includes §5.7 derived (lowercase) relationships for simplified routing options. */
   includeDerived: true,
@@ -12,6 +13,9 @@ window.state = {
   waypoints:      [],
   graph:          null,
   segments:       null,
+  studyProceduralGraph: null,
+  /** Provenance from {@link generateProceduralGraph} (seed, viewpoint, policy) — not persisted across reload. */
+  studyGraphMeta: null,
   activePathIdx:  0,
   lastAutoOrdered: false,
   lastAutoOrderInput: null,
@@ -19,7 +23,13 @@ window.state = {
   /** Set after Connect-set find: cost, point count, exact vs heuristic ordering, BFS cap. */
   lastAutoOrderMetrics: null,
   loading: true,
-  showBadges: true,
+  /**
+   * Diagram edge overlays: 0 = none, 1 = flip only, 2 = hop numbers only, 3 = both, 4 = relationship names only (no hop/flip).
+   * Cycles: 3 → 2 → 1 → 4 → 0 → 3.
+   */
+  diagramOverlayMode: 3,
+  /** Show lock/unpin markers on diagram edges for user-forced directions. */
+  showDiagramLockControls: false,
   /** When true, show illustrated composite sub-components (boxes around composites). */
   showCompositeSubs: true,
   /** Path geometry: horizontal (strip or spread swimlanes) → vertical stack → compact orthogonal lanes. */
@@ -45,6 +55,12 @@ window.state = {
   searchPathWeightLayerSkip: 15,
   /** UCS cost surcharge for Discovery-mode semantic violations on a hop. */
   searchPathWeightViolation: 50,
+  /** When true, UCS applies exponential cognitive-load depth penalty to relationship hop weight (routing cost only). */
+  searchCognitiveLoadPenalty: true,
+  /** Hops 1..N use no depth exponent bump (N = grace period). */
+  searchPenaltyGracePeriod: 3,
+  /** Exponential base for depth penalty after grace period. */
+  searchPenaltyGrowthFactor: 2.5,
   /** Semantic rigor preset: academic | pragmatic | discovery | custom. */
   searchRigorPreset: "academic",
   /** Strict semantic gate: disallow Core→Core detours through Motivation/Strategy. */
@@ -61,12 +77,21 @@ window.state = {
   allowAssociationFallback: false,
   /** Thematic context for labels and perspective storytelling copy. */
   domainContext: "abstract",
+  /**
+   * Index into {@code SCENARIOS[domainContext].clusters} when the theme defines micro-clusters;
+   * null when the theme has no clusters (flat labels only).
+   */
+  activeClusterIndex: null,
   /** Set after last successful findPath when any segment used penalized Association. */
   lastPathIsFallback: false,
   /** When last search found no path: which relaxations would help (from probePathRelaxations / probeSetRelaxations). */
   pathFailureHints: null,
   /** Last search outcome from pathfinder: ok | no_path | BLOCKED_BY_VIEWPOINT. */
   lastPathSearchStatus: null,
+  /** User-imposed directional constraints between selected waypoints. */
+  edgeConstraints: [],
+  /** One-shot warning message set when a flip had to degrade to Association. */
+  edgeConstraintWarning: null,
   /** After a successful path from a one-shot relax CTA: which rules were temporarily used (Options stay strict). */
   lastPathTemporaryRelaxation: null,
   /** Snapshot while findPath runs with relaxed rules from overlay/diagnostics; restored after search completes. */
@@ -79,14 +104,119 @@ window.state = {
   _findRunId: 0,
   /** Last find run id for which the path-failure modal was shown (avoid duplicate modals per search). */
   _pathFailModalShownForRunId: null,
+  /** After at least one findPath completion that applied results; the first-ever search skips the wave label. */
+  _findPathCompletedOnce: false,
+  /** Input fingerprint from the last completed findPath (min loading duration when inputs change). */
+  _lastFindPathInputKey: null,
   /** True while an async findPath run is in flight. */
   _finding: false,
   /** requestAnimationFrame gate to avoid redundant renderResults calls in one tick. */
   _renderScheduled: false,
+  /** When true, next successful path diagram render resets pan/zoom (explicit only — never infer from heuristics). */
+  _diagramNeedsCameraReset: false,
+  /**
+   * After a strict viewpoint change cleared waypoint elements while there was no valid search to re-run,
+   * brief copy for the diagram empty state: { removed: string[], viewpointName, viewpointKey }.
+   */
+  _viewpointClearNotice: null,
 };
 
-// Create a shortcut so the rest of this file's code doesn't break
+function parseHydrationFromUrl() {
+  try {
+    const sp = new URLSearchParams(window.location.search || "");
+    const out = {};
+    const appModeRaw = sp.get("appMode");
+    if (appModeRaw === "designer" || appModeRaw === "study") {
+      out.appMode = appModeRaw;
+    }
+    const vpRaw = sp.get("viewpoint");
+    if (vpRaw && VIEWPOINTS?.[normalizeViewpointKey(vpRaw)]) {
+      out.viewpoint = normalizeViewpointKey(vpRaw);
+    }
+    const modeRaw = sp.get("mode");
+    if (modeRaw === "ordered" || modeRaw === "set") {
+      out.selectionMode = modeRaw;
+    }
+    const pathRaw = sp.get("path");
+    if (pathRaw != null && pathRaw !== "") {
+      const idx = Number(pathRaw);
+      if (Number.isFinite(idx) && idx >= 0) out.activePathIdx = Math.floor(idx);
+    }
+    const waypointEntries = [...sp.entries()]
+      .map(([k, v]) => {
+        const m = /^wp(\d+)$/i.exec(k);
+        return m ? { i: Number(m[1]), v } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.i - b.i);
+    if (waypointEntries.length >= 2) {
+      out.waypoints = waypointEntries.map(({ i, v }) => ({
+        layer: null,
+        element: ELEMENTS?.[v] ? v : null,
+        label: i === 0 ? "Start" : "Via",
+      }));
+      if (out.waypoints.length >= 2) {
+        out.waypoints[out.waypoints.length - 1].label = "End";
+      }
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
+function mergeInitialState(defaults, persisted, fromUrl) {
+  const base = { ...(defaults || {}) };
+  const p = persisted && typeof persisted === "object" ? persisted : {};
+  const u = fromUrl && typeof fromUrl === "object" ? fromUrl : {};
+  Object.assign(base, p);
+  Object.assign(base, u);
+  if (!Array.isArray(base.waypoints) || base.waypoints.length < 2) {
+    base.waypoints = [{ layer: null, element: null, label: "Start" }, { layer: null, element: null, label: "End" }];
+  }
+  if (base.selectionMode !== "ordered" && base.selectionMode !== "set") {
+    base.selectionMode = "set";
+  }
+  if (base.appMode !== "study") {
+    base.appMode = "designer";
+  }
+  base.studyProceduralGraph = null;
+  base.studyGraphMeta = null;
+  return base;
+}
+
+const __phase4PersistedState = typeof window.loadPersistedState === "function" ? window.loadPersistedState() : null;
+const __phase4UrlState = parseHydrationFromUrl();
+window.state = mergeInitialState(window.state, __phase4PersistedState, __phase4UrlState);
+window.state.__phase4Hydrated = !!(__phase4PersistedState || Object.keys(__phase4UrlState).length);
+
+if (typeof window.createAppStore === "function") {
+  const created = window.createAppStore(window.state);
+  window.store = created.store;
+  window.state = created.stateProxy;
+}
+
+// Create a shortcut so the rest of this file's code doesn't break.
+// In Phase 3 this points to a proxy backed by store dispatch.
 const state = window.state;
+
+/**
+ * Plain snapshot from the store (not the legacy `window.state` Proxy).
+ * URL sync and session snapshots must read this: passing the Proxy into helpers that
+ * enumerate or stringify routing fields can recurse infinitely in the Proxy get trap.
+ */
+function getPlainAppState() {
+  try {
+    if (typeof window !== "undefined" && window.store && typeof window.store.getState === "function") {
+      return window.store.getState();
+    }
+  } catch (_) {}
+  const s = typeof window !== "undefined" ? window.state : null;
+  if (s && typeof s === "object" && typeof s.__raw__ === "object" && s.__raw__ != null) {
+    return s.__raw__;
+  }
+  return s;
+}
 
 // ── Optional analytics (Umami) ───────────────────────────────────────────────
 function trackEvent(name, data) {
@@ -136,11 +266,66 @@ window.dispatch = function dispatch(action) {
   }
 };
 
+window.applyEdgeConstraintFlip = function applyEdgeConstraintFlip(source, target) {
+  const src = String(source || "").trim();
+  const dst = String(target || "").trim();
+  if (!src || !dst || src === dst || !window.store) return false;
+  const before = JSON.stringify(normalizedEdgeConstraintsFromState());
+  const next = window.store.dispatch("FLIP_EDGE_DIRECTION", { source: src, target: dst });
+  const afterList = Array.isArray(next?.edgeConstraints) ? next.edgeConstraints : [];
+  const after = JSON.stringify(afterList);
+  if (before === after) {
+    const msg = String(next?.edgeConstraintWarning || "").trim();
+    if (msg) {
+      state.edgeConstraintWarning = msg;
+      window.dispatch({ type: "RENDER_RESULTS" });
+    }
+    return false;
+  }
+  /** Same as cycling a hop’s relationship: keep explanation accordions / scroll after the re-find. */
+  state._preserveExplainUiOnNextRender = true;
+  window.dispatch({ type: "FIND_PATH", reason: "edge-flip" });
+  return true;
+};
+
+window.applyEdgeConstraintPinCurrent = function applyEdgeConstraintPinCurrent(source, target) {
+  const src = String(source || "").trim();
+  const dst = String(target || "").trim();
+  if (!src || !dst || src === dst || !window.store) return false;
+  const before = JSON.stringify(normalizedEdgeConstraintsFromState());
+  const next = window.store.dispatch("PIN_EDGE_DIRECTION", { source: src, target: dst });
+  const afterList = Array.isArray(next?.edgeConstraints) ? next.edgeConstraints : [];
+  const after = JSON.stringify(afterList);
+  if (before === after) {
+    const msg = String(next?.edgeConstraintWarning || "").trim();
+    if (msg) {
+      state.edgeConstraintWarning = msg;
+      window.dispatch({ type: "RENDER_RESULTS" });
+    }
+    return false;
+  }
+  state._preserveExplainUiOnNextRender = true;
+  window.dispatch({ type: "FIND_PATH", reason: "edge-pin" });
+  return true;
+};
+
 const SEARCH_EFFORT_MAX_STATES = {
   fast: 8000,
   balanced: 25000,
   thorough: 100000,
 };
+
+/** Default UCS hop weights (Advanced options → Hop cost tuning). */
+const DEFAULT_SEARCH_PATH_WEIGHTS = Object.freeze({
+  searchPathWeightDirect: 1,
+  searchPathWeightDerived: 5,
+  searchPathWeightAssociation: 100,
+  searchPathWeightLayerSkip: 15,
+  searchPathWeightViolation: 50,
+  searchCognitiveLoadPenalty: true,
+  searchPenaltyGracePeriod: 3,
+  searchPenaltyGrowthFactor: 2.5,
+});
 
 const SEARCH_RIGOR_PRESETS = Object.freeze({
   academic:   { restrictCoreToCore: true,  enforceGrammar: true,  allowAssociationFallback: false, strictRealization: true  },
@@ -174,6 +359,18 @@ function clampSearchPathWeight(n, def) {
   const x = Math.round(Number(n));
   if (!Number.isFinite(x)) return def;
   return Math.max(1, Math.min(500, x));
+}
+
+function clampSearchPenaltyGracePeriod(n) {
+  const x = Math.round(Number(n));
+  if (!Number.isFinite(x)) return DEFAULT_SEARCH_PATH_WEIGHTS.searchPenaltyGracePeriod;
+  return Math.max(0, Math.min(24, x));
+}
+
+function clampSearchPenaltyGrowthFactor(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return DEFAULT_SEARCH_PATH_WEIGHTS.searchPenaltyGrowthFactor;
+  return Math.max(1.01, Math.min(10, x));
 }
 
 function isPresetSemanticMatch(presetKey) {
@@ -213,8 +410,96 @@ function normalizeDomainContext(v) {
   return "abstract";
 }
 
+function clusterCountForScenarioKey(domainKey) {
+  const k = normalizeDomainContext(domainKey);
+  const sc = typeof SCENARIOS !== "undefined" && SCENARIOS ? SCENARIOS[k] : null;
+  return Array.isArray(sc?.clusters) ? sc.clusters.length : 0;
+}
+
+/** Random narrative slice for themes with {@code clusters}; null when none. Does not clear label caches. */
+function assignRandomClusterIndexForTheme(domainKey) {
+  const n = clusterCountForScenarioKey(domainKey);
+  if (n === 0) {
+    state.activeClusterIndex = null;
+    return;
+  }
+  state.activeClusterIndex = Math.floor(Math.random() * n);
+}
+
+/**
+ * Effective label map for tooltips / samples: active cluster slice or flat {@code labels}.
+ */
+function getEffectiveScenarioLabelsObject(scenarioKey) {
+  const k = normalizeDomainContext(scenarioKey);
+  const sc = typeof SCENARIOS !== "undefined" && SCENARIOS ? SCENARIOS[k] : null;
+  if (!sc) return {};
+  const n = Array.isArray(sc.clusters) ? sc.clusters.length : 0;
+  if (n > 0) {
+    let idx = state.activeClusterIndex;
+    if (idx == null || !Number.isFinite(Number(idx))) idx = 0;
+    idx = Math.max(0, Math.min(n - 1, Math.floor(Number(idx))));
+    const lb = sc.clusters[idx]?.labels;
+    return lb && typeof lb === "object" ? lb : {};
+  }
+  return sc.labels && typeof sc.labels === "object" ? sc.labels : {};
+}
+
+function syncStoryShuffleButton() {
+  const btn = document.getElementById("theme-shuffle-story-btn");
+  if (!btn) return;
+  const n = clusterCountForScenarioKey(state.domainContext);
+  const show = n > 0;
+  btn.hidden = !show;
+  btn.setAttribute("aria-hidden", show ? "false" : "true");
+}
+
+/** After hydrate: ensure cluster index is valid for themes with clusters (store / URL may omit it). */
+function ensureActiveClusterIndexCoherent() {
+  const k = normalizeDomainContext(state.domainContext);
+  const n = clusterCountForScenarioKey(k);
+  if (n === 0) {
+    state.activeClusterIndex = null;
+    return;
+  }
+  if (state.activeClusterIndex == null || !Number.isFinite(Number(state.activeClusterIndex))) {
+    assignRandomClusterIndexForTheme(k);
+    if (typeof window.clearScenarioLabelVariantCache === "function") {
+      window.clearScenarioLabelVariantCache();
+    }
+    return;
+  }
+  state.activeClusterIndex = Math.max(0, Math.min(n - 1, Math.floor(Number(state.activeClusterIndex))));
+}
+
+window.onShuffleStoryCluster = function onShuffleStoryCluster() {
+  if (clusterCountForScenarioKey(state.domainContext) === 0) return;
+  assignRandomClusterIndexForTheme(state.domainContext);
+  if (typeof window.clearScenarioLabelVariantCache === "function") {
+    window.clearScenarioLabelVariantCache();
+  }
+  rebuildGraph();
+  updateThemeHelpUi();
+  schedulePersistSession();
+  if (state.segments?.length) {
+    window.dispatch({ type: "RENDER_RESULTS" });
+  }
+};
+
+function normalizeViewpointKey(rawViewpoint) {
+  let raw = rawViewpoint == null ? "" : String(rawViewpoint).trim();
+  if (raw === "physical") raw = "technology";
+  if (!raw || typeof VIEWPOINTS === "undefined" || !VIEWPOINTS) return "";
+  if (VIEWPOINTS[raw]) return raw;
+  const lowerRaw = raw.toLowerCase();
+  for (const [key, vp] of Object.entries(VIEWPOINTS)) {
+    const nm = String(vp?.name || "").trim().toLowerCase();
+    if (nm && nm === lowerRaw) return key;
+  }
+  return "";
+}
+
 function resolveViewpointSearchContext({ forceFullMetamodel = false } = {}) {
-  const selectedKey = state.viewpoint ? String(state.viewpoint) : null;
+  const selectedKey = normalizeViewpointKey(state.viewpoint) || null;
   if (forceFullMetamodel || !selectedKey) {
     return { viewpointKey: null, viewpointStrict: false, allowedRelationshipCodes: null };
   }
@@ -247,6 +532,9 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
     pathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
     pathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
     pathViolationPenalty: clampSearchPathWeight(state.searchPathWeightViolation, 50),
+    cognitiveLoadPenalty: state.searchCognitiveLoadPenalty !== false,
+    penaltyGracePeriod: clampSearchPenaltyGracePeriod(state.searchPenaltyGracePeriod),
+    penaltyGrowthFactor: clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor),
     /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
     allowAssociationFallback: !!state.allowAssociationFallback,
@@ -261,6 +549,90 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
   };
 }
 
+function normalizeEdgeConstraintEntry(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const sourceId = String(raw.sourceId ?? raw.source ?? "").trim();
+  const targetId = String(raw.targetId ?? raw.target ?? "").trim();
+  if (!sourceId || !targetId || sourceId === targetId) return null;
+  const type = raw.type === "LOCKED_RELATIONSHIP" ? "LOCKED_RELATIONSHIP" : "FORCED_DIRECTION";
+  const out = { sourceId, targetId, type };
+  if (raw.requiresAssociation === true) out.requiresAssociation = true;
+  return out;
+}
+
+function normalizedEdgeConstraintsFromState() {
+  if (!Array.isArray(state.edgeConstraints)) return [];
+  return state.edgeConstraints
+    .map((entry) => normalizeEdgeConstraintEntry(entry))
+    .filter(Boolean);
+}
+
+function sameUndirectedEdgePair(a, b, c, d) {
+  return (a === c && b === d) || (a === d && b === c);
+}
+
+function removeEdgeConstraintPair(source, target, { reason = "edge-unpin" } = {}) {
+  const src = String(source || "").trim();
+  const dst = String(target || "").trim();
+  if (!src || !dst || src === dst) return false;
+  const beforeList = normalizedEdgeConstraintsFromState();
+  const nextList = beforeList.filter(
+    (c) => !sameUndirectedEdgePair(c.sourceId, c.targetId, src, dst)
+  );
+  if (nextList.length === beforeList.length) return false;
+  if (window.store && typeof window.store.dispatch === "function") {
+    window.store.dispatch("SET_EDGE_CONSTRAINTS", nextList);
+  } else {
+    state.edgeConstraints = nextList;
+  }
+  state.edgeConstraintWarning = null;
+  state._preserveExplainUiOnNextRender = true;
+  if (state.segments) {
+    window.dispatch({ type: "FIND_PATH", reason });
+  } else {
+    window.dispatch({ type: "RENDER_RESULTS" });
+  }
+  return true;
+}
+
+window.removeEdgeConstraintPair = removeEdgeConstraintPair;
+
+window.__validateEdgeConstraintFlip = function __validateEdgeConstraintFlip(prevDir, nextDir) {
+  const from = String(nextDir?.sourceId || "").trim();
+  const to = String(nextDir?.targetId || "").trim();
+  if (!from || !to || from === to) {
+    return { ok: false, degradedToAssociation: false, message: "Invalid edge flip request." };
+  }
+  const graph = state.graph;
+  if (!graph || typeof segmentPaths !== "function") {
+    return { ok: false, degradedToAssociation: false, message: "Path graph is not ready yet." };
+  }
+
+  const baseOptions = getSearchPathOptions({ forceFullMetamodel: false });
+  const strictOptions = { ...baseOptions, allowAssociationFallback: false };
+  const strictPaths = segmentPaths(graph, from, to, strictOptions);
+  if (Array.isArray(strictPaths) && strictPaths.length > 0) {
+    return { ok: true, degradedToAssociation: false, message: null };
+  }
+
+  const assocOptions = { ...baseOptions, allowAssociationFallback: true };
+  const assocPaths = segmentPaths(graph, from, to, assocOptions);
+  if (Array.isArray(assocPaths) && assocPaths.length > 0) {
+    const hadStrictFallback = !!baseOptions.allowAssociationFallback;
+    return {
+      ok: true,
+      degradedToAssociation: !hadStrictFallback,
+      message: hadStrictFallback ? null : "Forced flip resulted in an Association.",
+    };
+  }
+
+  return {
+    ok: false,
+    degradedToAssociation: false,
+    message: `Cannot force ${from} → ${to} under current metamodel/viewpoint constraints.`,
+  };
+};
+
 function applySearchOptionsToUI() {
   const d = document.getElementById("search-max-depth");
   const p = document.getElementById("search-max-paths");
@@ -270,6 +642,9 @@ function applySearchOptionsToUI() {
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
+  const cog = document.getElementById("search-cognitive-load-penalty");
+  const pg = document.getElementById("search-penalty-grace-period");
+  const pgr = document.getElementById("search-penalty-growth-factor");
   const srp = document.getElementById("search-rigor-preset");
   const rc = document.getElementById("restrict-core-to-core");
   const eg = document.getElementById("enforce-grammar");
@@ -285,6 +660,9 @@ function applySearchOptionsToUI() {
   if (wa) wa.value = String(clampSearchPathWeight(state.searchPathWeightAssociation, 100));
   if (wls) wls.value = String(clampSearchPathWeight(state.searchPathWeightLayerSkip, 15));
   if (wv) wv.value = String(clampSearchPathWeight(state.searchPathWeightViolation, 50));
+  if (cog) cog.checked = state.searchCognitiveLoadPenalty !== false;
+  if (pg) pg.value = String(clampSearchPenaltyGracePeriod(state.searchPenaltyGracePeriod));
+  if (pgr) pgr.value = String(clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor));
   if (srp) srp.value = normalizeSearchRigorPreset(state.searchRigorPreset);
   if (rc) rc.checked = !!state.restrictCoreToCore;
   if (eg) eg.checked = !!state.enforceGrammar;
@@ -309,6 +687,9 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
+  const cog = document.getElementById("search-cognitive-load-penalty");
+  const pg = document.getElementById("search-penalty-grace-period");
+  const pgr = document.getElementById("search-penalty-growth-factor");
   const rc = document.getElementById("restrict-core-to-core");
   const eg = document.getElementById("enforce-grammar");
   const str = document.getElementById("strict-realization");
@@ -322,6 +703,15 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   if (wa) state.searchPathWeightAssociation = clampSearchPathWeight(wa.value, 100);
   if (wls) state.searchPathWeightLayerSkip = clampSearchPathWeight(wls.value, 15);
   if (wv) state.searchPathWeightViolation = clampSearchPathWeight(wv.value, 50);
+  if (cog) {
+    if (window.store && !!cog.checked !== !!state.searchCognitiveLoadPenalty) {
+      window.store.dispatch("TOGGLE_COGNITIVE_PENALTY");
+    } else {
+      state.searchCognitiveLoadPenalty = !!cog.checked;
+    }
+  }
+  if (pg) state.searchPenaltyGracePeriod = clampSearchPenaltyGracePeriod(pg.value);
+  if (pgr) state.searchPenaltyGrowthFactor = clampSearchPenaltyGrowthFactor(pgr.value);
   if (rc) state.restrictCoreToCore = !!rc.checked;
   if (eg) state.enforceGrammar = !!eg.checked;
   if (str) state.strictRealization = !!str.checked;
@@ -369,6 +759,37 @@ window.onAssociationFallbackChange = function onAssociationFallbackChange() {
   if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "association-fallback-change" });
 };
 
+/** Reset hop cost inputs to built-in defaults (1 / 5 / 100 / 15 / 50). */
+window.restoreHopCostSearchDefaults = function restoreHopCostSearchDefaults() {
+  state.searchPathWeightDirect = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDirect;
+  state.searchPathWeightDerived = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDerived;
+  state.searchPathWeightAssociation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightAssociation;
+  state.searchPathWeightLayerSkip = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightLayerSkip;
+  state.searchPathWeightViolation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightViolation;
+  state.searchCognitiveLoadPenalty = DEFAULT_SEARCH_PATH_WEIGHTS.searchCognitiveLoadPenalty;
+  state.searchPenaltyGracePeriod = DEFAULT_SEARCH_PATH_WEIGHTS.searchPenaltyGracePeriod;
+  state.searchPenaltyGrowthFactor = DEFAULT_SEARCH_PATH_WEIGHTS.searchPenaltyGrowthFactor;
+  applySearchOptionsToUI();
+  updatePathOptionsTriggerSummary();
+  schedulePersistSession();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "restore-hop-cost-defaults" });
+};
+
+/**
+ * Reset Advanced Logic Overrides checkboxes to the active Semantic rigor preset.
+ * If the main control is Custom, applies Academic defaults (strictest baseline).
+ */
+window.restoreAdvancedLogicOverridesDefaults = function restoreAdvancedLogicOverridesDefaults() {
+  let preset = normalizeSearchRigorPreset(state.searchRigorPreset);
+  if (preset === "custom") preset = "academic";
+  applySearchRigorPresetToState(preset);
+  state.lastPathTemporaryRelaxation = null;
+  applySearchOptionsToUI();
+  updatePathOptionsTriggerSummary();
+  schedulePersistSession();
+  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "restore-logic-overrides-defaults" });
+};
+
 window.onDomainContextChange = function onDomainContextChange(nextValue = undefined) {
   const prev = state.domainContext;
   const sideSel = document.getElementById("domain-context-select");
@@ -379,7 +800,18 @@ window.onDomainContextChange = function onDomainContextChange(nextValue = undefi
       : sideSel?.value || topSel?.value || state.domainContext;
   state.domainContext = normalizeDomainContext(candidate);
   syncDomainContextSelectors();
+  if (prev !== state.domainContext) {
+    if (typeof window.clearScenarioLabelVariantCache === "function") {
+      window.clearScenarioLabelVariantCache();
+    }
+    assignRandomClusterIndexForTheme(state.domainContext);
+    rebuildGraph();
+  }
+  updateThemeHelpUi();
   schedulePersistSession();
+  if (prev !== state.domainContext && state.segments?.length) {
+    state._diagramNeedsCameraReset = true;
+  }
   if (state.segments?.length) {
     window.dispatch({ type: "RENDER_RESULTS" });
   }
@@ -547,7 +979,17 @@ function buildPathSearchReportPayload() {
     pathWeightDerived: so.pathWeightDerived,
     pathWeightAssociation: so.pathWeightAssociation,
     pathWeightLayerSkip: so.pathWeightLayerSkip,
+    pathViolationPenalty: so.pathViolationPenalty,
+    cognitiveLoadPenalty: so.cognitiveLoadPenalty !== false,
+    penaltyGracePeriod: so.penaltyGracePeriod,
+    penaltyGrowthFactor: so.penaltyGrowthFactor,
     searchEffort: normalizeSearchEffort(state.searchEffort),
+    searchRigorPreset: normalizeSearchRigorPreset(state.searchRigorPreset),
+    restrictCoreToCore: !!state.restrictCoreToCore,
+    enforceGrammar: !!state.enforceGrammar,
+    strictRealization: !!state.strictRealization,
+    perspectiveClassMode: normalizePerspectiveClassMode(state.perspectiveClassMode),
+    perspectiveDominantSharePct: clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct),
     viewpointKey,
     viewpointShortLabel: viewpointShort,
     viewpointStrict: !!vpCtx.viewpointStrict,
@@ -616,6 +1058,14 @@ const LAYOUT_LS = {
   topH: "archimate-panel-top-height",
   collapsed: "archimate-panel-collapsed",
 };
+/**
+ * When {@link localStorage} writes fail (file:// quirks, private mode, quota),
+ * we mirror layout prefs here so {@link readLayoutPrefs}, {@link persistLayoutPrefs},
+ * and {@link applyLayoutChrome} stay consistent — otherwise the panel can re-collapse
+ * on the next chrome pass because persisted "collapsed" never updates.
+ */
+let layoutPrefsMemoryFallback = null;
+
 const RESULTS_SPLIT_LS = "archimate-results-diagram-pct";
 const RESULTS_LAYOUT_LS = "archimate-results-layout";
 /** When details are beside the diagram, default vertical stacking on; user toggle persists here. */
@@ -640,6 +1090,8 @@ const LOCAL_PREFS_CONSENT_LS = "archimate-local-prefs-consent";
 const QUICK_EXAMPLES_VETERAN_LS = "archimate-quick-examples-veteran";
 const SESSION_SNAPSHOT_LS = "archimate-session-v2";
 const SESSION_SNAPSHOT_VERSION = 2;
+/** Session flag: user chose “use desktop layout” on small viewports (see boot / mobile gate). */
+const MOBILE_FORCE_DESKTOP_SESSION_KEY = "architrek_force_desktop_shell";
 
 // ── One-time per-theme splash (cookie) ───────────────────────────────────────
 const THEME_SPLASH_COOKIE_PREFIX = "archimate-theme-splash-seen-";
@@ -692,23 +1144,55 @@ function themeDisplayName(domainContext) {
   if (k === "death_star") return "the Death Star";
   if (k === "rebel_alliance") return "Star Wars Rebels";
   if (k === "abstract") return "Abstract";
+  if (k === "university") return "the University";
+  if (k === "f1_team") return "Formula One";
+  if (k === "bored") return "Bored";
   return k;
 }
 
 function buildThemeSplashHtml(domainContext) {
+  const k = normalizeDomainContext(domainContext);
   const name = themeDisplayName(domainContext);
-  const isAbstract = normalizeDomainContext(domainContext) === "abstract";
+  const isAbstract = k === "abstract";
+  const sc = typeof SCENARIOS !== "undefined" ? SCENARIOS[k] : null;
+  const rawLines = sc?.splashLines;
+
+  let scenarioHtml = "";
+  if (!isAbstract && Array.isArray(rawLines) && rawLines.length) {
+    const L0 = String(rawLines[0] ?? "").trim();
+    const L1 = String(rawLines[1] ?? "").trim();
+    if (L0 || L1) {
+      scenarioHtml = `
+    <div class="theme-splash-scenario" role="region" aria-labelledby="theme-splash-scenario-h">
+      <h3 class="theme-splash-scenario-kicker" id="theme-splash-scenario-h">What this theme is</h3>
+      ${L0 ? `<p class="theme-splash-scenario-line theme-splash-scenario-line--primary">${escapeHtml(L0)}</p>` : ""}
+      ${L1 ? `<p class="theme-splash-scenario-line theme-splash-scenario-line--secondary">${escapeHtml(L1)}</p>` : ""}
+    </div>`;
+    }
+  }
+
   const lead = isAbstract
     ? `This is the default theme: the app uses neutral labels in explanations.`
-    : `This theme changes the <strong>scenario labels</strong> and flavor text (not the underlying ArchiMate rules).`;
-  const tip = `ArchiMate relationships are defined in the spec, but it can be <strong>tedious</strong> to search the tables and verify what connects to what. Even when tools help you draw links, it’s not always obvious which chains are allowed — this glossary helps you interpret the route groups and badges the app uses to organize alternatives.`;
+    : `Only <strong>labels and flavor text</strong> use this scenario; search, viewpoints, and relationship validity stay ArchiMate-correct.`;
+  const introHtml = scenarioHtml
+    ? `<p class="theme-splash-meta">${lead}</p>`
+    : `<p class="theme-splash-intro"><strong>Welcome to ${escapeHtml(name)}.</strong> ${lead}</p>`;
+
+  const tip = isAbstract
+    ? `Path alternatives are grouped into three route types: <strong>upper-only</strong> (Motivation, Strategy, Business), <strong>infrastructure-only</strong> (Application and/or Technology and Implementation), and <strong>cross-layer</strong> (mixing those bands). Element chips and steps use standard ArchiMate names unless another control relabels them.`
+    : `ArchiMate relationships are defined in the spec, but it can be <strong>tedious</strong> to search the tables and verify what connects to what. Even when tools help you draw links, it’s not always obvious which chains are allowed — this glossary helps you interpret the route groups and badges the app uses to organize alternatives.`;
+  const noteTitle = isAbstract ? "Tip" : "Why the glossary is here";
   const glossary =
     typeof buildPathLabelsModalHtml === "function"
       ? buildPathLabelsModalHtml()
-      : `<p class="theme-splash-note">Glossary is unavailable (UI not initialized yet).</p>`;
+      : `<p class="theme-splash-note-p">Glossary is unavailable (UI not initialized yet).</p>`;
   return `
-    <p class="theme-splash-intro"><strong>Welcome to ${escapeHtml(name)}.</strong> ${lead}</p>
-    <div class="theme-splash-note">${tip}</div>
+    ${scenarioHtml}
+    ${introHtml}
+    <div class="theme-splash-note">
+      <div class="theme-splash-note-title">${noteTitle}</div>
+      <p class="theme-splash-note-p">${tip}</p>
+    </div>
     <div class="theme-splash-glossary">
       <div class="control-label" style="margin-bottom:6px">What do these labels mean?</div>
       ${glossary}
@@ -793,6 +1277,150 @@ function maybeShowThemeSplash(domainContext) {
 }
 
 let persistSessionTimer = null;
+let urlSyncSuspend = false;
+let urlSyncLast = "";
+let urlSyncBootstrapped = false;
+/** Debounce store-driven URL updates so we do not call history.replaceState on every transient dispatch. */
+let urlSyncStoreDebounceTimer = null;
+const URL_SYNC_FROM_STORE_MS = 320;
+
+function stateToSearchParams(currentState) {
+  const params = new URLSearchParams(window.location.search || "");
+  params.delete("appMode");
+  params.delete("viewpoint");
+  params.delete("mode");
+  params.delete("path");
+  [...params.keys()].forEach((k) => {
+    if (/^wp\d+$/i.test(k)) params.delete(k);
+  });
+
+  const appMode = currentState?.appMode === "study" ? "study" : "designer";
+  if (appMode === "study") {
+    params.set("appMode", "study");
+    // Study URL state is intentionally independent from Designer route parameters.
+    return params;
+  }
+  if (currentState?.viewpoint) params.set("viewpoint", String(currentState.viewpoint));
+  if (currentState?.selectionMode === "ordered" || currentState?.selectionMode === "set") {
+    params.set("mode", currentState.selectionMode);
+  }
+  if (Number.isFinite(currentState?.activePathIdx) && currentState.activePathIdx > 0) {
+    params.set("path", String(Math.floor(currentState.activePathIdx)));
+  }
+  const waypointElements = (currentState?.waypoints || [])
+    .map((w) => w?.element)
+    .filter((el) => typeof el === "string" && el.trim() !== "");
+  waypointElements.forEach((el, idx) => params.set(`wp${idx}`, el));
+  return params;
+}
+
+/** Full URL (including origin) that restores the current diagram route via query params. */
+function getShareableDiagramUrl() {
+  const params = stateToSearchParams(getPlainAppState());
+  const u = new URL(window.location.href);
+  u.search = params.toString();
+  return u.toString();
+}
+
+window.getShareableDiagramUrl = getShareableDiagramUrl;
+
+function syncUrlFromState(opts = {}) {
+  if (urlSyncStoreDebounceTimer) {
+    clearTimeout(urlSyncStoreDebounceTimer);
+    urlSyncStoreDebounceTimer = null;
+  }
+  if (urlSyncSuspend) return;
+  const push = !!opts.push;
+  const params = stateToSearchParams(getPlainAppState());
+  const query = params.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash || ""}`;
+  if (nextUrl === urlSyncLast || nextUrl === `${window.location.pathname}${window.location.search}${window.location.hash || ""}`) {
+    urlSyncLast = nextUrl;
+    return;
+  }
+  if (push) window.history.pushState({ architrek: true }, "", nextUrl);
+  else window.history.replaceState({ architrek: true }, "", nextUrl);
+  urlSyncLast = nextUrl;
+}
+
+function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
+  const route = parseHydrationFromUrl();
+  const hasRoute = !!(
+    route.appMode ||
+    route.viewpoint ||
+    (Array.isArray(route.waypoints) && route.waypoints.length >= 2)
+  );
+  if (!hasRoute) return false;
+  urlSyncSuspend = true;
+  try {
+    const routeIsStudy = route.appMode === "study";
+    if (route.appMode === "designer" || route.appMode === "study") {
+      state.appMode = route.appMode;
+      syncAppModeUi();
+    }
+    // Keep Study URL isolated from Designer route settings.
+    if (!routeIsStudy) {
+      if (route.selectionMode) setSelectionMode(route.selectionMode);
+      if (route.viewpoint) {
+        const vpSel = document.getElementById("viewpoint-select");
+        if (vpSel) {
+          vpSel.value = route.viewpoint;
+          onViewpointChange();
+        }
+      }
+      if (Array.isArray(route.waypoints) && route.waypoints.length >= 2) {
+        state.waypoints = route.waypoints.map((wp, i, arr) => ({
+          layer: migrateLegacyLayerId(wp.layer ?? null),
+          element: wp.element ?? null,
+          label: i === 0 ? "Start" : i === arr.length - 1 ? "End" : "Via",
+        }));
+        renderWaypointChain();
+        updateQuickExamplesVisibility();
+        checkReady();
+      }
+      if (Number.isFinite(route.activePathIdx)) {
+        state.activePathIdx = Math.max(0, Math.floor(route.activePathIdx));
+      }
+      if (triggerFindPath) {
+        const picked = state.waypoints.map((wp) => wp.element).filter(Boolean);
+        if (picked.length >= 2) {
+          window.dispatch({ type: "FIND_PATH", reason: "url-popstate" });
+        }
+      }
+    }
+    syncUrlFromState({ push: false });
+    return true;
+  } finally {
+    urlSyncSuspend = false;
+  }
+}
+
+function initUrlSync() {
+  if (urlSyncBootstrapped) return;
+  urlSyncBootstrapped = true;
+  window.addEventListener("popstate", () => {
+    applyUrlStateFromLocation({ triggerFindPath: true });
+  });
+  if (window.store && typeof window.store.subscribe === "function") {
+    window.store.subscribe(
+      (s) =>
+        JSON.stringify({
+          viewpoint: s?.viewpoint ?? null,
+          mode: s?.selectionMode ?? "set",
+          path: s?.activePathIdx ?? 0,
+          waypoints: (s?.waypoints || []).map((w) => w?.element || null),
+        }),
+      () => {
+        if (urlSyncStoreDebounceTimer) clearTimeout(urlSyncStoreDebounceTimer);
+        urlSyncStoreDebounceTimer = window.setTimeout(() => {
+          urlSyncStoreDebounceTimer = null;
+          syncUrlFromState({ push: false });
+        }, URL_SYNC_FROM_STORE_MS);
+      }
+    );
+  }
+  syncUrlFromState({ push: false });
+}
 
 function hasQuickExamplesVeteranPref() {
   try {
@@ -822,53 +1450,107 @@ function schedulePersistSession() {
   }, 450);
 }
 
+function clampDiagramOverlayMode(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return 3;
+  return Math.max(0, Math.min(4, n));
+}
+
+function diagramOverlayShowsHop(mode) {
+  const m = clampDiagramOverlayMode(mode);
+  return m === 2 || m === 3;
+}
+
+function diagramOverlayShowsFlip(mode) {
+  const m = clampDiagramOverlayMode(mode);
+  return m === 1 || m === 3;
+}
+
+/** Maps session overlay mode to checkbox triple (hop / flip / relationship-names-only). */
+function overlayChecksFromMode(mode) {
+  const m = clampDiagramOverlayMode(mode);
+  if (m === 4) return { hop: false, flip: false, relOnly: true };
+  return {
+    hop: m === 2 || m === 3,
+    flip: m === 1 || m === 3,
+    relOnly: false,
+  };
+}
+
+/** Relationship-names-only (mode 4) turns off hop and flip in the renderer. */
+function overlayModeFromChecks(hop, flip, relOnly) {
+  if (relOnly) return 4;
+  if (hop && flip) return 3;
+  if (hop && !flip) return 2;
+  if (!hop && flip) return 1;
+  return 0;
+}
+
 function gatherSessionSnapshot() {
+  const plain = getPlainAppState();
   const vpSel = document.getElementById("viewpoint-select");
   const viewpoint = vpSel && vpSel.value ? vpSel.value : "";
   const domainSideSel = document.getElementById("domain-context-select");
   const domainTopSel = document.getElementById("domain-context-top-select");
   const domainContext = normalizeDomainContext(
-    domainSideSel?.value || domainTopSel?.value || state.domainContext
+    domainSideSel?.value || domainTopSel?.value || plain.domainContext
   );
-  const wps = (state.waypoints || []).map((wp) => ({
+  const wps = (plain.waypoints || []).map((wp) => ({
     layer: wp?.layer ?? null,
     element: wp?.element ?? null,
     label: wp?.label ?? "Point",
   }));
   let hadPath = false;
-  if (state.segments && state.segments.length) {
-    hadPath = !state.segments.some((s) => !s.paths || s.paths.length === 0);
+  if (plain.segments && plain.segments.length) {
+    hadPath = !plain.segments.some((s) => !s.paths || s.paths.length === 0);
   }
+  const overlayMode = clampDiagramOverlayMode(
+    plain.diagramOverlayMode != null
+      ? plain.diagramOverlayMode
+      : plain.showBadges === false
+        ? 0
+        : 3
+  );
   return {
     v: SESSION_SNAPSHOT_VERSION,
-    includeDerived: !!state.includeDerived,
-    selectionMode: state.selectionMode === "ordered" ? "ordered" : "set",
-    mode: state.mode === "swimlane" ? "swimlane" : "compact",
-    pathFlow: PATH_FLOW_ORDER.includes(state.pathFlow) ? state.pathFlow : "horizontal",
-    showBadges: state.showBadges !== false,
-    showCompositeSubs: state.showCompositeSubs !== false,
-    forceShowQuickExamples: !!state.forceShowQuickExamples,
+    appMode: plain.appMode === "study" ? "study" : "designer",
+    includeDerived: !!plain.includeDerived,
+    selectionMode: plain.selectionMode === "ordered" ? "ordered" : "set",
+    mode: plain.mode === "swimlane" ? "swimlane" : "compact",
+    pathFlow: PATH_FLOW_ORDER.includes(plain.pathFlow) ? plain.pathFlow : "horizontal",
+    diagramOverlayMode: overlayMode,
+    showDiagramLockControls: plain.showDiagramLockControls !== false,
+    showBadges: overlayMode !== 0,
+    showCompositeSubs: plain.showCompositeSubs !== false,
+    forceShowQuickExamples: !!plain.forceShowQuickExamples,
     domainContext,
+    activeClusterIndex:
+      typeof plain.activeClusterIndex === "number" && Number.isFinite(plain.activeClusterIndex)
+        ? plain.activeClusterIndex
+        : null,
     viewpoint: viewpoint || null,
     waypoints: wps,
     hadPath,
-    activePathIdx: state.activePathIdx ?? 0,
-    userChoices: state.userChoices && typeof state.userChoices === "object" ? { ...state.userChoices } : {},
-    searchMaxDepth: clampSearchDepth(state.searchMaxDepth),
-    searchMaxPaths: clampSearchMaxPaths(state.searchMaxPaths),
-    searchEffort: normalizeSearchEffort(state.searchEffort),
-    searchPathWeightDirect: clampSearchPathWeight(state.searchPathWeightDirect, 1),
-    searchPathWeightDerived: clampSearchPathWeight(state.searchPathWeightDerived, 5),
-    searchPathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
-    searchPathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
-    searchPathWeightViolation: clampSearchPathWeight(state.searchPathWeightViolation, 50),
-    searchRigorPreset: normalizeSearchRigorPreset(state.searchRigorPreset),
-    restrictCoreToCore: !!state.restrictCoreToCore,
-    enforceGrammar: !!state.enforceGrammar,
-    strictRealization: !!state.strictRealization,
-    perspectiveClassMode: normalizePerspectiveClassMode(state.perspectiveClassMode),
-    perspectiveDominantSharePct: clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct),
-    allowAssociationFallback: !!state.allowAssociationFallback,
+    activePathIdx: plain.activePathIdx ?? 0,
+    userChoices: plain.userChoices && typeof plain.userChoices === "object" ? { ...plain.userChoices } : {},
+    searchMaxDepth: clampSearchDepth(plain.searchMaxDepth),
+    searchMaxPaths: clampSearchMaxPaths(plain.searchMaxPaths),
+    searchEffort: normalizeSearchEffort(plain.searchEffort),
+    searchPathWeightDirect: clampSearchPathWeight(plain.searchPathWeightDirect, 1),
+    searchPathWeightDerived: clampSearchPathWeight(plain.searchPathWeightDerived, 5),
+    searchPathWeightAssociation: clampSearchPathWeight(plain.searchPathWeightAssociation, 100),
+    searchPathWeightLayerSkip: clampSearchPathWeight(plain.searchPathWeightLayerSkip, 15),
+    searchPathWeightViolation: clampSearchPathWeight(plain.searchPathWeightViolation, 50),
+    searchCognitiveLoadPenalty: plain.searchCognitiveLoadPenalty !== false,
+    searchPenaltyGracePeriod: clampSearchPenaltyGracePeriod(plain.searchPenaltyGracePeriod),
+    searchPenaltyGrowthFactor: clampSearchPenaltyGrowthFactor(plain.searchPenaltyGrowthFactor),
+    searchRigorPreset: normalizeSearchRigorPreset(plain.searchRigorPreset),
+    restrictCoreToCore: !!plain.restrictCoreToCore,
+    enforceGrammar: !!plain.enforceGrammar,
+    strictRealization: !!plain.strictRealization,
+    perspectiveClassMode: normalizePerspectiveClassMode(plain.perspectiveClassMode),
+    perspectiveDominantSharePct: clampPerspectiveDominantSharePct(plain.perspectiveDominantSharePct),
+    allowAssociationFallback: !!plain.allowAssociationFallback,
   };
 }
 
@@ -885,7 +1567,8 @@ function sanitizeWaypointForRestore(wp) {
   if (!wp || typeof wp !== "object") return null;
   const element = typeof wp.element === "string" && ELEMENTS[wp.element] ? wp.element : null;
   let layer = wp.layer || null;
-  if (element) layer = ELEMENTS[element].layer || null;
+  if (element) layer = migrateLegacyLayerId(ELEMENTS[element].layer || null);
+  else layer = migrateLegacyLayerId(layer);
   return {
     layer,
     element,
@@ -895,6 +1578,7 @@ function sanitizeWaypointForRestore(wp) {
 
 function restoreSessionSnapshot() {
   try {
+    if (state.__phase4Hydrated) return;
     if (localStorage.getItem(LOCAL_PREFS_CONSENT_LS) !== "1") return;
     const raw = localStorage.getItem(SESSION_SNAPSHOT_LS);
     if (!raw) return;
@@ -902,6 +1586,10 @@ function restoreSessionSnapshot() {
     if (!data || data.v !== SESSION_SNAPSHOT_VERSION) return;
 
     if (typeof data.includeDerived === "boolean") setDerived(data.includeDerived);
+
+    if (data.appMode === "study" || data.appMode === "designer") {
+      state.appMode = data.appMode;
+    }
 
     if (data.selectionMode === "ordered" || data.selectionMode === "set") {
       setSelectionMode(data.selectionMode);
@@ -913,6 +1601,23 @@ function restoreSessionSnapshot() {
 
     state.domainContext = normalizeDomainContext(data.domainContext);
     syncDomainContextSelectors();
+    if (typeof data.activeClusterIndex === "number" && Number.isFinite(data.activeClusterIndex)) {
+      const n = clusterCountForScenarioKey(state.domainContext);
+      if (n > 0) {
+        state.activeClusterIndex = Math.max(
+          0,
+          Math.min(n - 1, Math.floor(data.activeClusterIndex))
+        );
+      } else {
+        state.activeClusterIndex = null;
+      }
+    } else {
+      assignRandomClusterIndexForTheme(state.domainContext);
+    }
+    if (typeof window.clearScenarioLabelVariantCache === "function") {
+      window.clearScenarioLabelVariantCache();
+    }
+    updateThemeHelpUi();
 
     if (data.pathFlow === "horizontal" || data.pathFlow === "vertical" || data.pathFlow === "compact") {
       state.pathFlow = data.pathFlow;
@@ -922,13 +1627,16 @@ function restoreSessionSnapshot() {
       updatePathFlowButton();
     }
 
-    if (typeof data.showBadges === "boolean") {
-      state.showBadges = data.showBadges;
-      const btn = document.getElementById("btn-toggle-badges");
-      if (btn) {
-        btn.textContent = state.showBadges ? "Hide #" : "Show #";
-        btn.title = state.showBadges ? "Hide hop numbers on arrows" : "Show hop numbers on arrows";
-      }
+    if (typeof data.diagramOverlayMode === "number" && Number.isFinite(data.diagramOverlayMode)) {
+      state.diagramOverlayMode = clampDiagramOverlayMode(data.diagramOverlayMode);
+      syncDiagramOverlayButton();
+    } else if (typeof data.showBadges === "boolean") {
+      state.diagramOverlayMode = data.showBadges ? 3 : 0;
+      syncDiagramOverlayButton();
+    }
+    if (typeof data.showDiagramLockControls === "boolean") {
+      state.showDiagramLockControls = data.showDiagramLockControls;
+      syncDiagramOptionsFormFromState();
     }
 
     if (typeof data.showCompositeSubs === "boolean") {
@@ -965,6 +1673,15 @@ function restoreSessionSnapshot() {
     if (typeof data.searchPathWeightViolation === "number" && Number.isFinite(data.searchPathWeightViolation)) {
       state.searchPathWeightViolation = clampSearchPathWeight(data.searchPathWeightViolation, 50);
     }
+    if (typeof data.searchCognitiveLoadPenalty === "boolean") {
+      state.searchCognitiveLoadPenalty = data.searchCognitiveLoadPenalty;
+    }
+    if (typeof data.searchPenaltyGracePeriod === "number" && Number.isFinite(data.searchPenaltyGracePeriod)) {
+      state.searchPenaltyGracePeriod = clampSearchPenaltyGracePeriod(data.searchPenaltyGracePeriod);
+    }
+    if (typeof data.searchPenaltyGrowthFactor === "number" && Number.isFinite(data.searchPenaltyGrowthFactor)) {
+      state.searchPenaltyGrowthFactor = clampSearchPenaltyGrowthFactor(data.searchPenaltyGrowthFactor);
+    }
     if (typeof data.restrictCoreToCore === "boolean") {
       state.restrictCoreToCore = data.restrictCoreToCore;
     }
@@ -993,7 +1710,10 @@ function restoreSessionSnapshot() {
 
     const vpSel = document.getElementById("viewpoint-select");
     if (vpSel && data.viewpoint !== undefined) {
-      const key = data.viewpoint == null || data.viewpoint === "" ? "" : data.viewpoint;
+      const key =
+        data.viewpoint == null || data.viewpoint === ""
+          ? ""
+          : normalizeViewpointKey(data.viewpoint);
       if (key === "" || VIEWPOINTS[key]) {
         vpSel.value = key;
         onViewpointChange();
@@ -1015,6 +1735,8 @@ function restoreSessionSnapshot() {
     }
 
     updateQuickExamplesVisibility();
+    syncAppModeUi();
+    checkReady();
 
     const picked = state.waypoints.map((wp) => wp.element).filter(Boolean);
     const minOk =
@@ -1022,7 +1744,7 @@ function restoreSessionSnapshot() {
         ? picked.length >= 2
         : state.waypoints.every((wp) => wp.element);
 
-    if (data.hadPath && minOk) {
+    if (data.hadPath && minOk && normalizeAppMode(state.appMode) !== "study") {
       const uc = data.userChoices && typeof data.userChoices === "object" ? { ...data.userChoices } : {};
       const ac =
         typeof data.activePathIdx === "number" && Number.isFinite(data.activePathIdx)
@@ -1035,6 +1757,21 @@ function restoreSessionSnapshot() {
     console.warn("restoreSessionSnapshot failed", e);
   }
 }
+
+window.resetToDefaults = function resetToDefaults() {
+  const ok = window.confirm("Reset all saved settings and start fresh?");
+  if (!ok) return;
+  try {
+    window.store?.dispatch("RESET_TO_DEFAULTS");
+  } catch (_) {}
+  try {
+    if (typeof window.clearPersistedState === "function") window.clearPersistedState();
+    localStorage.removeItem(SESSION_SNAPSHOT_LS);
+  } catch (_) {}
+  const clean = `${window.location.pathname}${window.location.hash || ""}`;
+  window.history.replaceState(null, "", clean);
+  window.location.reload();
+};
 
 function dismissWelcomeModalAndContinue() {
   const el = document.getElementById("welcome-modal");
@@ -1097,9 +1834,60 @@ function showWelcomeModal() {
   el.addEventListener("click", onWelcomeExampleClick);
 }
 
+/**
+ * True when the user has at least one alternative path to review (diagram + explanation).
+ * `state.segments` may be `[]` or hold segments with empty `paths` after a failed search — those
+ * must not block opening the control panel on boot (truthy [] used to skip auto-open incorrectly).
+ */
+function hasReviewablePathResults() {
+  const s = state.segments;
+  if (s == null || !Array.isArray(s) || s.length === 0) return false;
+  return s.some((seg) => seg && Array.isArray(seg.paths) && seg.paths.length > 0);
+}
+
+/**
+ * Collapsed control chrome hides #selector-panel-wrap and uses pointer-events: none for both
+ * layout-top (drawer) and layout-sidebar (hidden strip). Open the panel when there is nothing to
+ * review yet so waypoints / quick examples / Add element stay reachable without hunting for
+ * header "Edit path".
+ */
+function openPathPanelIfCollapsedForBoot() {
+  const root = document.getElementById("app-layout");
+  if (!root?.classList.contains("panel-collapsed")) return;
+  if (hasReviewablePathResults()) return;
+  const top = root.classList.contains("layout-top");
+  const sidebar = root.classList.contains("layout-sidebar");
+  if (!top && !sidebar) return;
+  try {
+    openEditPathControls();
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+/** Deferred pass so URL + session restore (after init) can settle before we decide. */
+function scheduleOpenPathPanelIfCollapsedForBoot() {
+  window.setTimeout(() => {
+    openPathPanelIfCollapsedForBoot();
+  }, 0);
+  window.setTimeout(() => {
+    openPathPanelIfCollapsedForBoot();
+  }, 250);
+}
+
 function bootApp() {
   init();
+  initUrlSync();
+  applyUrlStateFromLocation({ triggerFindPath: false });
   restoreSessionSnapshot();
+  ensureActiveClusterIndexCoherent();
+  syncStoryShuffleButton();
+  syncDiagramOverlayButton();
+  if (window.store && typeof window.store.clearUndoHistory === "function") {
+    window.store.clearUndoHistory();
+  }
+  openPathPanelIfCollapsedForBoot();
+  scheduleOpenPathPanelIfCollapsedForBoot();
 }
 
 const RESULTS_SIDE_SPLIT_LS = "archimate-results-side-pct";
@@ -1115,23 +1903,30 @@ function getPanelHMax() {
 }
 
 function readLayoutPrefs() {
-  let mode = localStorage.getItem(LAYOUT_LS.mode);
-  if (mode !== "sidebar" && mode !== "top") mode = "top";
-  let width = parseInt(localStorage.getItem(LAYOUT_LS.width) || "", 10);
-  if (!Number.isFinite(width)) width = 280;
-  width = Math.max(PANEL_W_MIN, Math.min(PANEL_W_MAX, width));
-  let topH = parseInt(localStorage.getItem(LAYOUT_LS.topH) || "", 10);
-  if (!Number.isFinite(topH)) topH = 200;
-  topH = Math.max(PANEL_H_MIN, Math.min(getPanelHMax(), topH));
-  const collapsedRaw = localStorage.getItem(LAYOUT_LS.collapsed);
-  let collapsed;
-  if (collapsedRaw === null || collapsedRaw === "") {
-    /* Top bar: default drawer closed (full diagram). Sidebar: default panel open. */
-    collapsed = mode === "top";
-  } else {
-    collapsed = collapsedRaw === "1";
+  if (layoutPrefsMemoryFallback) {
+    return { ...layoutPrefsMemoryFallback };
   }
-  return { mode, width, topH, collapsed };
+  try {
+    let mode = localStorage.getItem(LAYOUT_LS.mode);
+    if (mode !== "sidebar" && mode !== "top") mode = "top";
+    let width = parseInt(localStorage.getItem(LAYOUT_LS.width) || "", 10);
+    if (!Number.isFinite(width)) width = 280;
+    width = Math.max(PANEL_W_MIN, Math.min(PANEL_W_MAX, width));
+    let topH = parseInt(localStorage.getItem(LAYOUT_LS.topH) || "", 10);
+    if (!Number.isFinite(topH)) topH = 200;
+    topH = Math.max(PANEL_H_MIN, Math.min(getPanelHMax(), topH));
+    const collapsedRaw = localStorage.getItem(LAYOUT_LS.collapsed);
+    let collapsed;
+    if (collapsedRaw === null || collapsedRaw === "") {
+      /* Top bar: default drawer closed (full diagram). Sidebar: default panel open. */
+      collapsed = mode === "top";
+    } else {
+      collapsed = collapsedRaw === "1";
+    }
+    return { mode, width, topH, collapsed };
+  } catch (_) {
+    return { mode: "top", width: 280, topH: 200, collapsed: true };
+  }
 }
 
 let pathOptionsEscHandler = null;
@@ -1191,7 +1986,554 @@ function repopulateDomainContextSelectorsFromScenarios() {
   applyTo(side);
   applyTo(top);
   syncDomainContextSelectors();
+  updateThemeHelpUi();
 }
+
+/**
+ * @param {string} scenarioKey
+ * @param {number} limit
+ * @returns {string[]}
+ */
+function sampleThemedElementExamples(scenarioKey, limit = 5) {
+  const labels = getEffectiveScenarioLabelsObject(scenarioKey);
+  const keys = Object.keys(labels);
+  const out = [];
+  for (let i = 0; i < keys.length && out.length < limit; i++) {
+    const el = keys[i];
+    const raw = labels[el];
+    const phrase = Array.isArray(raw) ? raw[0] : raw;
+    if (phrase) out.push(`${el} → ${phrase}`);
+  }
+  return out;
+}
+
+function copyViewpointSelectOptionsToHeader() {
+  const main = document.getElementById("viewpoint-select");
+  const head = document.getElementById("header-viewpoint-select");
+  if (!main || !head) return;
+  const v = main.value;
+  head.replaceChildren();
+  for (const n of main.childNodes) {
+    head.appendChild(n.cloneNode(true));
+  }
+  head.value = v;
+}
+
+/**
+ * Hover content for the header viewpoint control: same DOM pattern as path element chips /
+ * hop summary endpoints — .step-el-tip-kicker / title / meta / .step-el-tip-row--scenario / foot.
+ */
+function appendHeaderViewpointScenarioRow(inner, label, value) {
+  if (!value) return;
+  const row = document.createElement("span");
+  row.className = "step-el-tip-row step-el-tip-row--scenario";
+  const lab = document.createElement("span");
+  lab.className = "step-el-tip-muted";
+  lab.textContent = label;
+  row.appendChild(lab);
+  row.appendChild(document.createTextNode(" "));
+  const val = document.createElement("span");
+  val.className = "header-viewpoint-tip-value";
+  val.textContent = value;
+  row.appendChild(val);
+  inner.appendChild(row);
+}
+
+function renderHeaderViewpointTipInner(viewpointKey) {
+  const inner = document.getElementById("header-viewpoint-tip-inner");
+  if (!inner) return;
+  inner.replaceChildren();
+
+  const k = viewpointKey != null ? String(viewpointKey).trim() : "";
+
+  const kicker = document.createElement("span");
+  kicker.className = "step-el-tip-kicker";
+  kicker.textContent = "ArchiMate viewpoint";
+  inner.appendChild(kicker);
+
+  if (!k) {
+    const title = document.createElement("span");
+    title.className = "step-el-tip-title";
+    title.textContent = "Full metamodel";
+    inner.appendChild(title);
+    const meta = document.createElement("span");
+    meta.className = "step-el-tip-meta";
+    meta.textContent = "No Appendix C filter · All element types";
+    inner.appendChild(meta);
+    appendHeaderViewpointScenarioRow(
+      inner,
+      "Effect",
+      "Every core element type is available in the pickers and on the graph; nothing is greyed out."
+    );
+    const foot = document.createElement("span");
+    foot.className = "step-el-tip-foot";
+    foot.textContent = "More settings: Edit path → Options in the panel";
+    inner.appendChild(foot);
+    return;
+  }
+
+  const vp = typeof VIEWPOINTS !== "undefined" ? VIEWPOINTS[k] : null;
+  if (!vp) {
+    const title = document.createElement("span");
+    title.className = "step-el-tip-title";
+    title.textContent = "Unknown viewpoint";
+    inner.appendChild(title);
+    const foot = document.createElement("span");
+    foot.className = "step-el-tip-foot";
+    foot.textContent = "More settings: Edit path → Options in the panel";
+    inner.appendChild(foot);
+    return;
+  }
+
+  const title = document.createElement("span");
+  title.className = "step-el-tip-title";
+  title.textContent = vp.name || k;
+  inner.appendChild(title);
+
+  const metaParts = [vp.category, vp.section].filter(Boolean);
+  if (metaParts.length) {
+    const meta = document.createElement("span");
+    meta.className = "step-el-tip-meta";
+    meta.textContent = metaParts.join(" · ");
+    inner.appendChild(meta);
+  }
+
+  appendHeaderViewpointScenarioRow(inner, "Scope", vp.scope);
+  appendHeaderViewpointScenarioRow(inner, "Stakeholders", vp.stakeholders);
+  appendHeaderViewpointScenarioRow(inner, "Concerns", vp.concerns);
+  appendHeaderViewpointScenarioRow(inner, "Typical use", vp.purpose);
+
+  if (vp.allElements) {
+    appendHeaderViewpointScenarioRow(
+      inner,
+      "Palette",
+      "All element types — no restriction (same as full metamodel)."
+    );
+  } else {
+    const els = Array.isArray(vp.elements) ? vp.elements : [];
+    appendHeaderViewpointScenarioRow(
+      inner,
+      "Palette",
+      `${els.length} element type(s) allowed in this viewpoint.`
+    );
+    const preview = els.slice(0, 14).join(", ");
+    if (preview) {
+      const pal = document.createElement("p");
+      pal.className = "header-viewpoint-tip-palette";
+      pal.textContent = preview + (els.length > 14 ? ` … +${els.length - 14} more` : "");
+      inner.appendChild(pal);
+    }
+    let rel =
+      "Appendix B matrix plus your Explicit / +Inferred and Semantic rigor settings.";
+    if (typeof getViewpointRelationshipAllowance === "function") {
+      const codes = getViewpointRelationshipAllowance(k);
+      if (codes && codes.size) {
+        rel = `Codes limited to: ${Array.from(codes).sort().join(", ")}.`;
+      }
+    }
+    appendHeaderViewpointScenarioRow(inner, "Relationships", rel);
+  }
+
+  const foot = document.createElement("span");
+  foot.className = "step-el-tip-foot";
+  foot.textContent = "More settings: Edit path → Options in the panel";
+  inner.appendChild(foot);
+}
+
+/** Resolve theme key for header / panel theme help (prefer live selects; avoid proxy edge cases). */
+function domainContextKeyForThemeHelp() {
+  const top = document.getElementById("domain-context-top-select");
+  const side = document.getElementById("domain-context-select");
+  let fb = "abstract";
+  try {
+    if (window.store && typeof window.store.getState === "function") {
+      const s = window.store.getState();
+      if (s && s.domainContext != null) fb = s.domainContext;
+    }
+  } catch (_) {}
+  return normalizeDomainContext(top?.value || side?.value || fb);
+}
+
+/** Hover content for the header theme control (same structure as the viewpoint card). */
+function renderHeaderThemeTipInner(domainKey) {
+  const inner = document.getElementById("header-theme-tip-inner");
+  if (!inner) return;
+
+  const k = normalizeDomainContext(domainKey);
+  const sc = typeof SCENARIOS !== "undefined" ? SCENARIOS[k] : null;
+  const frag = document.createDocumentFragment();
+
+  const kicker = document.createElement("span");
+  kicker.className = "step-el-tip-kicker";
+  kicker.textContent = "Story theme";
+  frag.appendChild(kicker);
+
+  if (!sc) {
+    const title = document.createElement("span");
+    title.className = "step-el-tip-title";
+    title.textContent = "Unknown theme";
+    frag.appendChild(title);
+    const foot = document.createElement("span");
+    foot.className = "step-el-tip-foot";
+    foot.textContent = "Pick a theme from the list.";
+    frag.appendChild(foot);
+    inner.replaceChildren(frag);
+    return;
+  }
+
+  const title = document.createElement("span");
+  title.className = "step-el-tip-title";
+  title.textContent = String(sc.label || k).trim() || k;
+  frag.appendChild(title);
+
+  const metaParts = [];
+  if (sc.name) metaParts.push(sc.name);
+  metaParts.push(k === "abstract" ? "Neutral labels · Default" : "Thematic labels · Same rules");
+  const meta = document.createElement("span");
+  meta.className = "step-el-tip-meta";
+  meta.textContent = metaParts.join(" · ");
+  frag.appendChild(meta);
+
+  if (k === "abstract") {
+    appendHeaderViewpointScenarioRow(
+      frag,
+      "Route groups",
+      "Upper-only (Motivation, Strategy, Business); infrastructure-only (Application & Technology & Implementation); cross-layer (mixes both). Standard ArchiMate element names unless relabeled."
+    );
+  } else {
+    appendHeaderViewpointScenarioRow(
+      frag,
+      "What changes",
+      "Display names and path flavor text use this scenario’s vocabulary. Search, viewpoints, and validity stay ArchiMate-correct."
+    );
+  }
+
+  const pt = sc.perspectiveTitles;
+  if (pt && typeof pt === "object") {
+    const line = ["A", "B", "C"]
+      .map((id) => (pt[id] ? `${id}: ${pt[id]}` : ""))
+      .filter(Boolean)
+      .join(" ");
+    if (line) appendHeaderViewpointScenarioRow(frag, "Perspective titles", line);
+  }
+
+  const nLabels = Object.keys(getEffectiveScenarioLabelsObject(k)).length;
+  const examples = sampleThemedElementExamples(k, 5);
+  if (examples.length) {
+    const more = nLabels > examples.length ? ` · +${nLabels - examples.length} more types` : "";
+    appendHeaderViewpointScenarioRow(frag, "Sample relabels", `${examples.join("; ")}${more}`);
+  } else if (k === "abstract") {
+    appendHeaderViewpointScenarioRow(
+      frag,
+      "Themed labels",
+      "None in Abstract — choose a story theme to see alternate names on elements."
+    );
+  }
+
+  appendHeaderViewpointScenarioRow(
+    frag,
+    "Welcome panel",
+    "The first time you pick a story theme, a short intro may open with the full label glossary."
+  );
+
+  const foot = document.createElement("span");
+  foot.className = "step-el-tip-foot";
+  foot.textContent = "Theme is also under Edit path → Options.";
+  frag.appendChild(foot);
+
+  inner.replaceChildren(frag);
+}
+
+let headerViewpointHoverWired = false;
+let headerThemeHoverWired = false;
+
+const HEADER_CHROME_HOVERCARD_OPEN = "header-chrome-hovercard--open";
+
+function mountHeaderChromeHovercardTip(tip) {
+  const layer = document.getElementById("header-chrome-tip-layer");
+  if (!layer || !tip) return;
+  if (tip.parentElement !== layer) layer.appendChild(tip);
+}
+
+function restoreHeaderChromeHovercardTip(tip, shell) {
+  if (!tip || !shell) return;
+  if (tip.parentElement !== shell) shell.appendChild(tip);
+}
+
+function isHeaderChromeHovercardPointerActive(shell, tip) {
+  return (
+    shell.matches(":hover") ||
+    shell.matches(":focus-within") ||
+    tip.matches(":hover") ||
+    tip.matches(":focus-within")
+  );
+}
+
+/**
+ * Viewpoint/theme hovercards are reparented into #header-chrome-tip-layer so they are not trapped
+ * under .app-header’s stacking context (z-index 100) while .selector-panel-wrap uses 102.
+ * @param {HTMLElement} shell
+ * @param {HTMLElement} tip
+ * @param {{ onOpen?: () => void, position: () => void, clearPosition: () => void }} opts
+ */
+function wireHeaderChromeHovercardCore(shell, tip, opts) {
+  const { onOpen, position, clearPosition } = opts;
+  let hideTimer = null;
+  let viewportCleanup = null;
+
+  const detachViewportListeners = () => {
+    if (viewportCleanup) {
+      viewportCleanup();
+      viewportCleanup = null;
+    }
+  };
+
+  const cancelHide = () => {
+    if (hideTimer != null) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  };
+
+  const hide = () => {
+    cancelHide();
+    detachViewportListeners();
+    tip.classList.remove(HEADER_CHROME_HOVERCARD_OPEN);
+    tip.setAttribute("aria-hidden", "true");
+    clearPosition();
+    restoreHeaderChromeHovercardTip(tip, shell);
+  };
+
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimer = window.setTimeout(() => {
+      hideTimer = null;
+      if (isHeaderChromeHovercardPointerActive(shell, tip)) return;
+      hide();
+    }, 50);
+  };
+
+  const show = () => {
+    cancelHide();
+    if (onOpen) {
+      try {
+        onOpen();
+      } catch (e) {
+        console.warn("header chrome hovercard onOpen", e);
+      }
+    }
+    mountHeaderChromeHovercardTip(tip);
+    tip.classList.add(HEADER_CHROME_HOVERCARD_OPEN);
+    tip.setAttribute("aria-hidden", "false");
+    position();
+    requestAnimationFrame(() => position());
+    detachViewportListeners();
+    const onMove = () => position();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    viewportCleanup = () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  };
+
+  shell.addEventListener("pointerenter", show);
+  shell.addEventListener("pointerleave", scheduleHide);
+  shell.addEventListener("focusin", show);
+  shell.addEventListener("focusout", (e) => {
+    const r = e.relatedTarget;
+    if (r && (shell.contains(r) || tip.contains(r))) return;
+    scheduleHide();
+  });
+  tip.addEventListener("pointerenter", cancelHide);
+  tip.addEventListener("pointerleave", scheduleHide);
+  tip.addEventListener("focusin", cancelHide);
+  tip.addEventListener("focusout", (e) => {
+    const r = e.relatedTarget;
+    if (r && (shell.contains(r) || tip.contains(r))) return;
+    scheduleHide();
+  });
+}
+
+/**
+ * Fixed-position hovercard under a header chrome shell (viewpoint / theme).
+ * @param {HTMLElement | null} shell
+ * @param {HTMLElement | null} tip
+ * @param {string} aboveClass toggled when flipped above the anchor
+ */
+function positionHeaderChromeHovercard(shell, tip, aboveClass) {
+  if (!shell || !tip || !aboveClass) return;
+
+  const padding = 12;
+  const gap = 6;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const availableH = Math.max(160, vh - 2 * padding);
+  const r = shell.getBoundingClientRect();
+
+  tip.style.position = "fixed";
+  tip.style.maxHeight = `${Math.min(420, availableH)}px`;
+  /* Generic .step-el-tip uses bottom:+ — must clear or fixed + top fight bottom and the card vanishes. */
+  tip.style.bottom = "auto";
+  tip.style.right = "auto";
+  tip.style.left = "";
+  tip.style.top = "";
+  tip.style.transform = "";
+
+  const centerX = r.left + r.width / 2;
+  let top = r.bottom + gap;
+  tip.style.left = `${centerX}px`;
+  tip.style.top = `${top}px`;
+  tip.style.transform = "translateX(-50%)";
+
+  let pr = tip.getBoundingClientRect();
+  let leftAdj = 0;
+  if (pr.left < padding) leftAdj = padding - pr.left;
+  if (pr.right > vw - padding) leftAdj = vw - padding - pr.right;
+  if (leftAdj !== 0) {
+    tip.style.left = `${centerX + leftAdj}px`;
+    pr = tip.getBoundingClientRect();
+  }
+
+  let flipped = false;
+  if (pr.bottom > vh - padding) {
+    const aboveTop = r.top - gap - pr.height;
+    if (aboveTop >= padding) {
+      top = aboveTop;
+      flipped = true;
+    } else {
+      top = Math.max(padding, vh - padding - pr.height);
+    }
+    tip.style.top = `${top}px`;
+    pr = tip.getBoundingClientRect();
+  }
+
+  if (pr.top < padding) {
+    tip.style.top = `${padding}px`;
+    pr = tip.getBoundingClientRect();
+  }
+  if (pr.bottom > vh - padding) {
+    tip.style.top = `${Math.max(padding, vh - padding - pr.height)}px`;
+  }
+
+  tip.classList.toggle(aboveClass, flipped);
+}
+
+function clearHeaderChromeHovercardPosition(tip, aboveClass) {
+  if (!tip) return;
+  if (aboveClass) tip.classList.remove(aboveClass);
+  tip.style.position = "";
+  tip.style.left = "";
+  tip.style.top = "";
+  tip.style.right = "";
+  tip.style.bottom = "";
+  tip.style.transform = "";
+  tip.style.maxHeight = "";
+}
+
+/** Keeps the header viewpoint card on-screen (same idea as {@link fitPickerPopoverInViewport}). */
+function positionHeaderViewpointHovercard() {
+  positionHeaderChromeHovercard(
+    document.getElementById("header-viewpoint-shell"),
+    document.getElementById("header-viewpoint-hovercard"),
+    "header-viewpoint-step-tip--above"
+  );
+}
+
+function positionHeaderThemeHovercard() {
+  positionHeaderChromeHovercard(
+    document.getElementById("header-theme-shell"),
+    document.getElementById("header-theme-hovercard"),
+    "header-theme-step-tip--above"
+  );
+}
+
+function clearHeaderViewpointHovercardPosition() {
+  clearHeaderChromeHovercardPosition(
+    document.getElementById("header-viewpoint-hovercard"),
+    "header-viewpoint-step-tip--above"
+  );
+}
+
+function clearHeaderThemeHovercardPosition() {
+  clearHeaderChromeHovercardPosition(
+    document.getElementById("header-theme-hovercard"),
+    "header-theme-step-tip--above"
+  );
+}
+
+function wireHeaderViewpointHovercardPositioning() {
+  if (headerViewpointHoverWired) return;
+  const shell = document.getElementById("header-viewpoint-shell");
+  const tip = document.getElementById("header-viewpoint-hovercard");
+  if (!shell || !tip) return;
+  headerViewpointHoverWired = true;
+  wireHeaderChromeHovercardCore(shell, tip, {
+    position: positionHeaderViewpointHovercard,
+    clearPosition: clearHeaderViewpointHovercardPosition,
+  });
+}
+
+function wireHeaderThemeHovercardPositioning() {
+  if (headerThemeHoverWired) return;
+  const shell = document.getElementById("header-theme-shell");
+  const tip = document.getElementById("header-theme-hovercard");
+  if (!shell || !tip) return;
+  headerThemeHoverWired = true;
+  wireHeaderChromeHovercardCore(shell, tip, {
+    onOpen() {
+      renderHeaderThemeTipInner(domainContextKeyForThemeHelp());
+    },
+    position: positionHeaderThemeHovercard,
+    clearPosition: clearHeaderThemeHovercardPosition,
+  });
+}
+
+function updateThemeHelpUi() {
+  const top = document.getElementById("domain-context-top-select");
+  const side = document.getElementById("domain-context-select");
+  const key = domainContextKeyForThemeHelp();
+  /* No native title — avoids double tooltips with the header hover card. */
+  if (top) top.removeAttribute("title");
+  if (side) side.removeAttribute("title");
+  syncStoryShuffleButton();
+  renderHeaderThemeTipInner(key);
+  try {
+    const shell = document.getElementById("header-theme-shell");
+    if (shell && shell.matches(":hover, :focus-within")) {
+      positionHeaderThemeHovercard();
+      requestAnimationFrame(() => positionHeaderThemeHovercard());
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function updateViewpointHelpUi() {
+  const main = document.getElementById("viewpoint-select");
+  const head = document.getElementById("header-viewpoint-select");
+  const key = main ? String(main.value || "").trim() : "";
+  /* No native title — avoids double tooltips with the header hover card. */
+  if (main) main.removeAttribute("title");
+  if (head) head.removeAttribute("title");
+  renderHeaderViewpointTipInner(key);
+  try {
+    const shell = document.getElementById("header-viewpoint-shell");
+    if (shell && shell.matches(":hover, :focus-within")) {
+      positionHeaderViewpointHovercard();
+      requestAnimationFrame(() => positionHeaderViewpointHovercard());
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+window.onViewpointChangeFromHeader = function onViewpointChangeFromHeader() {
+  const main = document.getElementById("viewpoint-select");
+  const head = document.getElementById("header-viewpoint-select");
+  if (main && head) main.value = head.value;
+  window.onViewpointChange();
+};
 
 function updatePathOptionsTriggerSummary() {
   const el = document.getElementById("path-options-trigger-label");
@@ -1204,7 +2546,7 @@ function updatePathOptionsTriggerSummary() {
     const opt = vp.selectedOptions?.[0];
     vpShort = (opt && String(opt.textContent || "").trim()) || vp.value;
   }
-  const rel = state.includeDerived ? "+ Derived" : "Direct";
+  const rel = state.includeDerived ? "+ Inferred" : "Explicit";
   const mode = state.selectionMode === "set" ? "Connect set" : "Ordered";
   const so = getSearchPathOptions();
   const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
@@ -1224,6 +2566,149 @@ function updatePathOptionsTriggerSummary() {
   const sem = `Semantics: ${so.restrictCoreToCore ? "core-prune on" : "core-prune off"}, ${so.enforceGrammar ? "grammar on" : "grammar off"}, ${so.strictRealization ? "R strict" : "R neutral"}`;
   trigger.title = `Current: ${rel} · ${mode} · ${vpShort} · Up to ${so.maxDepth} hops · ${so.maxPaths} alts · ${eff} · ${costs} · Rigor: ${rigor} · ${sem} · Perspective: ${pLabel} · ${af}`;
 }
+
+function normalizeAppMode(mode) {
+  return mode === "study" ? "study" : "designer";
+}
+
+function syncAppModeUi() {
+  const mode = normalizeAppMode(state.appMode);
+  const isStudy = mode === "study";
+  const designerBtn = document.getElementById("app-mode-designer-btn");
+  const studyBtn = document.getElementById("app-mode-study-btn");
+  if (designerBtn) {
+    designerBtn.classList.toggle("active", !isStudy);
+    designerBtn.setAttribute("aria-pressed", isStudy ? "false" : "true");
+  }
+  if (studyBtn) {
+    studyBtn.classList.toggle("active", isStudy);
+    studyBtn.setAttribute("aria-pressed", isStudy ? "true" : "false");
+  }
+  const appShell = document.getElementById("app-shell");
+  if (appShell) appShell.classList.toggle("app-shell--study-mode", isStudy);
+  const headerStudyWrap = document.getElementById("header-study-generate-wrap");
+  const headerDesigner = document.getElementById("header-actions-designer");
+  if (headerStudyWrap) headerStudyWrap.hidden = !isStudy;
+  if (headerDesigner) headerDesigner.hidden = isStudy;
+  if (isStudy) {
+    populateStudyGenerationOptionSelects();
+  }
+}
+
+function populateStudyGenerationOptionSelects() {
+  const scenarioSel = document.getElementById("study-generate-scenario-select");
+  const viewpointSel = document.getElementById("study-generate-viewpoint-select");
+  if (!scenarioSel || !viewpointSel) return;
+
+  const prevScenario = String(scenarioSel.value || "");
+  const prevViewpoint = String(viewpointSel.value || "");
+
+  const scenarioOpts = typeof buildDomainContextOptions === "function"
+    ? buildDomainContextOptions()
+    : [];
+  scenarioSel.innerHTML = "";
+  scenarioSel.appendChild(new Option("Current theme", ""));
+  for (const s of scenarioOpts) {
+    if (!s?.key) continue;
+    scenarioSel.appendChild(new Option(String(s.label || s.key), String(s.key)));
+  }
+  if ([...scenarioSel.options].some((o) => o.value === prevScenario)) {
+    scenarioSel.value = prevScenario;
+  } else {
+    scenarioSel.value = "";
+  }
+
+  viewpointSel.innerHTML = "";
+  viewpointSel.appendChild(new Option("Current viewpoint", ""));
+  viewpointSel.appendChild(new Option("All elements", "__all__"));
+  const mainVp = document.getElementById("viewpoint-select");
+  const seen = new Set(["", "__all__"]);
+  if (mainVp) {
+    for (const opt of [...mainVp.options]) {
+      const val = String(opt.value || "");
+      if (!val || seen.has(val)) continue;
+      const label = String(opt.textContent || val).trim() || val;
+      viewpointSel.appendChild(new Option(label, val));
+      seen.add(val);
+    }
+  }
+  if ([...viewpointSel.options].some((o) => o.value === prevViewpoint)) {
+    viewpointSel.value = prevViewpoint;
+  } else {
+    viewpointSel.value = "";
+  }
+}
+
+window.onStudyGenerationOptionsToggle = function onStudyGenerationOptionsToggle() {
+  const detailsEl = document.getElementById("study-generate-options");
+  if (!detailsEl || !detailsEl.open) return;
+  populateStudyGenerationOptionSelects();
+};
+
+window.setAppMode = function setAppMode(nextMode) {
+  const mode = normalizeAppMode(nextMode);
+  const prev = normalizeAppMode(state.appMode);
+  state.appMode = mode;
+  syncAppModeUi();
+  checkReady();
+  updateQuickExamplesVisibility();
+  if (mode === "study" && prev !== "study") {
+    state._diagramNeedsCameraReset = true;
+  }
+  window.dispatch({ type: "RENDER_RESULTS" });
+  schedulePersistSession();
+  if (prev !== mode) syncUrlFromState({ push: true });
+};
+
+window.onGenerateStudyScenario = function onGenerateStudyScenario() {
+  if (normalizeAppMode(state.appMode) !== "study") {
+    state.appMode = "study";
+    syncAppModeUi();
+  }
+  const scenarioSel = document.getElementById("study-generate-scenario-select");
+  const viewpointSel = document.getElementById("study-generate-viewpoint-select");
+  const scenarioOverride = String(scenarioSel?.value || "");
+  const viewpointOverride = String(viewpointSel?.value || "");
+  if (scenarioOverride) {
+    state.domainContext = normalizeDomainContext(scenarioOverride);
+    syncDomainContextSelectors();
+    syncStoryShuffleButton();
+    updateThemeHelpUi();
+  }
+  if (viewpointOverride) {
+    const vpSel = document.getElementById("viewpoint-select");
+    if (vpSel) {
+      vpSel.value = viewpointOverride === "__all__" ? "" : normalizeViewpointKey(viewpointOverride);
+      onViewpointChange();
+    }
+  }
+  assignRandomClusterIndexForTheme(state.domainContext);
+  if (typeof window.clearScenarioLabelVariantCache === "function") {
+    window.clearScenarioLabelVariantCache();
+  }
+  const generator = typeof window.generateProceduralGraph === "function"
+    ? window.generateProceduralGraph
+    : null;
+  if (!generator) {
+    console.error("[study] generateProceduralGraph is not available.");
+    return;
+  }
+  const genOut = generator(6, {
+    viewpointKey: state.viewpoint,
+    allowedElements: effectiveAllowedElements(),
+    includeDerived: state.includeDerived,
+  });
+  if (genOut && Array.isArray(genOut.nodes)) {
+    state.studyProceduralGraph = { nodes: genOut.nodes, edges: genOut.edges || [] };
+    state.studyGraphMeta = genOut.meta && typeof genOut.meta === "object" ? genOut.meta : null;
+  } else {
+    state.studyProceduralGraph = genOut;
+    state.studyGraphMeta = null;
+  }
+  state._diagramNeedsCameraReset = true;
+  window.dispatch({ type: "RENDER_RESULTS" });
+  schedulePersistSession();
+};
 
 function closePathOptionsOverlay() {
   if (pathOptionsViewportCleanup) {
@@ -1274,7 +2759,11 @@ function closePathChromeOverlay() {
   }
 }
 
-function openPathOptionsOverlay(anchorEl) {
+/**
+ * @param {HTMLElement} anchorEl
+ * @param {{ scrollIntoViewSelector?: string, focusSelector?: string }|undefined} [opts]
+ */
+function openPathOptionsOverlay(anchorEl, opts) {
   if (!anchorEl) return;
   teardownPickerOverlay();
   closePathChromeOverlay();
@@ -1307,6 +2796,12 @@ function openPathOptionsOverlay(anchorEl) {
   closeBtn.className = "picker-close";
   closeBtn.textContent = "Close";
   closeBtn.onclick = () => closePathOptionsOverlay();
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "picker-close";
+  resetBtn.textContent = "Reset defaults";
+  resetBtn.onclick = () => window.resetToDefaults?.();
+  header.appendChild(resetBtn);
   header.appendChild(closeBtn);
 
   const popBody = document.createElement("div");
@@ -1325,9 +2820,28 @@ function openPathOptionsOverlay(anchorEl) {
     window.removeEventListener("scroll", onViewportChange, true);
   };
 
+  const scrollSel = opts?.scrollIntoViewSelector ? String(opts.scrollIntoViewSelector).trim() : "";
+  const focusSel = opts?.focusSelector ? String(opts.focusSelector).trim() : "";
+
   requestAnimationFrame(() => {
     fitPickerPopoverInViewport(anchorEl, pop);
-    requestAnimationFrame(() => fitPickerPopoverInViewport(anchorEl, pop));
+    requestAnimationFrame(() => {
+      fitPickerPopoverInViewport(anchorEl, pop);
+      try {
+        if (scrollSel) {
+          const t = document.querySelector(scrollSel);
+          if (t && typeof t.scrollIntoView === "function") {
+            t.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        }
+        if (focusSel) {
+          const f = document.querySelector(focusSel);
+          if (f && typeof f.focus === "function") f.focus({ preventScroll: true });
+        }
+      } catch (_) {
+        /* scroll/focus are best-effort */
+      }
+    });
   });
 }
 
@@ -1429,12 +2943,15 @@ function initPathChromeCollapsible() {
   root.classList.remove("is-expanded");
   panel.hidden = true;
   trigger.setAttribute("aria-expanded", "false");
+  if (trigger.dataset.architrekPathChromeClickBound === "1") return;
+  trigger.dataset.architrekPathChromeClickBound = "1";
   trigger.addEventListener("click", () => openPathChromeOverlay(trigger));
 }
 
 function initPathOptionsOverlay() {
   const trigger = document.getElementById("path-options-trigger");
-  if (trigger) {
+  if (trigger && trigger.dataset.architrekPathOptionsClickBound !== "1") {
+    trigger.dataset.architrekPathOptionsClickBound = "1";
     trigger.addEventListener("click", () => openPathOptionsOverlay(trigger));
   }
   applySidebarControlsCollapse();
@@ -1461,15 +2978,9 @@ function applyLayoutChrome() {
   if (bTop) bTop.classList.toggle("active", mode === "top");
   syncInterfaceLayoutModeButtons();
 
-  const topBarCollapse = document.getElementById("btn-topbar-collapse");
-
   if (collapseBtn) {
     collapseBtn.hidden = collapsed || mode === "top";
     collapseBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  }
-  if (topBarCollapse) {
-    topBarCollapse.hidden = collapsed || mode !== "top";
-    topBarCollapse.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
   if (revealBtn) {
     revealBtn.hidden = !collapsed;
@@ -1510,10 +3021,15 @@ function applyLayoutChrome() {
   }
 
   const panelWrap = document.getElementById("selector-panel-wrap");
-  if (panelWrap && mode === "top") {
-    panelWrap.setAttribute("aria-hidden", collapsed ? "true" : "false");
-  } else if (panelWrap) {
-    panelWrap.removeAttribute("aria-hidden");
+  if (panelWrap) {
+    if (mode === "top") {
+      panelWrap.setAttribute("aria-hidden", collapsed ? "true" : "false");
+    } else {
+      panelWrap.removeAttribute("aria-hidden");
+    }
+    /* Keep panel slide controlled by CSS (.panel-collapsed), not leftover inline styles. */
+    panelWrap.style.removeProperty("transform");
+    panelWrap.style.removeProperty("pointer-events");
   }
 
   applySidebarControlsCollapse();
@@ -1538,12 +3054,200 @@ function syncInterfaceLayoutModeButtons() {
 function persistLayoutPrefs(patch) {
   const cur = readLayoutPrefs();
   const next = { ...cur, ...patch };
-  localStorage.setItem(LAYOUT_LS.mode, next.mode);
-  localStorage.setItem(LAYOUT_LS.width, String(next.width));
-  localStorage.setItem(LAYOUT_LS.topH, String(next.topH));
-  localStorage.setItem(LAYOUT_LS.collapsed, next.collapsed ? "1" : "0");
+  try {
+    localStorage.setItem(LAYOUT_LS.mode, next.mode);
+    localStorage.setItem(LAYOUT_LS.width, String(next.width));
+    localStorage.setItem(LAYOUT_LS.topH, String(next.topH));
+    localStorage.setItem(LAYOUT_LS.collapsed, next.collapsed ? "1" : "0");
+    layoutPrefsMemoryFallback = null;
+  } catch (_) {
+    layoutPrefsMemoryFallback = next;
+  }
   applyLayoutChrome();
 }
+
+/**
+ * Top layout: primary pointer-down outside the path panel closes it.
+ * Stop propagation only on the backdrop so the same pointerdown can still reach #diagram-pan-viewport and arm pan.
+ */
+function dismissPathPanelFromOutsidePointerIfNeeded(e) {
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  const root = document.getElementById("app-layout");
+  if (!root?.classList.contains("layout-top") || root.classList.contains("panel-collapsed")) return;
+
+  let t = e.target;
+  if (t && t.nodeType === Node.TEXT_NODE) t = t.parentElement;
+  if (!(t instanceof Element)) return;
+
+  if (
+    t.closest("#results-split-resize") ||
+    t.closest("#panel-resize-v") ||
+    t.closest("#panel-resize-h")
+  ) {
+    return;
+  }
+  if (t.closest(".app-header")) return;
+  const panel = document.getElementById("selector-panel-wrap");
+  if (panel?.contains(t)) return;
+  if (
+    document.getElementById("path-options-overlay")?.classList.contains("open") ||
+    document.getElementById("path-chrome-overlay")?.classList.contains("open") ||
+    document.getElementById("picker-overlay")?.classList.contains("open")
+  ) {
+    return;
+  }
+
+  try {
+    closePathChromeOverlay?.();
+    closePathOptionsOverlay?.();
+    teardownPickerOverlay?.();
+  } catch (_) {}
+  try {
+    persistLayoutPrefs({ collapsed: true });
+  } catch (_) {
+    try {
+      localStorage.setItem(LAYOUT_LS.collapsed, "1");
+    } catch (_) {}
+    const bd = document.getElementById("top-drawer-backdrop");
+    root.classList.add("panel-collapsed");
+    if (bd) {
+      bd.hidden = true;
+      bd.setAttribute("aria-hidden", "true");
+    }
+    applyLayoutChrome();
+  }
+
+  if (t.closest("#top-drawer-backdrop")) {
+    e.stopPropagation();
+  }
+}
+
+(function wirePathPanelOutsideDismiss() {
+  if (document.documentElement.dataset.architrekPathPanelDismissBound === "1") return;
+  document.documentElement.dataset.architrekPathPanelDismissBound = "1";
+  document.addEventListener("pointerdown", dismissPathPanelFromOutsidePointerIfNeeded, true);
+})();
+
+function openEditPathControls() {
+  try {
+    closePathChromeOverlay?.();
+    closePathOptionsOverlay?.();
+    teardownPickerOverlay?.();
+  } catch (_) {}
+  const root = document.getElementById("app-layout");
+  const panelWrap = document.getElementById("selector-panel-wrap");
+  const headerShowBtn = document.getElementById("btn-header-show-controls");
+  const backdrop = document.getElementById("top-drawer-backdrop");
+  if (root) root.classList.remove("panel-collapsed");
+  if (panelWrap) {
+    panelWrap.removeAttribute("aria-hidden");
+  }
+  if (headerShowBtn) headerShowBtn.setAttribute("aria-expanded", "true");
+  if (backdrop && root?.classList.contains("layout-top")) {
+    backdrop.hidden = false;
+    backdrop.setAttribute("aria-hidden", "false");
+  }
+  try {
+    persistLayoutPrefs({ collapsed: false });
+  } catch (_) {
+    // localStorage can fail in privacy-restricted contexts; keep UI open anyway.
+  }
+  requestAnimationFrame(() => {
+    const trigger = document.getElementById("path-options-trigger");
+    if (trigger) {
+      try {
+        trigger.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        trigger.focus({ preventScroll: true });
+      } catch (_) {}
+    }
+  });
+}
+
+/** Header “Edit path”: open when collapsed, close when open (top drawer uses CSS transform transition). */
+function toggleEditPathControls() {
+  const { collapsed } = readLayoutPrefs();
+  if (collapsed) {
+    openEditPathControls();
+    return;
+  }
+  try {
+    closePathChromeOverlay?.();
+    closePathOptionsOverlay?.();
+    teardownPickerOverlay?.();
+  } catch (_) {}
+  try {
+    persistLayoutPrefs({ collapsed: true });
+  } catch (_) {
+    const root = document.getElementById("app-layout");
+    if (root) root.classList.add("panel-collapsed");
+    const bd = document.getElementById("top-drawer-backdrop");
+    if (bd) {
+      bd.hidden = true;
+      bd.setAttribute("aria-hidden", "true");
+    }
+    applyLayoutChrome();
+  }
+}
+
+window.openEditPathControls = openEditPathControls;
+window.toggleEditPathControls = toggleEditPathControls;
+
+/**
+ * When the control panel is collapsed (default top layout), waypoint DOM updates happen off-screen
+ * and the drawer has pointer-events: none — quick examples / Add element feel broken. Match
+ * showQuickExamplesPanel + startEditingFromEmpty: open the panel before changing waypoints.
+ */
+function ensurePathControlsVisibleUnlessAlreadyOpen() {
+  const root = document.getElementById("app-layout");
+  const prefs = readLayoutPrefs();
+  if (prefs?.collapsed || root?.classList.contains("panel-collapsed")) {
+    openEditPathControls();
+    return true;
+  }
+  return false;
+}
+
+/** Wire early: if boot/init throws later in this file, code below startUi() would never run. */
+(function wireHeaderEditPathButton() {
+  const btn = document.getElementById("btn-header-show-controls");
+  if (!btn || btn.dataset.architrekEditPathBound === "1") return;
+  btn.dataset.architrekEditPathBound = "1";
+  btn.addEventListener(
+    "click",
+    (e) => {
+      e.preventDefault();
+      try {
+        toggleEditPathControls();
+      } catch (err) {
+        console.error("[ArchiTrek] Edit path control failed:", err);
+      }
+    },
+    { capture: true }
+  );
+})();
+
+/** Center tab under header (top layout, collapsed): same boot gap as header — initLayoutChrome may not have run yet. */
+(function wirePanelRevealButton() {
+  const btn = document.getElementById("panel-reveal-btn");
+  if (!btn || btn.dataset.architrekPanelRevealBound === "1") return;
+  btn.dataset.architrekPanelRevealBound = "1";
+  btn.addEventListener(
+    "click",
+    (e) => {
+      e.preventDefault();
+      try {
+        openEditPathControls();
+      } catch (err) {
+        console.error("[ArchiTrek] Panel reveal failed:", err);
+      }
+    },
+    { capture: true }
+  );
+})();
+
+/* Same boot gap as header: init() may not run (welcome first) or may throw before initPathOptionsOverlay. */
+initPathOptionsOverlay();
+initPathChromeCollapsible();
 
 function updateDiagramEmptyChrome() {
   const emptyEl = document.getElementById("diagram-empty");
@@ -1582,8 +3286,13 @@ window.togglePanelCollapsed = function togglePanelCollapsed() {
 };
 
 window.startEditingFromEmpty = function startEditingFromEmpty() {
+  const root = document.getElementById("app-layout");
   const prefs = readLayoutPrefs();
-  if (prefs?.collapsed) persistLayoutPrefs({ collapsed: false });
+  // Match openEditPathControls: update the DOM first so the drawer opens even when
+  // localStorage throws (private mode / quota). Prefs alone can desync from the class.
+  if (prefs?.collapsed || root?.classList.contains("panel-collapsed")) {
+    openEditPathControls();
+  }
   // Make sure users immediately see what to do next.
   state.forceShowQuickExamples = true;
   updateQuickExamplesVisibility();
@@ -1603,14 +3312,19 @@ function initLayoutChrome() {
   const root = document.getElementById("app-layout");
   const v = document.getElementById("panel-resize-v");
   const h = document.getElementById("panel-resize-h");
-  const revealBtn = document.getElementById("panel-reveal-btn");
   if (!root) return;
 
   function startVerticalResize(e) {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     if (root.classList.contains("panel-collapsed")) return;
     if (!root.classList.contains("layout-sidebar")) return;
     e.preventDefault();
+    const el = v;
+    if (el && typeof el.setPointerCapture === "function") {
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    }
     const startX = e.clientX;
     const startW =
       parseFloat(getComputedStyle(root).getPropertyValue("--panel-width")) || 280;
@@ -1620,9 +3334,15 @@ function initLayoutChrome() {
       nw = Math.max(PANEL_W_MIN, Math.min(PANEL_W_MAX, nw));
       root.style.setProperty("--panel-width", `${nw}px`);
     }
-    function up() {
+    function up(ev) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      if (el && typeof el.releasePointerCapture === "function" && ev?.pointerId != null) {
+        try {
+          if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+        } catch (_) {}
+      }
       const nw = Math.round(
         parseFloat(getComputedStyle(root).getPropertyValue("--panel-width")) || 280
       );
@@ -1630,13 +3350,20 @@ function initLayoutChrome() {
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   }
 
   function startHorizontalResize(e) {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     if (root.classList.contains("panel-collapsed")) return;
     if (!root.classList.contains("layout-top")) return;
     e.preventDefault();
+    const el = h;
+    if (el && typeof el.setPointerCapture === "function") {
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    }
     const startY = e.clientY;
     const startH =
       parseFloat(getComputedStyle(root).getPropertyValue("--panel-top-height")) || 200;
@@ -1647,9 +3374,15 @@ function initLayoutChrome() {
       nh = Math.max(PANEL_H_MIN, Math.min(maxH, nh));
       root.style.setProperty("--panel-top-height", `${nh}px`);
     }
-    function up() {
+    function up(ev) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      if (el && typeof el.releasePointerCapture === "function" && ev?.pointerId != null) {
+        try {
+          if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+        } catch (_) {}
+      }
       const nh = Math.round(
         parseFloat(getComputedStyle(root).getPropertyValue("--panel-top-height")) || 200
       );
@@ -1657,10 +3390,11 @@ function initLayoutChrome() {
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   }
 
-  if (v) v.addEventListener("pointerdown", startVerticalResize);
-  if (h) h.addEventListener("pointerdown", startHorizontalResize);
+  if (v) v.addEventListener("pointerdown", startVerticalResize, true);
+  if (h) h.addEventListener("pointerdown", startHorizontalResize, true);
 
   if (v) {
     v.addEventListener("keydown", (e) => {
@@ -1701,30 +3435,10 @@ function initLayoutChrome() {
     });
   }
 
-  if (revealBtn) {
-    revealBtn.addEventListener("click", () => {
-      persistLayoutPrefs({ collapsed: false });
-    });
-  }
-
-  const headerShowBtn = document.getElementById("btn-header-show-controls");
-  if (headerShowBtn) {
-    headerShowBtn.addEventListener("click", () => {
-      window.togglePanelCollapsed();
-    });
-  }
-
-  const backdrop = document.getElementById("top-drawer-backdrop");
-  if (backdrop) {
-    backdrop.addEventListener("click", () => {
-      if (!root.classList.contains("layout-top")) return;
-      persistLayoutPrefs({ collapsed: true });
-    });
-  }
-
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (!root.classList.contains("layout-top") || root.classList.contains("panel-collapsed")) return;
+    if (root.classList.contains("panel-collapsed")) return;
+    if (!root.classList.contains("layout-top") && !root.classList.contains("layout-sidebar")) return;
     persistLayoutPrefs({ collapsed: true });
   });
 
@@ -1837,14 +3551,26 @@ function readPathFlowForCurrentUi() {
   return defaultFlow;
 }
 
+function syncDiagramOptionsFormFromState() {
+  const flow = PATH_FLOW_ORDER.includes(state.pathFlow) ? state.pathFlow : "horizontal";
+  const radio = document.querySelector(`input[name="diagram-path-flow"][value="${flow}"]`);
+  if (radio instanceof HTMLInputElement) radio.checked = true;
+
+  const hopEl = document.getElementById("opt-hop-numbers");
+  const flipEl = document.getElementById("opt-flip-controls");
+  const relEl = document.getElementById("opt-rel-names");
+  const lockEl = document.getElementById("opt-lock-controls");
+  if (!hopEl || !flipEl || !relEl || !lockEl) return;
+
+  const { hop, flip, relOnly } = overlayChecksFromMode(state.diagramOverlayMode);
+  hopEl.checked = hop;
+  flipEl.checked = flip;
+  relEl.checked = relOnly;
+  lockEl.checked = state.showDiagramLockControls !== false;
+}
+
 function updatePathFlowButton() {
-  const btn = document.getElementById("btn-toggle-vertical");
-  if (!btn) return;
-  const f = state.pathFlow;
-  btn.textContent = PATH_FLOW_LABEL[f] || PATH_FLOW_LABEL.horizontal;
-  btn.title =
-    (PATH_FLOW_TITLE[f] || PATH_FLOW_TITLE.horizontal) +
-    " Click again to cycle layout (Horizontal → Vertical → Compact).";
+  syncDiagramOptionsFormFromState();
 }
 
 function applyPathFlowFromStorage() {
@@ -1860,9 +3586,11 @@ function isResultsSideLayoutActive() {
 }
 
 const FEEDBACK_MAIL_TO = "hron@hey.com";
-const FEEDBACK_MAIL_SUBJECT = "Bug report — ArchiTrek";
+const FEEDBACK_MAIL_SUBJECT = "ArchiTrek Feedback";
 
 function buildFeedbackContextBody() {
+  /** Plain store snapshot — avoids nested Proxy traps during deep reads (feedback context only). */
+  const fb = typeof state.__raw__ === "object" && state.__raw__ != null ? state.__raw__ : state;
   const lines = [];
   const vpSel = document.getElementById("viewpoint-select");
   const vpVal = vpSel?.value || "";
@@ -1870,7 +3598,7 @@ function buildFeedbackContextBody() {
   const viewpointLabel =
     vpVal && vpOpt ? String(vpOpt.textContent || "").trim() : vpVal ? vpVal : "All elements";
 
-  const domainKey = normalizeDomainContext(state.domainContext);
+  const domainKey = normalizeDomainContext(fb.domainContext);
   let domainHuman = domainKey;
   if (typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[domainKey]) {
     const s = SCENARIOS[domainKey];
@@ -1909,7 +3637,7 @@ function buildFeedbackContextBody() {
     }`
   );
   lines.push(`User agent: ${typeof navigator !== "undefined" ? navigator.userAgent : ""}`);
-  lines.push(`- App loading / busy: ${state.loading ? "yes" : "no"}`);
+  lines.push(`- App loading / busy: ${fb.loading ? "yes" : "no"}`);
 
   lines.push("");
   lines.push("Layout / chrome:");
@@ -1951,29 +3679,32 @@ function buildFeedbackContextBody() {
       `- Path mode: ${searchSnap.mode === "set" ? "Connect set" : "Ordered waypoints"} · picked element slots: ${searchSnap.waypointCount} · distinct elements (connect set): ${searchSnap.connectSetDistinctCount}`
     );
   } else {
-    lines.push(`- Path mode: ${state.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`);
+    lines.push(`- Path mode: ${fb.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`);
   }
 
   lines.push("");
   lines.push("Pathfinder & graph settings:");
-  lines.push(`- Relationships: ${state.includeDerived ? "+ Derived" : "Direct only"}`);
-  lines.push(`- Association fallback (§5.2.4 bridges): ${state.allowAssociationFallback ? "on" : "off"}`);
+  lines.push(`- Relationships: ${fb.includeDerived ? "+ Inferred" : "Explicit only"}`);
+  lines.push(`- Association fallback (§5.2.4 bridges): ${fb.allowAssociationFallback ? "on" : "off"}`);
   lines.push(
-    `- Weighted UCS: direct=${so.pathWeightDirect} · derived=${so.pathWeightDerived} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
+    `- Weighted UCS: explicit=${so.pathWeightDirect} · inferred=${so.pathWeightDerived} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
   );
   lines.push(
-    `- Semantic rigor: preset=${normalizeSearchRigorPreset(state.searchRigorPreset)} · corePrune=${so.restrictCoreToCore} · grammar=${so.enforceGrammar} · strictRealization=${so.strictRealization}`
+    `- Semantic rigor: preset=${normalizeSearchRigorPreset(fb.searchRigorPreset)} · corePrune=${so.restrictCoreToCore} · grammar=${so.enforceGrammar} · strictRealization=${so.strictRealization}`
   );
-  const pcm = so.perspectiveClassMode || normalizePerspectiveClassMode(state.perspectiveClassMode);
+  const pcm = so.perspectiveClassMode || normalizePerspectiveClassMode(fb.perspectiveClassMode);
   const domPct =
     pcm === "dominant-share"
-      ? Math.round((so.perspectiveDominantShare != null ? so.perspectiveDominantShare : clampPerspectiveDominantSharePct(state.perspectiveDominantSharePct) / 100) * 100)
+      ? Math.round((so.perspectiveDominantShare != null ? so.perspectiveDominantShare : clampPerspectiveDominantSharePct(fb.perspectiveDominantSharePct) / 100) * 100)
       : null;
   lines.push(
     `- Perspective grouping: ${pcm}${domPct != null ? ` · dominant-share threshold ${domPct}%` : ""}`
   );
   lines.push(
-    `- Limits: max ${so.maxDepth} hops/segment · ${so.maxPaths} route alternatives · expansion budget ${normalizeSearchEffort(state.searchEffort)} (maxStates≈${so.maxStates})`
+    `- Limits: max ${so.maxDepth} hops/segment · ${so.maxPaths} route alternatives · expansion budget ${normalizeSearchEffort(fb.searchEffort)} (maxStates≈${so.maxStates})`
+  );
+  lines.push(
+    `- Cognitive load (routing cost): ${so.cognitiveLoadPenalty !== false ? "on" : "off"} · grace ${so.penaltyGracePeriod} hop(s) · growth factor ${so.penaltyGrowthFactor}`
   );
   if (searchSnap) {
     lines.push(
@@ -1981,17 +3712,63 @@ function buildFeedbackContextBody() {
     );
   }
 
+  const vpRoute = resolveViewpointSearchContext({ forceFullMetamodel: false });
+  lines.push("");
+  lines.push("Viewpoint routing (pathfinder graph scope):");
+  lines.push(
+    `- viewpointKey: ${vpRoute.viewpointKey != null && vpRoute.viewpointKey !== "" ? vpRoute.viewpointKey : "∅ (no strict viewpoint key)"}`
+  );
+  lines.push(`- strict palette + relationship filter: ${vpRoute.viewpointStrict ? "yes" : "no"}`);
+  if (vpRoute.viewpointStrict && vpRoute.allowedRelationshipCodes instanceof Set) {
+    lines.push(`- strict viewpoint allowed relationship matrix codes (count): ${vpRoute.allowedRelationshipCodes.size}`);
+  }
+  const sv = fb.viewpoint != null && fb.viewpoint !== "" ? String(fb.viewpoint).trim() : "";
+  if (sv && vpVal && sv !== vpVal) {
+    lines.push(`- Note: state.viewpoint (${sv}) ≠ dropdown (${vpVal}) — possible UI sync issue`);
+  }
+
+  lines.push("");
+  lines.push("Runtime / environment:");
+  lines.push(`- Async find in progress: ${fb._finding ? "yes" : "no"}`);
+  if (fb._pathfindFullMetamodelOnce) {
+    lines.push("- Next findPath: one-shot full metamodel graph (Expand search scope)");
+  }
+  if (fb._relaxOneShotRestore) {
+    lines.push("- One-shot rule relax restore snapshot: pending (between CTA and find completion)");
+  }
+  try {
+    const algoOpen = sessionStorage.getItem("archimateAlgorithmDetailsOpen") === "1";
+    lines.push(`- Routing math panel (session): ${algoOpen ? "expanded" : "collapsed"}`);
+  } catch (_) {
+    lines.push("- Routing math panel (session): (unavailable)");
+  }
+  try {
+    const consent = localStorage.getItem(LOCAL_PREFS_CONSENT_LS) === "1";
+    lines.push(`- Local session snapshot (restore): ${consent ? "consented" : "not stored / declined"}`);
+  } catch (_) {
+    lines.push("- Local session snapshot (restore): (unavailable)");
+  }
+  try {
+    lines.push(
+      `- Mobile “use desktop layout” (session): ${sessionStorage.getItem(MOBILE_FORCE_DESKTOP_SESSION_KEY) === "1" ? "yes" : "no"}`
+    );
+  } catch (_) {
+    lines.push('- Mobile “use desktop layout” (session): (unavailable)');
+  }
+
   lines.push("");
   lines.push("Diagram view:");
-  lines.push(`- Mode: ${state.mode === "swimlane" ? "Swimlanes" : "Compact"}`);
-  lines.push(`- Path layout: ${state.pathFlow}`);
-  lines.push(`- Step numbers on arrows: ${state.showBadges ? "on" : "off"}`);
-  lines.push(`- Composite sub-component illustrations: ${state.showCompositeSubs !== false ? "on" : "off"}`);
-  lines.push(`- Quick examples pinned: ${state.forceShowQuickExamples ? "yes" : "no"}`);
+  lines.push(`- Mode: ${fb.mode === "swimlane" ? "Swimlanes" : "Compact"}`);
+  lines.push(`- Path layout: ${fb.pathFlow}`);
+  lines.push(
+    `- Diagram overlays (hop numbers / flip controls): ${diagramOverlayExportLabel(fb.diagramOverlayMode, fb.showBadges)}`
+  );
+  lines.push(`- Composite sub-component illustrations: ${fb.showCompositeSubs !== false ? "on" : "off"}`);
+  lines.push(`- Quick examples pinned: ${fb.forceShowQuickExamples ? "yes" : "no"}`);
 
   lines.push("");
   lines.push("Waypoints (layer → element per slot):");
-  const wps = state.waypoints || [];
+  const wps = fb.waypoints || [];
   if (!wps.length) {
     lines.push("- (none)");
   } else {
@@ -2001,26 +3778,26 @@ function buildFeedbackContextBody() {
       lines.push(`- ${i + 1}. ${layer} → ${el}`);
     });
   }
-  if (state.selectionMode === "set" && state.lastAutoOrderInput?.length) {
+  if (fb.selectionMode === "set" && fb.lastAutoOrderInput?.length) {
     lines.push(
-      `- Connect-set solver input (unordered names): ${state.lastAutoOrderInput.filter(Boolean).join(", ")}`
+      `- Connect-set solver input (unordered names): ${fb.lastAutoOrderInput.filter(Boolean).join(", ")}`
     );
   }
 
   lines.push("");
   lines.push("Path finder / last run:");
-  if (state.lastPathSearchStatus) {
-    lines.push(`- Last search status: ${state.lastPathSearchStatus}`);
+  if (fb.lastPathSearchStatus) {
+    lines.push(`- Last search status: ${fb.lastPathSearchStatus}`);
   }
-  if (state.lastPathTemporaryRelaxation && typeof state.lastPathTemporaryRelaxation === "object") {
-    lines.push(`- Last successful path used temporary relax (one-shot CTA): ${JSON.stringify(state.lastPathTemporaryRelaxation)}`);
+  if (fb.lastPathTemporaryRelaxation && typeof fb.lastPathTemporaryRelaxation === "object") {
+    lines.push(`- Last successful path used temporary relax (one-shot CTA): ${JSON.stringify(fb.lastPathTemporaryRelaxation)}`);
   }
-  if (state._perspectiveSuggestFullMetamodel) {
+  if (fb._perspectiveSuggestFullMetamodel) {
     lines.push("- Perspective “add elements” suggestions: expanded to full metamodel (outside strict viewpoint)");
   }
-  const gSize = state.graph && typeof state.graph.size === "number" ? state.graph.size : null;
+  const gSize = fb.graph && typeof fb.graph.size === "number" ? fb.graph.size : null;
   lines.push(`- Graph size (nodes): ${gSize != null ? gSize : "—"}`);
-  const segs = state.segments;
+  const segs = fb.segments;
   const hasNoPath =
     !Array.isArray(segs) ||
     segs.length === 0 ||
@@ -2036,13 +3813,13 @@ function buildFeedbackContextBody() {
     lines.push(`- Any complete route: ${hasAnyPath ? "yes" : "no"}`);
     if (hasAnyPath) {
       lines.push(
-        `- Last successful path used Association fallback (penalized hop): ${state.lastPathIsFallback ? "yes" : "no"}`
+        `- Last successful path used Association fallback (penalized hop): ${fb.lastPathIsFallback ? "yes" : "no"}`
       );
     }
-    lines.push(`- Active alternative tab: ${(state.activePathIdx ?? 0) + 1}`);
-    if (state.selectionMode === "set" && state.lastAutoOrderResult?.length) {
-      lines.push(`- Auto-ordered chain: ${state.lastAutoOrderResult.join(" → ")}`);
-      const m = state.lastAutoOrderMetrics;
+    lines.push(`- Active alternative tab: ${(fb.activePathIdx ?? 0) + 1}`);
+    if (fb.selectionMode === "set" && fb.lastAutoOrderResult?.length) {
+      lines.push(`- Auto-ordered chain: ${fb.lastAutoOrderResult.join(" → ")}`);
+      const m = fb.lastAutoOrderMetrics;
       if (m && Number.isFinite(m.totalScore)) {
         lines.push(
           `- Connect-set metrics: weighted cost ${m.totalScore} · ${m.pointCount} points · ${m.orderingExact ? "exact" : "heuristic"} ordering · max ${so.maxDepth} hops/segment`
@@ -2050,18 +3827,18 @@ function buildFeedbackContextBody() {
       }
     }
   }
-  if (hasNoPath && state.pathFailureHints && typeof state.pathFailureHints === "object") {
+  if (hasNoPath && fb.pathFailureHints && typeof fb.pathFailureHints === "object") {
     lines.push(
-      `- No-path probe (would Derived / Association help?): ${JSON.stringify(state.pathFailureHints)}`
+      `- No-path probe (would Derived / Association help?): ${JSON.stringify(fb.pathFailureHints)}`
     );
   }
-  const uc = state.userChoices && typeof state.userChoices === "object" ? state.userChoices : {};
+  const uc = fb.userChoices && typeof fb.userChoices === "object" ? fb.userChoices : {};
   const ucKeys = Object.keys(uc);
   if (ucKeys.length) {
     lines.push(`- Ambiguous-hop disambiguation (userChoices): ${JSON.stringify(uc)}`);
   }
 
-  const mm = state.mmLast;
+  const mm = fb.mmLast;
   if (mm?.fromEl && mm?.toEl) {
     lines.push("");
     lines.push("Last metamodel focus (if relevant):");
@@ -2097,7 +3874,18 @@ window.openFeedbackModal = function openFeedbackModal() {
   const reply = document.getElementById("feedback-reply-email");
   const status = document.getElementById("feedback-status");
   if (!modal) return;
-  if (ctx) ctx.value = buildFeedbackContextBody();
+  try {
+    closePathChromeOverlay?.();
+    closePathOptionsOverlay?.();
+    teardownPickerOverlay?.();
+  } catch (_) {}
+  if (ctx) {
+    try {
+      ctx.value = buildFeedbackContextBody();
+    } catch (e) {
+      ctx.value = `Feedback context unavailable: ${String(e?.message || e || "unknown error")}`;
+    }
+  }
   if (msg) msg.value = "";
   if (reply) reply.value = "";
   if (status) {
@@ -2248,7 +4036,7 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
         subject: FEEDBACK_MAIL_SUBJECT,
         from_name: "ArchiTrek feedback",
         email: emailField,
-        ...(reply ? { replyto: reply } : {}),
+        replyto: FEEDBACK_MAIL_TO,
         message: bodyText,
         botcheck: false,
       }),
@@ -2280,6 +4068,105 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
       if (prevLabel != null) sendBtn.textContent = prevLabel;
     }
     if (copyBtn) copyBtn.disabled = false;
+  }
+};
+
+function setMobileReminderStatus(text, isError) {
+  const status = document.getElementById("mobile-reminder-status");
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle("feedback-status--error", !!isError);
+}
+
+/**
+ * Sends a Web3Forms request (subject: "Your link to ArchiTrek") so the autoresponder can email the user.
+ * Mirrors {@link submitFeedbackReport} (same API key, same endpoint pattern).
+ */
+window.sendMobileReminder = async function sendMobileReminder() {
+  const key = getFeedbackWeb3AccessKey();
+  const emailInput = document.getElementById("mobile-reminder-email");
+  const sendBtn = document.getElementById("mobile-reminder-btn");
+  const reply = emailInput?.value?.trim() ?? "";
+  const prevLabel = sendBtn?.textContent;
+
+  if (!key) {
+    setMobileReminderStatus(
+      "Email sending is not set up yet. Add your Web3Forms access key in config/feedback-config.js.",
+      true
+    );
+    trackEvent("mobile_reminder", { ok: false, reason: "missing_web3forms_key" });
+    return;
+  }
+
+  if (!reply || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reply)) {
+    setMobileReminderStatus("Please enter a valid email address.", true);
+    return;
+  }
+
+  const desktopUrl =
+    typeof location !== "undefined" ? String(location.href).split("#")[0] : "";
+  const message = [
+    "Hi there,",
+    "",
+    "Earlier today, you tried to access ArchiTrek from your mobile device. Because Enterprise Architecture needs room to breathe, we saved your spot for when you're back at a larger screen.",
+    "",
+    "Whenever you are ready to dive into ArchiMate relationship matrices, pathfinding, and derivation rules, just click the link below from your desktop or laptop:",
+    "",
+    desktopUrl,
+    "",
+    "Happy modeling,",
+    "",
+    "The ArchiTrek Team",
+  ].join("\n");
+
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.setAttribute("aria-busy", "true");
+    sendBtn.textContent = "Sending…";
+  }
+  setMobileReminderStatus("", false);
+
+  try {
+    const res = await fetch("https://api.web3forms.com/submit", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        access_key: key,
+        subject: "Your link to ArchiTrek",
+        from_name: "ArchiTrek reminder",
+        email: reply,
+        replyto: reply,
+        message,
+        botcheck: false,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const ok =
+      res.ok &&
+      (data.success === true || (data.body && data.body.success === true));
+    if (!ok) {
+      const errText =
+        (typeof data.message === "string" && data.message) ||
+        (data.body && typeof data.body.message === "string" && data.body.message) ||
+        `Could not send (${res.status}).`;
+      throw new Error(errText);
+    }
+    setMobileReminderStatus("", false);
+    if (sendBtn) sendBtn.textContent = "Sent!";
+    trackEvent("mobile_reminder", { ok: true });
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    setMobileReminderStatus(m, true);
+    trackEvent("mobile_reminder", { ok: false, reason: "network_or_api_error" });
+    if (sendBtn && prevLabel != null) sendBtn.textContent = prevLabel;
+  } finally {
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.removeAttribute("aria-busy");
+    }
   }
 };
 
@@ -2322,6 +4209,13 @@ function initResultsSplit() {
   const panel = document.getElementById("results-panel");
   const handle = document.getElementById("results-split-resize");
   if (!panel || !handle) return;
+  if (document.documentElement.dataset.architrekResultsSplitWired === "1") {
+    applyResultsLayoutMode(readResultsLayoutMode());
+    applyResultsSplitPct(readResultsSplitPct());
+    applyResultsSidePct(readResultsSidePct());
+    return;
+  }
+  document.documentElement.dataset.architrekResultsSplitWired = "1";
 
   applyResultsLayoutMode(readResultsLayoutMode());
   applyResultsSplitPct(readResultsSplitPct());
@@ -2338,12 +4232,17 @@ function initResultsSplit() {
   });
 
   function startResizeStack(e) {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.preventDefault();
     const startY = e.clientY;
     const panelRect = panel.getBoundingClientRect();
     const panelH = panelRect.height;
     if (panelH < 80) return;
+    if (handle && typeof handle.setPointerCapture === "function") {
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    }
     const startPct = getResultsDiagramPct(panel);
 
     function move(ev) {
@@ -2353,23 +4252,35 @@ function initResultsSplit() {
       next = Math.max(RESULTS_PCT_MIN, Math.min(RESULTS_PCT_MAX, next));
       panel.style.setProperty("--results-diagram-pct", `${next}%`);
     }
-    function up() {
+    function up(ev) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      if (handle && typeof handle.releasePointerCapture === "function" && ev?.pointerId != null) {
+        try {
+          if (handle.hasPointerCapture?.(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
+        } catch (_) {}
+      }
       const pct = Math.round(getResultsDiagramPct(panel));
       localStorage.setItem(RESULTS_SPLIT_LS, String(pct));
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   }
 
   function startResizeSide(e) {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.preventDefault();
     const startX = e.clientX;
     const panelRect = panel.getBoundingClientRect();
     const panelW = panelRect.width;
     if (panelW < 160) return;
+    if (handle && typeof handle.setPointerCapture === "function") {
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    }
     const startPct = getResultsSidePct(panel);
 
     function move(ev) {
@@ -2379,23 +4290,30 @@ function initResultsSplit() {
       next = Math.max(RESULTS_SIDE_PCT_MIN, Math.min(RESULTS_SIDE_PCT_MAX, next));
       panel.style.setProperty("--results-side-pct", `${next}%`);
     }
-    function up() {
+    function up(ev) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      if (handle && typeof handle.releasePointerCapture === "function" && ev?.pointerId != null) {
+        try {
+          if (handle.hasPointerCapture?.(ev.pointerId)) handle.releasePointerCapture(ev.pointerId);
+        } catch (_) {}
+      }
       const pct = Math.round(getResultsSidePct(panel));
       localStorage.setItem(RESULTS_SIDE_SPLIT_LS, String(pct));
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   }
 
   function startResize(e) {
-    if (e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     if (isResultsSideLayoutActive()) startResizeSide(e);
     else startResizeStack(e);
   }
 
-  handle.addEventListener("pointerdown", startResize);
+  handle.addEventListener("pointerdown", startResize, true);
 
   handle.addEventListener("keydown", (e) => {
     const step = e.shiftKey ? 4 : 1;
@@ -2432,21 +4350,65 @@ function initResultsSplit() {
 
 // ── Initialise ──────────────────────────────────────────────────────────────
 
-window.showHelp = function() {
+const HELP_PANE_APP = "app";
+const HELP_PANE_LABELS = "labels";
+
+function setHelpModalPane(pane) {
+  const isLabels = pane === HELP_PANE_LABELS;
+  const appPane = document.getElementById("help-pane-app");
+  const labelsPane = document.getElementById("help-pane-labels");
+  const tabApp = document.getElementById("help-tab-app");
+  const tabLabels = document.getElementById("help-tab-labels");
+  if (appPane) appPane.hidden = isLabels;
+  if (labelsPane) labelsPane.hidden = !isLabels;
+  if (tabApp) {
+    tabApp.setAttribute("aria-selected", String(!isLabels));
+    tabApp.classList.toggle("help-modal-tab--active", !isLabels);
+    tabApp.tabIndex = !isLabels ? 0 : -1;
+  }
+  if (tabLabels) {
+    tabLabels.setAttribute("aria-selected", String(isLabels));
+    tabLabels.classList.toggle("help-modal-tab--active", isLabels);
+    tabLabels.tabIndex = isLabels ? 0 : -1;
+  }
+  if (isLabels) {
+    const body = document.getElementById("help-labels-body");
+    if (body && typeof buildPathLabelsModalHtml === "function") {
+      body.innerHTML = buildPathLabelsModalHtml();
+    }
+  }
+}
+
+function initHelpModalTabs() {
+  const list = document.querySelector(".help-modal-tabs");
+  if (!list || list.dataset.helpTabsBound) return;
+  list.dataset.helpTabsBound = "1";
+  list.addEventListener("click", (e) => {
+    const t = e.target.closest(".help-modal-tab");
+    if (!t || !list.contains(t)) return;
+    if (t.id === "help-tab-app") setHelpModalPane(HELP_PANE_APP);
+    else if (t.id === "help-tab-labels") setHelpModalPane(HELP_PANE_LABELS);
+  });
+}
+
+window.showHelp = function (pane) {
+  const p = pane === HELP_PANE_LABELS ? HELP_PANE_LABELS : HELP_PANE_APP;
   const m = document.getElementById("help-modal");
   if (!m) return;
+  setHelpModalPane(p);
   m.setAttribute("aria-hidden", "false");
   lockBodyScroll();
-  // Focus the dialog so Esc/keyboard users start inside it.
   const card = m.querySelector(".help-modal-card");
   if (card && typeof card.focus === "function") card.focus();
 };
 
-window.hideHelp = function() {
+window.hideHelp = function () {
   const m = document.getElementById("help-modal");
   if (!m) return;
   m.setAttribute("aria-hidden", "true");
   unlockBodyScroll();
+  setHelpModalPane(HELP_PANE_APP);
+  document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "false");
 };
 
 /** Official ArchiMate 3.x specification (same family as embedded § references). */
@@ -2458,6 +4420,24 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** When the diagram shows the initial empty panel, align title/body with {@link state._viewpointClearNotice} if set. */
+function syncDiagramEmptyPanelCopy() {
+  const wrap = document.getElementById("diagram-empty");
+  const titleEl = wrap?.querySelector(".diagram-empty-title");
+  const subEl = wrap?.querySelector(".diagram-empty-sub");
+  if (!wrap || !titleEl || !subEl) return;
+  const n = state._viewpointClearNotice;
+  if (n && Array.isArray(n.removed) && n.removed.length) {
+    titleEl.textContent = "Selections removed for this viewpoint";
+    const vp = escapeHtml(n.viewpointName || "This viewpoint");
+    const list = n.removed.map(escapeHtml).join(", ");
+    subEl.innerHTML = `Switching to <strong>${vp}</strong> cleared types outside this viewpoint\u2019s palette: <strong>${list}</strong>. Add allowed elements from the sidebar or header, then run <strong>Find Path</strong> to see a connection diagram.`;
+  } else {
+    titleEl.textContent = "Build a path";
+    subEl.innerHTML = `Select at least <strong>2 elements</strong>, then click <strong>Find Path</strong>.`;
+  }
 }
 
 function sortLayerEntries(layerCounts) {
@@ -2795,11 +4775,11 @@ function buildMatrixConnectivityHtml(name) {
           <p class="el-matrix-partner-line">${outIntro}.${derOut}</p>
           ${outLayers ? `<div class="el-layer-row"><span class="el-layer-label">Targets by layer (direct):</span> ${outLayers}</div>` : ""}
           <div class="el-code-block">
-            <span class="el-code-label">Direct codes:</span>
+            <span class="el-code-label">Explicit codes:</span>
             ${formatCodePills(outgoing.codesDirect, "—")}
           </div>
           <div class="el-code-block">
-            <span class="el-code-label">Derived codes:</span>
+            <span class="el-code-label">Inferred codes:</span>
             ${formatCodePills(outgoing.codesDerived, "—")}
           </div>
         </div>
@@ -2808,17 +4788,17 @@ function buildMatrixConnectivityHtml(name) {
           <p class="el-matrix-partner-line">${inIntro}.${derIn}</p>
           ${inLayers ? `<div class="el-layer-row"><span class="el-layer-label">Sources by layer (direct):</span> ${inLayers}</div>` : ""}
           <div class="el-code-block">
-            <span class="el-code-label">Direct codes:</span>
+            <span class="el-code-label">Explicit codes:</span>
             ${formatCodePills(incoming.codesDirect, "—")}
           </div>
           <div class="el-code-block">
-            <span class="el-code-label">Derived codes:</span>
+            <span class="el-code-label">Inferred codes:</span>
             ${formatCodePills(incoming.codesDerived, "—")}
           </div>
         </div>
       </div>
       <p class="el-matrix-footnote">
-        <strong>Association</strong> (O) is always permitted between any two elements (§5.2.4) but is not listed in Appendix B’s matrix. ArchiTrek encodes that as optional bridges: with <strong>Semantic rigor</strong> Academic (or Association off in Advanced Logic Overrides), the pathfinder does not use §5.2.4 Association as a bridge; <strong>Direct vs +Derived</strong> still controls whether Appendix B only or §5.7 derived edges are in the graph. Looser rigor or overrides allow Association as a last resort, flagged in results.
+        <strong>Association</strong> (O) is always permitted between any two elements (§5.2.4) but is not listed in Appendix B’s matrix. ArchiTrek encodes that as optional bridges: with <strong>Semantic rigor</strong> Academic (or Association off in Advanced Logic Overrides), the pathfinder does not use §5.2.4 Association as a bridge; <strong>Explicit vs +Inferred</strong> still controls whether Appendix B explicit-only or §5.7 inferred edges are in the graph. Looser rigor or overrides allow Association as a last resort, flagged in results.
       </p>
     </section>`;
 }
@@ -2933,26 +4913,8 @@ window.showElementDetails = function showElementDetails(elementName) {
 
 // ── Diagram pan / zoom (path SVG) ───────────────────────────────────────────
 const diagramView = { scale: 1, tx: 0, ty: 0, min: 0.25, max: 4, step: 1.2 };
-/** When mode / badges / layout / story theme / or segment result ref changes, reset pan-zoom; not when only switching path tab. */
-let _diagramPanCtx = { modeKey: null, segmentsRef: null };
 
-function diagramPanShouldReset(segments) {
-  // Keep the camera stable when toggling Compact ↔ Swimlanes.
-  // Both are just alternative renderings of the same result set; resetting pan/zoom feels like the diagram
-  // "disappears" even though only lane bands/layout changed.
-  const panModeKey = (state.mode === "swimlane") ? "compact" : state.mode;
-  const modeKey = `${panModeKey}|${state.pathFlow}|${state.showBadges}|${normalizeDomainContext(state.domainContext)}`;
-  const segRef = segments;
-  if (_diagramPanCtx.modeKey !== modeKey || _diagramPanCtx.segmentsRef !== segRef) {
-    _diagramPanCtx = { modeKey, segmentsRef: segRef };
-    return true;
-  }
-  return false;
-}
-
-function resetDiagramPanContext() {
-  _diagramPanCtx = { modeKey: null, segmentsRef: null };
-}
+function resetDiagramPanContext() {}
 
 /** No-path UI sits above the pan/zoom surface (not inside #path-diagram) so the canvas is not draggable. */
 function showDiagramNoPathOverlay(html) {
@@ -3000,11 +4962,31 @@ function hidePathFailureModal() {
 
 window.hidePathFailureModal = hidePathFailureModal;
 
+/** Drop path results and modal when the waypoint chain no longer meets Find Path rules. */
+function invalidatePathSearchResults() {
+  state.segments = null;
+  state.pathFailureHints = null;
+  state._pathFailModalShownForRunId = null;
+  state.edgeConstraintWarning = null;
+  if (window.store && typeof window.store.dispatch === "function") {
+    window.store.dispatch("CLEAR_EDGE_CONSTRAINTS");
+  } else {
+    state.edgeConstraints = [];
+  }
+  hidePathFailureModal();
+  hideDiagramNoPathOverlay();
+  scheduleRenderResults();
+  syncUrlFromState({ push: true });
+}
+
 function showPathFailureModal(opts) {
   const modal = document.getElementById("path-fail-modal");
   const body = document.getElementById("path-fail-modal-body");
   const titleEl = document.getElementById("path-fail-modal-title");
   if (!modal || !body || !titleEl) return;
+  teardownPickerOverlay();
+  closePathOptionsOverlay();
+  closePathChromeOverlay();
 
   const {
     narrFrom,
@@ -3058,9 +5040,9 @@ function showPathFailureModal(opts) {
     }
   } else if (isOrdered && chainEsc) {
     if (fail && typeof fail.index === "number") {
-      lead = `<p class="path-fail-modal-lead">You asked for the directed chain <strong>${chainEsc}</strong>. There is no valid route under your current settings for the hop <strong>${nf} → ${nt}</strong> (segment ${fail.index + 1} of ${segmentCount || "?"}) — the Appendix B graph may have no forward path between these elements within the hop limit and search effort, or filters such as <strong>Viewpoint</strong> / <strong>Direct only</strong> removed the needed edges.</p>`;
+      lead = `<p class="path-fail-modal-lead">You asked for the directed chain <strong>${chainEsc}</strong>. There is no valid route under your current settings for the hop <strong>${nf} → ${nt}</strong> (segment ${fail.index + 1} of ${segmentCount || "?"}) — the Appendix B graph may have no forward path between these elements within the hop limit and search effort, or filters such as <strong>Viewpoint</strong> / <strong>Explicit only</strong> (Search Depth) removed the needed edges.</p>`;
     } else {
-      lead = `<p class="path-fail-modal-lead">You asked for <strong>${chainEsc}</strong>. The pathfinder could not build a complete chain under your current limits and options. Try a different order, raise max hops, widen the viewpoint, or relax Direct / Association settings.</p>`;
+      lead = `<p class="path-fail-modal-lead">You asked for <strong>${chainEsc}</strong>. The pathfinder could not build a complete chain under your current limits and options. Try a different order, raise max hops, widen the viewpoint, or relax Search Depth (Explicit / + Inferred) / Association settings.</p>`;
     }
   } else {
     lead = `<p class="path-fail-modal-lead">No valid architectural path was found for <strong>${nf}</strong> → <strong>${nt}</strong> with the current connect-set search.</p>`;
@@ -3076,7 +5058,7 @@ function showPathFailureModal(opts) {
 
   let whyDetails = "<ul>";
   whyDetails +=
-    `<li>The search follows <strong>directed</strong> edges (Appendix B tail → head; §5.7 derived only if enabled). If no edge sequence exists from <strong>${nf}</strong> to <strong>${nt}</strong> within the max hops per segment, the segment is empty.</li>`;
+    `<li>The search follows <strong>directed</strong> edges (Appendix B tail → head; §5.7 inferred edges only if <strong>+ Inferred</strong> is on). If no edge sequence exists from <strong>${nf}</strong> to <strong>${nt}</strong> within the max hops per segment, the segment is empty.</li>`;
   if (!mmOk) {
     if (!aspectOk && aspectRule?.reason) {
       whyDetails += `<li><strong>§4.2 aspect rule:</strong> ${escapeHtml(aspectRule.reason)}</li>`;
@@ -3086,15 +5068,15 @@ function showPathFailureModal(opts) {
     }
   } else {
     whyDetails += vpF.strict
-      ? "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; remaining blockers include matrix reachability, hop depth, or Direct-only mode (viewpoint limits are explained in the next bullet).</li>"
-      : "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; the usual blockers are matrix reachability, hop depth, viewpoint palette, or Direct-only mode.</li>";
+      ? "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; remaining blockers include matrix reachability, hop depth, or Explicit-only Search Depth (viewpoint limits are explained in the next bullet).</li>"
+      : "<li>For this pair, the core metamodel aspect/layer check is not an automatic “forbidden” hit; the usual blockers are matrix reachability, hop depth, viewpoint palette, or Explicit-only Search Depth.</li>";
   }
   if (vpF.strict) {
     whyDetails += `<li><strong>Viewpoint (${escapeHtml(vpF.name)}):</strong> The routed graph only includes elements in this viewpoint’s palette and matrix entries between allowed types. A “no path” here means no such chain under those limits — not necessarily that every ArchiMate link is forbidden in the full metamodel.</li>`;
   }
   if (pathHints?.derivedWouldHelp) {
     whyDetails +=
-      "<li>Automatic check: enabling <strong>+ Derived</strong> (§5.7) would add traversable edges for this query.</li>";
+      "<li>Automatic check: enabling <strong>+ Inferred</strong> (§5.7) would add traversable edges for this query.</li>";
   }
   if (pathHints?.associationWouldHelp) {
     whyDetails +=
@@ -3102,7 +5084,7 @@ function showPathFailureModal(opts) {
   }
   if (includeDerived && allowAssociationFallback && !pathHints?.derivedWouldHelp && !pathHints?.associationWouldHelp) {
     whyDetails +=
-      "<li>With +Derived and Association already on, try raising <strong>max hops per segment</strong> or <strong>search effort</strong>, or switch to <strong>All elements</strong>.</li>";
+      "<li>With +Inferred and Association already on, try raising <strong>max hops per segment</strong> or <strong>search effort</strong>, or switch to <strong>All elements</strong>.</li>";
   }
   whyDetails += "</ul>";
 
@@ -3112,7 +5094,7 @@ function showPathFailureModal(opts) {
     <div class="path-fail-relax-wrap" role="group" aria-label="Expand search one time">
       <p class="path-fail-relax-intro">Same actions as the diagram overlay: run <strong>one</strong> search with relaxed rules. Your saved <strong>Options</strong> are not changed permanently.</p>
       <div class="path-fail-relax-buttons">
-        <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled){window.hidePathFailureModal();window.tryRelaxPathDerived();}">🔍 Search with Derived Relations</button>
+        <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled){window.hidePathFailureModal();window.tryRelaxPathDerived();}">🔍 Search with + Inferred (§5.7)</button>
         ${includeDerived ? '<span class="path-dead-end__pill" aria-hidden="true">On</span>' : ""}
         <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${assocDisabled} onclick="if(!this.disabled){window.hidePathFailureModal();window.tryRelaxPathAssociation();}">🤝 Search with Informal Associations</button>
         ${allowAssociationFallback ? '<span class="path-dead-end__pill" aria-hidden="true">On</span>' : ""}
@@ -3158,6 +5140,76 @@ function applyDiagramTransform() {
   const surf = document.getElementById("diagram-pan-surface");
   if (!surf) return;
   surf.style.transform = `translate(${diagramView.tx}px, ${diagramView.ty}px) scale(${diagramView.scale})`;
+  scheduleViewportCulling();
+}
+
+let viewportCullingRaf = null;
+function scheduleViewportCulling() {
+  if (viewportCullingRaf != null) return;
+  viewportCullingRaf = requestAnimationFrame(() => {
+    viewportCullingRaf = null;
+    applyViewportCulling();
+  });
+}
+
+function applyViewportCulling() {
+  const vp = document.getElementById("diagram-pan-viewport");
+  const svg = document.querySelector("#path-diagram svg");
+  if (!vp || !svg) return;
+  const margin = 160;
+  const vpRect = vp.getBoundingClientRect();
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return;
+  let inv;
+  try {
+    inv = ctm.inverse();
+  } catch (_) {
+    return;
+  }
+  const pt = svg.createSVGPoint();
+  const clientToSvgUser = (cx, cy) => {
+    pt.x = cx;
+    pt.y = cy;
+    return pt.matrixTransform(inv);
+  };
+  const ul = clientToSvgUser(vpRect.left - margin, vpRect.top - margin);
+  const br = clientToSvgUser(vpRect.right + margin, vpRect.bottom + margin);
+  const visMinX = Math.min(ul.x, br.x);
+  const visMaxX = Math.max(ul.x, br.x);
+  const visMinY = Math.min(ul.y, br.y);
+  const visMaxY = Math.max(ul.y, br.y);
+
+  const elements = svg.querySelectorAll(".archimate-element");
+  for (const el of elements) {
+    let x;
+    let y;
+    let w;
+    let h;
+    const raw = el.getAttribute("data-layout-bbox");
+    if (raw) {
+      const parts = raw.split(",").map((n) => Number(n));
+      if (parts.length === 4 && parts.every(Number.isFinite)) {
+        [x, y, w, h] = parts;
+      }
+    }
+    if (x == null) {
+      try {
+        const b = el.getBBox();
+        x = b.x;
+        y = b.y;
+        w = b.width;
+        h = b.height;
+      } catch (_) {
+        continue;
+      }
+    }
+    const visible =
+      x + w >= visMinX &&
+      x <= visMaxX &&
+      y + h >= visMinY &&
+      y <= visMaxY;
+    el.style.display = visible ? "" : "none";
+  }
 }
 
 function resetDiagramView() {
@@ -3201,28 +5253,127 @@ window.diagramZoomReset = function diagramZoomReset() {
 };
 
 function initDiagramPanZoom() {
-  const vp = document.getElementById("diagram-pan-viewport");
-  const pathDiagram = document.getElementById("path-diagram");
-  if (!vp || !pathDiagram) return;
+  const panViewportEl = document.getElementById("diagram-pan-viewport");
+  if (!panViewportEl || !document.getElementById("path-diagram")) return;
+  if (document.documentElement.dataset.diagramPanZoomWired === "1") return;
+  document.documentElement.dataset.diagramPanZoomWired = "1";
 
+  function livePanViewport() {
+    return document.getElementById("diagram-pan-viewport");
+  }
+
+  function livePathDiagram() {
+    return document.getElementById("path-diagram");
+  }
+
+  const pointers = new Map();
   let activeId = null;
   let start = null;
   let dragged = false;
+  let pinchLastDist = 0;
+  let pinchMoved = false;
+  let docListening = false;
   const thresh = 6;
 
+  function suppressNextDiagramClick() {
+    const pd = livePathDiagram();
+    if (!pd) return;
+    const suppress = (ev) => {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      pd.removeEventListener("click", suppress, true);
+    };
+    pd.addEventListener("click", suppress, true);
+  }
+
+  function clearPanDragState() {
+    activeId = null;
+    start = null;
+    dragged = false;
+    livePanViewport()?.classList.remove("diagram-pan--dragging");
+  }
+
+  function ensureDocListeners() {
+    if (docListening) return;
+    document.addEventListener("pointermove", onDocMove, { passive: true });
+    document.addEventListener("pointerup", onDocEnd, true);
+    document.addEventListener("pointercancel", onDocEnd, true);
+    docListening = true;
+  }
+
   function cleanupDocListeners() {
-    document.removeEventListener("pointermove", onDocMove);
+    if (!docListening) return;
+    document.removeEventListener("pointermove", onDocMove, { passive: true });
     document.removeEventListener("pointerup", onDocEnd, true);
     document.removeEventListener("pointercancel", onDocEnd, true);
+    docListening = false;
+  }
+
+  function firstTwoPointers() {
+    const it = pointers.values();
+    const a = it.next().value;
+    const b = it.next().value;
+    return a && b ? [a, b] : null;
+  }
+
+  function pointerDistance(p1, p2) {
+    return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  }
+
+  function pointerMidpoint(p1, p2) {
+    return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  }
+
+  function beginPinchGesture() {
+    const pair = firstTwoPointers();
+    if (!pair) return;
+    clearPanDragState();
+    pinchLastDist = pointerDistance(pair[0], pair[1]);
+    pinchMoved = false;
+  }
+
+  function resumePanFromRemainingPointer() {
+    if (pointers.size !== 1) return;
+    const only = pointers.values().next().value;
+    if (!only) return;
+    activeId = only.id;
+    start = { x: only.x, y: only.y, tx: diagramView.tx, ty: diagramView.ty };
+    dragged = false;
   }
 
   function onDocMove(e) {
+    if (pointers.has(e.pointerId)) {
+      pointers.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY });
+    }
+    if (pointers.size >= 2) {
+      const pair = firstTwoPointers();
+      if (!pair) return;
+      const dist = pointerDistance(pair[0], pair[1]);
+      if (pinchLastDist > 0 && dist > 0) {
+        const factor = dist / pinchLastDist;
+        if (Math.abs(factor - 1) > 0.001) {
+          const mid = pointerMidpoint(pair[0], pair[1]);
+          diagramZoomAtPoint(mid.x, mid.y, factor);
+          pinchMoved = true;
+        }
+      }
+      pinchLastDist = dist;
+      return;
+    }
     if (e.pointerId !== activeId || !start) return;
     const dx = e.clientX - start.x;
     const dy = e.clientY - start.y;
+    const vp = livePanViewport();
     if (!dragged && dx * dx + dy * dy > thresh * thresh) {
       dragged = true;
-      vp.classList.add("diagram-pan--dragging");
+      vp?.classList.add("diagram-pan--dragging");
+      // Capture only once the user is clearly panning — keeps hop clicks working on pointerdown,
+      // but ensures we keep receiving moves even if the pointer leaves the SVG hit geometry.
+      if (vp && typeof vp.setPointerCapture === "function") {
+        try {
+          vp.setPointerCapture(e.pointerId);
+        } catch (_) {}
+      }
     }
     if (dragged) {
       diagramView.tx = start.tx + dx;
@@ -3232,45 +5383,80 @@ function initDiagramPanZoom() {
   }
 
   function onDocEnd(e) {
-    if (e.pointerId !== activeId) return;
-    cleanupDocListeners();
-    if (dragged) {
-      const suppress = (ev) => {
-        ev.preventDefault();
-        ev.stopImmediatePropagation();
-        pathDiagram.removeEventListener("click", suppress, true);
-      };
-      pathDiagram.addEventListener("click", suppress, true);
+    const hadPointer = pointers.delete(e.pointerId);
+    const vp = livePanViewport();
+    if (hadPointer && vp && typeof vp.releasePointerCapture === "function") {
+      try {
+        if (vp.hasPointerCapture?.(e.pointerId)) vp.releasePointerCapture(e.pointerId);
+      } catch (_) {}
     }
-    activeId = null;
-    start = null;
-    dragged = false;
-    vp.classList.remove("diagram-pan--dragging");
+
+    const wasPinching = pinchLastDist > 0;
+    if (wasPinching && pointers.size < 2) {
+      if (pinchMoved) suppressNextDiagramClick();
+      pinchLastDist = 0;
+      pinchMoved = false;
+      clearPanDragState();
+      resumePanFromRemainingPointer();
+    }
+
+    if (e.pointerId === activeId) {
+      if (dragged) suppressNextDiagramClick();
+      clearPanDragState();
+    }
+
+    if (pointers.size === 0) cleanupDocListeners();
   }
 
-  vp.addEventListener("pointerdown", (e) => {
+  function diagramNoPathOverlayOpen() {
     const ov = document.getElementById("diagram-no-path-overlay");
-    if (ov && !ov.hidden) return;
-    if (e.button !== 0) return;
-    activeId = e.pointerId;
-    start = { x: e.clientX, y: e.clientY, tx: diagramView.tx, ty: diagramView.ty };
-    dragged = false;
-    document.addEventListener("pointermove", onDocMove, { passive: true });
-    document.addEventListener("pointerup", onDocEnd, true);
-    document.addEventListener("pointercancel", onDocEnd, true);
-  });
+    return ov && !ov.hidden;
+  }
 
-  vp.addEventListener(
-    "wheel",
-    (e) => {
-      const ov = document.getElementById("diagram-no-path-overlay");
-      if (ov && !ov.hidden) return;
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
-      diagramZoomAtPoint(e.clientX, e.clientY, factor);
-    },
-    { passive: false }
-  );
+  /**
+   * Document capture + target containment check: arms pan even when capture does not visit
+   * #diagram-pan-viewport the same way for every SVG hit target. Listener is registered in init()
+   * after dismissPathPanelFromOutsidePointerIfNeeded so the top drawer still handles outside taps first.
+   */
+  function onDocumentDiagramPanPointerDownCapture(e) {
+    const vp = livePanViewport();
+    if (!vp?.isConnected) return;
+    let t = e.target;
+    if (t && t.nodeType === Node.TEXT_NODE) t = t.parentElement;
+    if (!(t instanceof Element)) return;
+    if (!vp.contains(t)) return;
+
+    const appLayout0 = document.getElementById("app-layout");
+    const ov0 = diagramNoPathOverlayOpen();
+    const lt0 = appLayout0?.classList.contains("layout-top");
+    const pc0 = appLayout0?.classList.contains("panel-collapsed");
+    let skip0 = null;
+    if (ov0) skip0 = "no-path-overlay";
+    else if (e.pointerType === "mouse" && e.button !== 0) skip0 = "non-primary-button";
+    if (diagramNoPathOverlayOpen()) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointers.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY });
+    ensureDocListeners();
+    if (pointers.size === 1) {
+      activeId = e.pointerId;
+      start = { x: e.clientX, y: e.clientY, tx: diagramView.tx, ty: diagramView.ty };
+      dragged = false;
+      pinchLastDist = 0;
+      pinchMoved = false;
+      return;
+    }
+    beginPinchGesture();
+  }
+
+  function onViewportWheelCapture(e) {
+    if (diagramNoPathOverlayOpen()) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+    diagramZoomAtPoint(e.clientX, e.clientY, factor);
+  }
+
+  document.addEventListener("pointerdown", onDocumentDiagramPanPointerDownCapture, true);
+  panViewportEl.addEventListener("wheel", onViewportWheelCapture, { passive: false, capture: true });
 }
 
 /** Opens the “Element definitions” details block and scrolls to the matching card. */
@@ -3287,11 +5473,18 @@ window.scrollToElementDefinitionInExplanation = function scrollToElementDefiniti
 };
 
 function init() {
+  /* Wire pan/zoom first so diagram dragging works even if a later init step throws (e.g. stack errors in pathfinder self-test). */
+  initDiagramPanZoom();
+  refreshViewpointSelectFromCatalog();
+  wireHeaderViewpointHovercardPositioning();
+  wireHeaderThemeHovercardPositioning();
+
   // Single metamodel instance lives in the explanation panel.
   const mm = document.getElementById('metamodel-diagram');
   if (mm) renderMetamodelDiagram(mm);
   rebuildGraph();
   updateDiagramEmptyChrome();
+  syncStoryShuffleButton();
 
   // Self-test: verify pathfinder works in this browser context
   try {
@@ -3356,6 +5549,7 @@ function init() {
   addWaypointSlot(1, endLabel);
   renderWaypointChain();
   setSelectionMode(state.selectionMode);
+  state.appMode = normalizeAppMode(state.appMode);
   state.domainContext = normalizeDomainContext(state.domainContext);
   repopulateDomainContextSelectorsFromScenarios();
   syncDomainContextSelectors();
@@ -3364,22 +5558,76 @@ function init() {
   initPathOptionsOverlay();
   initPathChromeCollapsible();
   initResultsSplit();
-  initDiagramPanZoom();
   initPathFailureModal();
   initPathLabelsHelp();
+  initHelpModalTabs();
 
   updateQuickExamplesVisibility();
+  syncAppModeUi();
 
   applySearchOptionsToUI();
   document.getElementById("btn-direct")?.classList.toggle("active", !state.includeDerived);
   document.getElementById("btn-derived")?.classList.toggle("active", state.includeDerived);
   updatePathOptionsTriggerSummary();
+  checkReady();
 
   // Hide initial loading indicator after first paint.
   setLoading(false);
+
+  openPathPanelIfCollapsedForBoot();
 }
 
-function setLoading(on, label = "") {
+/** Production value for min loading when search inputs change (restore after local experiments). */
+const MIN_FIND_PATH_LOADING_MS_DEFAULT = 1500;
+/** Temporary: set to `MIN_FIND_PATH_LOADING_MS_DEFAULT` before shipping (5s is for tuning UX only). */
+const MIN_FIND_PATH_LOADING_MS = 5000;
+
+/** Stable fingerprint of current find-path inputs (waypoints, mode, options, constraints). */
+function getFindPathInputFingerprintForNextRun() {
+  const plain = getPlainAppState();
+  const wps = Array.isArray(plain.waypoints) ? plain.waypoints : [];
+  const waypointElements = wps.map((wp) => (wp && wp.element) || "");
+  const forceFullMetamodel = !!state._pathfindFullMetamodelOnce;
+  const opt = getSearchPathOptions({ forceFullMetamodel });
+  const allowed = opt.allowedRelationshipCodes;
+  const optsForJson = {
+    ...opt,
+    allowedRelationshipCodes:
+      allowed instanceof Set ? [...allowed].sort() : allowed,
+  };
+  return JSON.stringify({
+    waypointElements,
+    selectionMode: state.selectionMode,
+    forceFullMetamodelOnce: forceFullMetamodel,
+    opts: optsForJson,
+    edgeConstraints: normalizedEdgeConstraintsFromState(),
+  });
+}
+
+/** Wave-style label for #find-path-btn while pathfinding runs (per-character translateY loop). */
+function findPathButtonWaveHtml(visibleLabel) {
+  const text = visibleLabel || "Finding…";
+  const chars = [...text];
+  const inner = chars
+    .map((ch, i) => {
+      const esc =
+        ch === "&"
+          ? "&amp;"
+          : ch === "<"
+            ? "&lt;"
+            : ch === ">"
+              ? "&gt;"
+              : ch === '"'
+                ? "&quot;"
+                : ch;
+      return `<span class="find-path-btn__wave-char" style="--wave-i:${i}">${esc}</span>`;
+    })
+    .join("");
+  return `<span class="find-path-btn__wave-label" aria-hidden="true">${inner}</span>`;
+}
+
+function setLoading(on, label = "", opts = {}) {
+  const useWave = !!opts.wave;
   state.loading = !!on;
   const bar = document.getElementById('loading-bar');
   if (bar) bar.style.display = on ? 'block' : 'none';
@@ -3388,15 +5636,51 @@ function setLoading(on, label = "") {
   const clearBtn = document.getElementById('clear-all-btn');
   if (btn) {
     if (on) {
-      btn.dataset.prevText = btn.textContent;
-      btn.textContent = label || "Working…";
+      const prev = (btn.textContent || "").trim();
+      btn.dataset.prevText = prev || "Find Path";
+      const waveLabel = label || "Finding…";
+      if (useWave) {
+        btn.innerHTML = findPathButtonWaveHtml(waveLabel);
+      } else {
+        btn.textContent = waveLabel;
+      }
+      btn.setAttribute("aria-busy", "true");
+      btn.setAttribute("aria-label", "Finding path");
+      btn.classList.toggle("find-path-btn--wave-active", useWave);
       btn.disabled = true;
     } else {
+      btn.classList.remove("find-path-btn--wave-active");
+      btn.removeAttribute("aria-busy");
+      btn.removeAttribute("aria-label");
       if (btn.dataset.prevText) btn.textContent = btn.dataset.prevText;
+      delete btn.dataset.prevText;
       checkReady();
     }
   }
   if (clearBtn) clearBtn.disabled = !!on;
+}
+
+/**
+ * Call when pathfinding work has finished (success, no path, or early exit): show "Find Path" again
+ * and stop the wave, even if a minimum UI delay is still pending before other cleanup runs.
+ */
+function endFindPathButtonLoadingUi() {
+  state.loading = false;
+  const bar = document.getElementById("loading-bar");
+  if (bar) bar.style.display = "none";
+  const clearBtn = document.getElementById("clear-all-btn");
+  if (clearBtn) clearBtn.disabled = false;
+  const btn = document.getElementById("find-path-btn");
+  if (btn) {
+    btn.classList.remove("find-path-btn--wave-active");
+    btn.removeAttribute("aria-busy");
+    btn.removeAttribute("aria-label");
+    if (btn.dataset.prevText) {
+      btn.textContent = btn.dataset.prevText;
+      delete btn.dataset.prevText;
+    }
+    checkReady();
+  }
 }
 
 // ── Graph ───────────────────────────────────────────────────────────────────
@@ -3410,9 +5694,93 @@ function rebuildGraph() {
 
 // ── Viewpoint ───────────────────────────────────────────────────────────────
 
+/**
+ * Fills #viewpoint-select from {@link getViewpointSelectGroups} and {@link VIEWPOINTS}
+ * so every catalogued viewpoint stays visible without duplicating labels in index.html.
+ * Viewpoints missing from the grouped list are appended at the end (ungrouped) as a safety net.
+ */
+function refreshViewpointSelectFromCatalog() {
+  const sel = document.getElementById("viewpoint-select");
+  if (!sel || typeof VIEWPOINTS === "undefined" || !VIEWPOINTS) return;
+
+  const prev = String(sel.value || "");
+  sel.replaceChildren();
+
+  const allOpt = document.createElement("option");
+  allOpt.value = "";
+  allOpt.textContent = "All elements";
+  sel.appendChild(allOpt);
+
+  const catalogued = new Set();
+  const groups =
+    typeof getViewpointSelectGroups === "function" ? getViewpointSelectGroups() : null;
+
+  if (Array.isArray(groups)) {
+    for (const g of groups) {
+      const keys = g?.keys;
+      const groupLabel = g?.label;
+      if (!Array.isArray(keys) || keys.length === 0) continue;
+      const og = document.createElement("optgroup");
+      og.label = String(groupLabel || "").trim() || "Viewpoints";
+      for (const rawKey of keys) {
+        const key = String(rawKey || "").trim();
+        if (!key) continue;
+        const vp = VIEWPOINTS[key];
+        if (!vp) continue;
+        catalogued.add(key);
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = vp.name || key;
+        og.appendChild(opt);
+      }
+      if (og.childElementCount > 0) sel.appendChild(og);
+    }
+  }
+
+  for (const key of Object.keys(VIEWPOINTS)) {
+    if (catalogued.has(key)) continue;
+    const vp = VIEWPOINTS[key];
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = vp?.name || key;
+    sel.appendChild(opt);
+  }
+
+  const hasPrev = prev !== "" && [...sel.options].some((o) => o.value === prev);
+  sel.value = hasPrev ? prev : "";
+
+  const vpCount = Object.keys(VIEWPOINTS).length;
+  const optionCount = [...sel.options].filter((o) => o.value).length;
+  if (optionCount !== vpCount) {
+    console.error(
+      "[viewpoints] Viewpoint dropdown out of sync:",
+      optionCount,
+      "options vs",
+      vpCount,
+      "VIEWPOINTS entries"
+    );
+  }
+
+  copyViewpointSelectOptionsToHeader();
+  updateViewpointHelpUi();
+}
+
 window.onViewpointChange = function() {
-  const key = document.getElementById('viewpoint-select').value;
-  state.viewpoint = key || null;
+  const main = document.getElementById("viewpoint-select");
+  const head = document.getElementById("header-viewpoint-select");
+  if (main && head) {
+    if (document.activeElement === head) {
+      main.value = head.value;
+    } else {
+      head.value = main.value;
+    }
+  }
+  const key = main ? String(main.value || "").trim() : "";
+  if (window.store) {
+    window.store.dispatch("SET_VIEWPOINT", key || null);
+  } else {
+    state.viewpoint = key || null;
+  }
   state._perspectiveSuggestFullMetamodel = false;
 
   if (key && VIEWPOINTS[key] && !VIEWPOINTS[key].allElements) {
@@ -3421,15 +5789,20 @@ window.onViewpointChange = function() {
     state.allowedElements = null;
   }
 
+  state._viewpointClearNotice = null;
+
   // If the viewpoint makes the current selections invalid, clear them.
   // (This also makes the layer selector reflect only layers that still have any allowed elements.)
+  const removed = [];
   const layersWithAllowed = getLayersWithAllowedElements(state.allowedElements);
   for (const wp of state.waypoints) {
     if (!wp) continue;
     if (wp.element && state.allowedElements && !state.allowedElements.has(wp.element)) {
+      removed.push(wp.element);
       wp.element = null;
     }
     if (wp.layer && state.allowedElements && !layersWithAllowed.has(wp.layer)) {
+      if (wp.element) removed.push(wp.element);
       wp.layer = null;
       wp.element = null;
     }
@@ -3439,7 +5812,37 @@ window.onViewpointChange = function() {
   // Rerender all waypoint element pickers to reflect dimmed elements
   renderWaypointChain();
   updatePathOptionsTriggerSummary();
+  updateViewpointHelpUi();
+  checkReady();
+
+  const hadSegments = Array.isArray(state.segments);
+  const vpDisplayName =
+    key && typeof VIEWPOINTS !== "undefined" && VIEWPOINTS[key]
+      ? VIEWPOINTS[key].name || key
+      : key || "Current viewpoint";
+
+  if (hadSegments && isPathSearchInputReady()) {
+    window.dispatch({ type: "FIND_PATH", reason: "viewpoint-change" });
+  } else if (hadSegments && !isPathSearchInputReady()) {
+    if (removed.length) {
+      state._viewpointClearNotice = {
+        removed: [...new Set(removed)],
+        viewpointName: vpDisplayName,
+        viewpointKey: key || null,
+      };
+    }
+    invalidatePathSearchResults();
+  } else if (!hadSegments && removed.length) {
+    state._viewpointClearNotice = {
+      removed: [...new Set(removed)],
+      viewpointName: vpDisplayName,
+      viewpointKey: key || null,
+    };
+    scheduleRenderResults();
+  }
+
   schedulePersistSession();
+  syncUrlFromState({ push: true });
 };
 
 function getLayersWithAllowedElements(allowedElements) {
@@ -3458,7 +5861,17 @@ function getLayersWithAllowedElements(allowedElements) {
 // ── Waypoint management ─────────────────────────────────────────────────────
 
 function addWaypointSlot(index, label) {
-  state.waypoints[index] = state.waypoints[index] ?? { layer: null, element: null, label };
+  const wps = getPlainAppState().waypoints;
+  const existing = Array.isArray(wps) ? wps[index] : undefined;
+  if (existing && typeof existing === "object") {
+    state.waypoints[index] = {
+      layer: existing.layer ?? null,
+      element: existing.element ?? null,
+      label: typeof existing.label === "string" ? existing.label : label,
+    };
+    return;
+  }
+  state.waypoints[index] = { layer: null, element: null, label };
 }
 
 function ensureEditingControlsVisible() {
@@ -3503,6 +5916,7 @@ function animateWaypointCardIn(index) {
 
 
 window.addWaypoint = function() {
+  ensurePathControlsVisibleUnlessAlreadyOpen();
   let insertAt = 0;
   if (state.selectionMode === 'set') {
     // Connect Set mode: just add to the end of the list
@@ -3515,6 +5929,19 @@ window.addWaypoint = function() {
   }
   renderWaypointChain();
   animateWaypointCardIn(insertAt);
+  syncUrlFromState({ push: true });
+  // Only add/focus the new waypoint card. Picker opens on explicit click.
+  requestAnimationFrame(() => {
+    const chain = document.getElementById("waypoint-chain");
+    const card = chain?.querySelector(`.waypoint-card[data-waypoint-index="${insertAt}"]`);
+    const trigger = card?.querySelector(".element-trigger");
+    if (card && typeof card.scrollIntoView === "function") {
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (trigger && typeof trigger.focus === "function") {
+      trigger.focus({ preventScroll: true });
+    }
+  });
   return insertAt;
 };
 
@@ -3525,11 +5952,18 @@ window.clearAllElements = function() {
   const endLabel = state.selectionMode === "set" ? "Point" : "End";
   addWaypointSlot(0, baseLabel);
   addWaypointSlot(1, endLabel);
+  state._viewpointClearNotice = null;
   state.segments = null;
   state.pathFailureHints = null;
   state.lastPathIsFallback = false;
   state.lastPathTemporaryRelaxation = null;
   state._relaxOneShotRestore = null;
+  state.edgeConstraintWarning = null;
+  if (window.store && typeof window.store.dispatch === "function") {
+    window.store.dispatch("CLEAR_EDGE_CONSTRAINTS");
+  } else {
+    state.edgeConstraints = [];
+  }
   renderWaypointChain();
   
   // Clear the UI visually
@@ -3542,8 +5976,10 @@ window.clearAllElements = function() {
   if (diagramEl) diagramEl.innerHTML = "";
   hideDiagramNoPathOverlay();
   resetDiagramPanContext();
+  state._diagramNeedsCameraReset = false;
   resetDiagramView();
   if (emptyEl) emptyEl.style.display = 'flex';
+  syncDiagramEmptyPanelCopy();
   updateDiagramEmptyChrome();
   if (tabsEl) tabsEl.style.display = 'none';
   const pathTabsHelp = document.getElementById("path-tabs-help");
@@ -3557,6 +5993,7 @@ window.clearAllElements = function() {
   checkReady();
   updateQuickExamplesVisibility();
   schedulePersistSession();
+  syncUrlFromState({ push: true });
 };
 
 function removeWaypoint(index, { animate = true, suppressSearch = false, after = null } = {}) {
@@ -3566,7 +6003,14 @@ function removeWaypoint(index, { animate = true, suppressSearch = false, after =
     state.waypoints.splice(index, 1);
     renderWaypointChain();
     checkReady();
-    if (!suppressSearch && state.segments) window.dispatch({ type: "FIND_PATH", reason: "remove-waypoint" });
+    if (!suppressSearch && state.segments) {
+      if (isPathSearchInputReady()) {
+        window.dispatch({ type: "FIND_PATH", reason: "remove-waypoint" });
+      } else {
+        invalidatePathSearchResults();
+      }
+    }
+    syncUrlFromState({ push: true });
     if (typeof after === "function") after();
   };
   if (!animate) {
@@ -3576,28 +6020,70 @@ function removeWaypoint(index, { animate = true, suppressSearch = false, after =
   animateWaypointCardOut(index, commit);
 }
 
+/**
+ * Reorder waypoints without mutating the store-backed proxy in-place: splice/swap on `state.waypoints`
+ * emits many INTERNAL_SET_AT_PATH updates and the waypoint editor subscriber can call
+ * renderWaypointChain() mid-mutation (empty/partial #waypoint-chain).
+ */
+function cloneWaypointListForReorder() {
+  const wps = state.waypoints;
+  if (!Array.isArray(wps)) return [];
+  return wps.map((wp) =>
+    wp != null && typeof wp === "object" ? { ...wp } : { layer: null, element: null }
+  );
+}
+
+function commitWaypointListReplace(nextList) {
+  if (!Array.isArray(nextList)) return;
+  if (window.store && typeof window.store.dispatch === "function") {
+    window.store.dispatch("UPDATE_WAYPOINTS", nextList);
+  } else {
+    state.waypoints = nextList;
+  }
+}
+
 function moveWaypoint(index, dir) {
   const j = index + dir;
   if (j < 0 || j >= state.waypoints.length) return;
-  // Only allow moving within the list; keep semantics (start/end) by swapping slots
-  const tmp = state.waypoints[index];
-  state.waypoints[index] = state.waypoints[j];
-  state.waypoints[j] = tmp;
+  const elsBefore = cloneWaypointListForReorder().map((w) => w?.element);
+  const next = cloneWaypointListForReorder();
+  const tmp = next[index];
+  next[index] = next[j];
+  next[j] = tmp;
+  // #region agent log
+  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:moveWaypoint',message:'moveWaypoint commit',data:{hypothesisId:'H_move',index,dir,mode:state.selectionMode,elsBefore,elsNext:next.map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
+  // #endregion
+  commitWaypointListReplace(next);
   renderWaypointChain();
-  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint" });
+  if (state.segments) {
+    if (isPathSearchInputReady()) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint" });
+    else invalidatePathSearchResults();
+  }
 }
 
 function moveWaypointTo(fromIndex, toIndex) {
-  if (fromIndex === toIndex) return;
-  if (fromIndex < 0 || fromIndex >= state.waypoints.length) return;
-  if (toIndex < 0 || toIndex >= state.waypoints.length) return;
-  const [item] = state.waypoints.splice(fromIndex, 1);
-  state.waypoints.splice(toIndex, 0, item);
+  const fi = Math.trunc(Number(fromIndex));
+  const ti = Math.trunc(Number(toIndex));
+  if (fi === ti) return;
+  if (!Number.isInteger(fi) || !Number.isInteger(ti)) return;
+  const len = state.waypoints.length;
+  if (fi < 0 || fi >= len || ti < 0 || ti >= len) return;
+  const next = cloneWaypointListForReorder();
+  const [item] = next.splice(fi, 1);
+  if (item === undefined) return;
+  next.splice(ti, 0, item);
+  commitWaypointListReplace(next);
   renderWaypointChain();
-  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint-to" });
+  if (state.segments) {
+    if (isPathSearchInputReady()) window.dispatch({ type: "FIND_PATH", reason: "move-waypoint-to" });
+    else invalidatePathSearchResults();
+  }
 }
 
 window.swapStartEnd = function() {
+  // #region agent log
+  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:swapStartEnd',message:'swapStartEnd called',data:{hypothesisId:'H_swap',len:state.waypoints.length,mode:state.selectionMode,els:(getPlainAppState().waypoints||[]).map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
+  // #endregion
   if (state.waypoints.length !== 2) return;
   moveWaypoint(0, +1);
 };
@@ -3655,6 +6141,241 @@ function fitPickerPopoverInViewport(anchorEl, popEl) {
 
 let pickerOverlayEscHandler = null;
 let pickerViewportCleanup = null;
+let waypointChainDelegated = false;
+/** >0 while `renderWaypointChain` is mutating the DOM; ignore synthetic `change` on layer selects. */
+let waypointChainRenderDepth = 0;
+let waypointOpenPicker = null;
+let waypointPickerContext = null;
+let waypointDragSession = null;
+/** Pointerdown on `.element-trigger` waits for slop before reorder (keeps click-to-open picker). */
+let waypointDragPending = null;
+let waypointSuppressNextTriggerClick = false;
+
+const WAYPOINT_DRAG_THRESHOLD_PX = 6;
+
+function parseWaypointIndexFromNode(node) {
+  const card = node instanceof Element ? node.closest(".waypoint-card") : null;
+  if (!card) return null;
+  const idx = Number(card.dataset.waypointIndex);
+  return Number.isFinite(idx) ? idx : null;
+}
+
+function clearWaypointDragTargets(chain) {
+  if (!chain) return;
+  chain.querySelectorAll(".waypoint-drop-target").forEach((el) => el.classList.remove("waypoint-drop-target"));
+  chain.querySelectorAll(".waypoint-card.dragging").forEach((el) => el.classList.remove("dragging"));
+}
+
+function ensureWaypointChainInteractionDelegation() {
+  if (waypointChainDelegated) return;
+  waypointChainDelegated = true;
+
+  document.addEventListener("change", (event) => {
+    if (waypointChainRenderDepth > 0) return;
+    const target = event.target;
+    if (!(target instanceof Element) || !target.classList.contains("waypoint-layer-select")) return;
+    const idx = parseWaypointIndexFromNode(target);
+    if (!Number.isFinite(idx)) return;
+    const nextLayer = target.value || null;
+    selectLayer(idx, nextLayer);
+  });
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!waypointSuppressNextTriggerClick) return;
+      const t = event.target;
+      if (t instanceof Element && t.closest("#waypoint-chain .element-trigger")) {
+        waypointSuppressNextTriggerClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+      } else {
+        waypointSuppressNextTriggerClick = false;
+      }
+    },
+    true
+  );
+
+  document.addEventListener("click", (event) => {
+    const rawTarget = event.target;
+    const target =
+      rawTarget instanceof Element
+        ? rawTarget
+        : rawTarget instanceof Node
+          ? rawTarget.parentElement
+          : null;
+    if (!(target instanceof Element)) return;
+
+    const trigger = target.closest(".element-trigger");
+    if (trigger instanceof Element) {
+      const idx = parseWaypointIndexFromNode(trigger);
+      if (!Number.isFinite(idx) || typeof waypointOpenPicker !== "function") return;
+      const layerId = state.waypoints?.[idx]?.layer ?? null;
+      waypointOpenPicker(trigger, idx, layerId);
+      return;
+    }
+
+    const moveBtn = target.closest(".waypoint-move");
+    if (moveBtn instanceof HTMLButtonElement) {
+      const idx = parseWaypointIndexFromNode(moveBtn);
+      if (!Number.isFinite(idx)) return;
+      const action = String(moveBtn.dataset.action || "");
+      // #region agent log
+      fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:waypoint-move-click',message:'waypoint-move click',data:{hypothesisId:'H_click',idx,action,delta:String(moveBtn.dataset.delta||''),mode:state.selectionMode},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
+      if (action === "swap") {
+        window.swapStartEnd();
+        return;
+      }
+      const delta = Number(moveBtn.dataset.delta);
+      if (Number.isFinite(delta) && delta !== 0) {
+        moveWaypoint(idx, delta);
+      }
+      return;
+    }
+
+    const rmBtn = target.closest(".waypoint-remove");
+    if (rmBtn instanceof HTMLButtonElement) {
+      const idx = parseWaypointIndexFromNode(rmBtn);
+      if (!Number.isFinite(idx)) return;
+      removeWaypoint(idx);
+    }
+  });
+
+  document.addEventListener(
+    "dragstart",
+    (event) => {
+      const t = event.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest("#waypoint-chain") && t.closest(".waypoint-card")) {
+        event.preventDefault();
+      }
+    },
+    true
+  );
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const chain = document.getElementById("waypoint-chain");
+    if (!chain || !chain.contains(event.target)) return;
+
+    const handle = event.target.closest(".drag-handle");
+    const trigger = event.target.closest(".element-trigger");
+    if (!handle && !trigger) return;
+
+    const card = (handle || trigger).closest(".waypoint-card");
+    if (!(card instanceof Element)) return;
+    const fromIndex = Number(card.dataset.waypointIndex);
+    if (!Number.isFinite(fromIndex)) return;
+
+    if (trigger && !handle) {
+      waypointDragPending = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        chain,
+        card,
+        fromIndex,
+        captureEl: trigger,
+      };
+      return;
+    }
+
+    event.preventDefault();
+    clearWaypointDragTargets(chain);
+    card.classList.add("dragging");
+
+    waypointDragSession = {
+      pointerId: event.pointerId,
+      fromIndex,
+      chain,
+      activeCard: card,
+      overIndex: null,
+      suppressPickerClickAfter: false,
+    };
+
+    if (typeof handle.setPointerCapture === "function") {
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch (_) {}
+    }
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (waypointDragPending && event.pointerId === waypointDragPending.pointerId) {
+      const dx = event.clientX - waypointDragPending.startX;
+      const dy = event.clientY - waypointDragPending.startY;
+      const th = WAYPOINT_DRAG_THRESHOLD_PX;
+      if (dx * dx + dy * dy >= th * th) {
+        const pending = waypointDragPending;
+        waypointDragPending = null;
+        const { chain, card, fromIndex, captureEl } = pending;
+        event.preventDefault();
+        clearWaypointDragTargets(chain);
+        card.classList.add("dragging");
+        waypointDragSession = {
+          pointerId: event.pointerId,
+          fromIndex,
+          chain,
+          activeCard: card,
+          overIndex: null,
+          suppressPickerClickAfter: true,
+        };
+        if (typeof captureEl.setPointerCapture === "function") {
+          try {
+            captureEl.setPointerCapture(event.pointerId);
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (!waypointDragSession || event.pointerId !== waypointDragSession.pointerId) return;
+    const chain = waypointDragSession.chain;
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    const overCard = under instanceof Element ? under.closest(".waypoint-card") : null;
+    clearWaypointDragTargets(chain);
+    waypointDragSession.activeCard?.classList.add("dragging");
+    if (!(overCard instanceof Element) || !chain.contains(overCard)) {
+      waypointDragSession.overIndex = null;
+      return;
+    }
+    const overIndex = Number(overCard.dataset.waypointIndex);
+    if (!Number.isFinite(overIndex) || overIndex === waypointDragSession.fromIndex) {
+      waypointDragSession.overIndex = null;
+      return;
+    }
+    waypointDragSession.overIndex = overIndex;
+    overCard.classList.add("waypoint-drop-target");
+  });
+
+  const finishPointerDrag = (event) => {
+    if (waypointDragPending && event.pointerId === waypointDragPending.pointerId) {
+      waypointDragPending = null;
+    }
+    if (!waypointDragSession || event.pointerId !== waypointDragSession.pointerId) return;
+    const { chain, fromIndex } = waypointDragSession;
+    let overIndex = waypointDragSession.overIndex;
+    const suppressPickerClickAfter = !!waypointDragSession.suppressPickerClickAfter;
+    clearWaypointDragTargets(chain);
+    waypointDragSession = null;
+
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    const overCard = under instanceof Element ? under.closest(".waypoint-card") : null;
+    if (overCard instanceof Element && chain.contains(overCard)) {
+      const ix = Number(overCard.dataset.waypointIndex);
+      if (Number.isFinite(ix) && ix !== fromIndex) overIndex = ix;
+    }
+
+    if (suppressPickerClickAfter) waypointSuppressNextTriggerClick = true;
+    const willMove = Number.isFinite(overIndex) && overIndex !== fromIndex;
+    if (willMove) {
+      moveWaypointTo(fromIndex, overIndex);
+    }
+  };
+
+  document.addEventListener("pointerup", finishPointerDrag);
+  document.addEventListener("pointercancel", finishPointerDrag);
+}
 
 /** Close the element picker overlay and detach global listeners (resize/scroll/Escape). */
 function teardownPickerOverlay() {
@@ -3676,11 +6397,26 @@ function teardownPickerOverlay() {
 }
 
 function renderWaypointChain() {
-  teardownPickerOverlay();
+  ensureWaypointChainInteractionDelegation();
   const chain = document.getElementById('waypoint-chain');
-  chain.innerHTML = '';
-  let dragFromIndex = null;
+  if (!chain) return;
+  syncWaypointLayersFromElements();
+  waypointChainRenderDepth += 1;
+  try {
+  const animateConstraintReorder =
+    Number.isFinite(state._waypointConstraintReorderAnimUntil) &&
+    Date.now() <= state._waypointConstraintReorderAnimUntil;
   const overlayRoot = document.getElementById('picker-overlay');
+  const restorePicker =
+    !!overlayRoot?.classList.contains("open") &&
+    waypointPickerContext &&
+    Number.isFinite(waypointPickerContext.waypointIdx);
+  const restoreContext = restorePicker ? { ...waypointPickerContext } : null;
+  chain.innerHTML = '';
+  // Store-backed `state.waypoints` is a nested Proxy with a non-array target, so Array.isArray is false
+  // and some Array.prototype methods may not iterate — always snapshot plain rows for this render.
+  const wpsPlain = getPlainAppState().waypoints;
+  const wpsList = Array.isArray(wpsPlain) ? wpsPlain : [];
   const effAllowed = effectiveAllowedElements();
   const layersWithAllowed = getLayersWithAllowedElements(effAllowed);
   const isTopLayout = isLayoutTop();
@@ -3700,11 +6436,12 @@ function renderWaypointChain() {
 
   const LAYER_COLORS = {
     'Motivation': '#dcdcff', 'Strategy': '#e8d4b8', 'Business': '#f5e87a',
-    'Application': '#a8d4a8', 'Technology': '#a0c4e8', 'Physical': '#d4c8a0',
-    'Composite': '#e0e0e0', 'Implementation': '#e8b8b8',
+    'Application': '#BFFFFF', 'Technology': '#c1ffb1',
+    'Composite': '#e0e0e0', 'Implementation': '#FCE4E4',
   };
 
   const closeOverlay = () => {
+    waypointPickerContext = null;
     teardownPickerOverlay();
   };
 
@@ -3712,8 +6449,15 @@ function renderWaypointChain() {
     if (e.key === 'Escape') closeOverlay();
   };
 
-  const openElementOverlay = (anchorEl, waypointIdx, layerId) => {
+  const openElementOverlay = (anchorEl, waypointIdx, layerId, options = {}) => {
     if (!overlayRoot) return;
+    const preservedQuery =
+      options && typeof options.query === "string" ? options.query : String(waypointPickerContext?.query || "");
+    waypointPickerContext = {
+      waypointIdx,
+      layerId: layerId ?? null,
+      query: preservedQuery,
+    };
     closePathOptionsOverlay();
     teardownPickerOverlay();
     overlayRoot.classList.add('open');
@@ -3763,6 +6507,7 @@ function renderWaypointChain() {
     search.type = 'search';
     search.className = 'visual-picker-search';
     search.placeholder = 'Search all layers…';
+    search.value = preservedQuery;
     body.appendChild(search);
 
     const grid = document.createElement('div');
@@ -3788,21 +6533,29 @@ function renderWaypointChain() {
     const layerList = typeof LAYERS !== "undefined" && Array.isArray(LAYERS) ? LAYERS : [];
     const layerRank = new Map(layerList.map((l, i) => [l.id, i]));
 
-    /** When a layer is not chosen but a strict viewpoint is active, show the full viewpoint palette (sorted). */
-    const viewpointBrowseSorted =
-      !filterLayerId && effAllowed && effAllowed.size
-        ? [...effAllowed].sort((a, b) => {
-            const la = ELEMENTS[a]?.layer;
-            const lb = ELEMENTS[b]?.layer;
-            const dr = (layerRank.get(la) ?? 999) - (layerRank.get(lb) ?? 999);
-            if (dr) return dr;
-            const ia = ASPECT_ORDER.indexOf(ELEMENTS[a]?.aspect);
-            const ib = ASPECT_ORDER.indexOf(ELEMENTS[b]?.aspect);
-            const ar = (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
-            if (ar) return ar;
-            return a.localeCompare(b);
-          })
-        : null;
+    const sortElementNamesForBrowse = (names) =>
+      [...names].sort((a, b) => {
+        const la = ELEMENTS[a]?.layer;
+        const lb = ELEMENTS[b]?.layer;
+        const dr = (layerRank.get(la) ?? 999) - (layerRank.get(lb) ?? 999);
+        if (dr) return dr;
+        const ia = ASPECT_ORDER.indexOf(ELEMENTS[a]?.aspect);
+        const ib = ASPECT_ORDER.indexOf(ELEMENTS[b]?.aspect);
+        const ar = (ia >= 0 ? ia : 999) - (ib >= 0 ? ib : 999);
+        if (ar) return ar;
+        return a.localeCompare(b);
+      });
+
+    /**
+     * When no waypoint layer is chosen: show everything valid for the active viewpoint.
+     * Strict viewpoints → allowed set; all-elements viewpoints (allowedElements null) → full metamodel.
+     */
+    const viewpointBrowseSorted = (() => {
+      if (filterLayerId) return null;
+      if (effAllowed && effAllowed.size) return sortElementNamesForBrowse(effAllowed);
+      if (!effAllowed) return sortElementNamesForBrowse(Object.keys(ELEMENTS));
+      return null;
+    })();
 
     const renderGrid = () => {
       const raw = String(search.value || "").replace(/\u200b/g, "").trim();
@@ -3814,15 +6567,20 @@ function renderWaypointChain() {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'element-card' +
-          (state.waypoints[waypointIdx]?.element === name ? ' selected' : '') +
+          (wpsList[waypointIdx]?.element === name ? ' selected' : '') +
           (!allowed ? ' disabled' : '');
         btn.disabled = !allowed;
 
         // The tile itself is the ArchiMate element shape with label inside.
-        btn.innerHTML = (window.getElementPickerTileSvg
-          ? window.getElementPickerTileSvg(name, 240, 72)
-          : (window.getElementMiniSvg ? window.getElementMiniSvg(name, 56) : '')
-        );
+        // If renderer helpers fail, fall back to plain text so picker remains usable.
+        try {
+          btn.innerHTML = (window.getElementPickerTileSvg
+            ? window.getElementPickerTileSvg(name, 240, 72)
+            : (window.getElementMiniSvg ? window.getElementMiniSvg(name, 56) : '')
+          );
+        } catch (_) {
+          btn.innerHTML = `<span class="element-card-fallback-label">${escapeHtml(name)}</span>`;
+        }
 
         btn.onclick = () => {
           selectElement(waypointIdx, name);
@@ -3910,9 +6668,8 @@ function renderWaypointChain() {
         let hint;
         if (q) {
           hint = 'No matching elements.';
-        } else if (!filterLayerId && !(effAllowed && effAllowed.size)) {
-          hint =
-            'Type above to search all layers, or choose a layer on the waypoint to browse by category.';
+        } else if (!filterLayerId && effAllowed && effAllowed.size === 0) {
+          hint = 'This viewpoint has no elements to browse.';
         } else {
           hint = 'No elements available.';
         }
@@ -3922,6 +6679,9 @@ function renderWaypointChain() {
     };
 
     search.addEventListener("input", () => {
+      if (waypointPickerContext && waypointPickerContext.waypointIdx === waypointIdx) {
+        waypointPickerContext.query = String(search.value || "");
+      }
       renderGrid();
       scheduleFit();
     });
@@ -3929,16 +6689,25 @@ function renderWaypointChain() {
     pop.appendChild(body);
     overlayRoot.appendChild(pop);
 
-    renderGrid();
+    try {
+      renderGrid();
+    } catch (_err) {
+      grid.innerHTML = "";
+      const empty = document.createElement("div");
+      empty.className = "element-grid-empty";
+      empty.textContent = "Picker failed to render visuals. Type to search, then select from plain labels.";
+      grid.appendChild(empty);
+    }
     scheduleFit();
-    setTimeout(() => search.focus(), 0);
+    // Do not auto-focus search: keep visual picker cards front-and-center.
   };
+  waypointOpenPicker = openElementOverlay;
 
-  state.waypoints.forEach((wp, i) => {
+  wpsList.forEach((wp, i) => {
     const isFirst = i === 0;
-    const isLast  = i === state.waypoints.length - 1;
+    const isLast  = i === wpsList.length - 1;
     const isSetMode = state.selectionMode === 'set';
-    const letter = isSetMode ? String(i + 1) : (isFirst ? 'A' : isLast ? String.fromCharCode(65 + state.waypoints.length - 1) : String.fromCharCode(65 + i));
+    const letter = isSetMode ? String(i + 1) : (isFirst ? 'A' : isLast ? String.fromCharCode(65 + wpsList.length - 1) : String.fromCharCode(65 + i));
     // Connect-set: numbered badge is enough ("1", "2", …). Ordered path: keep Start / End / Via.
     const roleLabel = isSetMode ? '' : (isFirst ? 'Start' : isLast ? 'End' : `Via ${i}`);
 
@@ -3954,37 +6723,14 @@ function renderWaypointChain() {
     const card = document.createElement('div');
     card.className = 'waypoint-card' + (isTopLayout ? ' waypoint-card--compact' : '');
     card.style.cssText = 'border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface)';
-    card.setAttribute('draggable', 'true');
+    if (animateConstraintReorder) {
+      card.style.transition = "transform 180ms ease, box-shadow 180ms ease";
+      card.style.boxShadow = "0 0 0 1px rgba(59,130,246,0.35)";
+      requestAnimationFrame(() => {
+        card.style.boxShadow = "";
+      });
+    }
     card.dataset.waypointIndex = String(i);
-    card.addEventListener('dragstart', (e) => {
-      dragFromIndex = i;
-      card.classList.add('dragging');
-      try {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', String(i));
-      } catch (_) {}
-    });
-    card.addEventListener('dragend', () => {
-      dragFromIndex = null;
-      card.classList.remove('dragging');
-      [...chain.querySelectorAll('.waypoint-drop-target')].forEach(el => el.classList.remove('waypoint-drop-target'));
-    });
-    card.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      card.classList.add('waypoint-drop-target');
-      try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
-    });
-    card.addEventListener('dragleave', () => card.classList.remove('waypoint-drop-target'));
-    card.addEventListener('drop', (e) => {
-      e.preventDefault();
-      card.classList.remove('waypoint-drop-target');
-      let from = dragFromIndex;
-      try {
-        const dt = e.dataTransfer.getData('text/plain');
-        if (dt !== '') from = Number(dt);
-      } catch (_) {}
-      if (Number.isFinite(from)) moveWaypointTo(from, i);
-    });
 
     // Card header row: drag handle, subtle index, layer (same row), optional Start/End/Via, actions
     const header = document.createElement('div');
@@ -3995,6 +6741,7 @@ function renderWaypointChain() {
     handle.className = 'drag-handle';
     handle.title = 'Drag to reorder';
     handle.textContent = '⋮⋮';
+    handle.dataset.dragHandle = "1";
     header.appendChild(handle);
 
     const indexEl = document.createElement('span');
@@ -4027,8 +6774,6 @@ function renderWaypointChain() {
       layerSel.appendChild(opt);
     });
 
-    layerSel.onchange = () => selectLayer(i, layerSel.value || null);
-
     if (wp.layer) {
       layerSel.style.background = LAYER_COLORS[wp.layer] || 'var(--surface-2)';
       const full = LAYERS.find((l) => l.id === wp.layer);
@@ -4042,40 +6787,43 @@ function renderWaypointChain() {
 
     // Reorder controls
     const canMoveUp = i > 0;
-    const canMoveDown = i < state.waypoints.length - 1;
-    const isTwoOnly = state.waypoints.length === 2;
+    const canMoveDown = i < wpsList.length - 1;
+    const isTwoOnly = wpsList.length === 2;
 
     if (!isSetMode && isTwoOnly && (isFirst || isLast)) {
       const swapBtn = document.createElement('button');
+      swapBtn.type = "button";
       swapBtn.className = 'waypoint-move';
       swapBtn.title = 'Swap Start and End';
       swapBtn.textContent = isTopLayout ? '⇄' : '⇅';
-      swapBtn.onclick = () => window.swapStartEnd();
+      swapBtn.dataset.action = "swap";
       header.appendChild(swapBtn);
     } else {
       const upBtn = document.createElement('button');
+      upBtn.type = "button";
       upBtn.className = 'waypoint-move';
       upBtn.title = isTopLayout ? 'Move earlier (left in chain)' : 'Move up';
       upBtn.textContent = isTopLayout ? '←' : '↑';
       upBtn.disabled = !canMoveUp;
-      upBtn.onclick = () => moveWaypoint(i, -1);
+      upBtn.dataset.delta = "-1";
       header.appendChild(upBtn);
 
       const downBtn = document.createElement('button');
+      downBtn.type = "button";
       downBtn.className = 'waypoint-move';
       downBtn.title = isTopLayout ? 'Move later (right in chain)' : 'Move down';
       downBtn.textContent = isTopLayout ? '→' : '↓';
       downBtn.disabled = !canMoveDown;
-      downBtn.onclick = () => moveWaypoint(i, +1);
+      downBtn.dataset.delta = "1";
       header.appendChild(downBtn);
     }
 
     // Allow deleting any point as long as 2 remain (applies to both modes).
-    if (state.waypoints.length > 2) {
+    if (wpsList.length > 2) {
       const rmBtn = document.createElement('button');
+      rmBtn.type = "button";
       rmBtn.className = 'waypoint-remove';
       rmBtn.textContent = '×';
-      rmBtn.onclick = () => removeWaypoint(i);
       header.appendChild(rmBtn);
     }
 
@@ -4089,14 +6837,23 @@ function renderWaypointChain() {
       const trigger = document.createElement('button');
       trigger.type = 'button';
       trigger.className = 'element-trigger';
+      trigger.setAttribute('draggable', 'false');
 
       const left = document.createElement('span');
       left.className = 'left';
       const iconWrap = document.createElement('span');
       iconWrap.className = 'element-icon';
-      iconWrap.innerHTML = wp.element && window.getElementPickerTileSvg
-        ? window.getElementPickerTileSvg(wp.element, tileSvgW, tileSvgH)
-        : (wp.element && window.getElementMiniSvg ? window.getElementMiniSvg(wp.element, tileMini) : '');
+      if (wp.element) {
+        try {
+          iconWrap.innerHTML = window.getElementPickerTileSvg
+            ? window.getElementPickerTileSvg(wp.element, tileSvgW, tileSvgH)
+            : window.getElementMiniSvg
+              ? window.getElementMiniSvg(wp.element, tileMini)
+              : '';
+        } catch (_) {
+          iconWrap.innerHTML = `<span class="element-card-fallback-label">${escapeHtml(String(wp.element))}</span>`;
+        }
+      }
       left.appendChild(iconWrap);
 
       const name = document.createElement('span');
@@ -4114,8 +6871,6 @@ function renderWaypointChain() {
         trigger.removeAttribute('aria-label');
         if (wp.element) {
           name.textContent = wp.element;
-        } else if (!wp.layer && !(effAllowed && effAllowed.size)) {
-          name.textContent = 'Type to search, or pick layer…';
         } else {
           name.textContent = 'Select element…';
         }
@@ -4128,16 +6883,34 @@ function renderWaypointChain() {
       chev.textContent = '▾';
       trigger.appendChild(chev);
 
-      trigger.onclick = () => openElementOverlay(trigger, i, wp.layer ?? null);
       body.appendChild(trigger);
       card.appendChild(body);
     }
     chain.appendChild(card);
   });
 
+  if (restoreContext) {
+    const restoreIndex = restoreContext.waypointIdx;
+    const restoreCard = chain.querySelector(`.waypoint-card[data-waypoint-index="${restoreIndex}"]`);
+    const restoreTrigger = restoreCard?.querySelector(".element-trigger");
+    if (restoreTrigger instanceof Element) {
+      const restoreLayer = wpsList?.[restoreIndex]?.layer ?? restoreContext.layerId ?? null;
+      requestAnimationFrame(() => {
+        if (waypointOpenPicker) {
+          waypointOpenPicker(restoreTrigger, restoreIndex, restoreLayer, { query: restoreContext.query || "" });
+        }
+      });
+    } else {
+      closeOverlay();
+    }
+  }
+
   checkReady();
   updateQuickExamplesVisibility();
   schedulePersistSession();
+  } finally {
+    waypointChainRenderDepth -= 1;
+  }
 }
 
 function updatePathModeHint() {
@@ -4165,7 +6938,7 @@ function updateQuickExamplesVisibility() {
   const showRow = document.getElementById("quick-examples-show-row");
   const hideBtn = document.getElementById("quick-examples-hide-btn");
   if (!block) return;
-  const picked = state.waypoints.filter(wp => wp?.element).length;
+  const picked = (getPlainAppState().waypoints || []).filter((wp) => wp?.element).length;
   const shouldAutoHide = picked >= 2;
   const veteran = hasQuickExamplesVeteranPref();
   if (shouldAutoHide) markQuickExamplesVeteran();
@@ -4182,6 +6955,11 @@ function updateQuickExamplesVisibility() {
 }
 
 window.showQuickExamplesPanel = function () {
+  const root = document.getElementById("app-layout");
+  const prefs = readLayoutPrefs();
+  if (prefs?.collapsed || root?.classList.contains("panel-collapsed")) {
+    openEditPathControls();
+  }
   state.forceShowQuickExamples = true;
   updateQuickExamplesVisibility();
   schedulePersistSession();
@@ -4195,7 +6973,15 @@ window.hideQuickExamplesPanel = function () {
 };
 
 function selectLayer(waypointIdx, layerId) {
-  state.waypoints[waypointIdx].layer   = layerId || null;
+  const plain = getPlainAppState().waypoints;
+  const cur = Array.isArray(plain) ? plain[waypointIdx] : null;
+  const next = layerId || null;
+  if (cur && typeof cur === "object") {
+    if ((cur.layer ?? null) === next) return;
+    const implied = cur.element ? normalizeWaypointLayerForElement(cur.element) : null;
+    if (cur.element && implied === next) return;
+  }
+  state.waypoints[waypointIdx].layer = next;
   state.waypoints[waypointIdx].element = null;
   renderWaypointChain();
 }
@@ -4208,10 +6994,25 @@ function selectElement(waypointIdx, elementName) {
   renderWaypointChain();
 }
 
+/** Same rule as the Find Path button: set mode needs ≥2 picked elements; ordered needs every slot filled. */
+function isPathSearchInputReady() {
+  const plain = getPlainAppState();
+  const wps = plain.waypoints || [];
+  const picked = wps.filter((wp) => wp?.element).length;
+  return plain.selectionMode === "set"
+    ? picked >= 2
+    : wps.every((wp) => wp.element);
+}
+
 function checkReady() {
-  const picked = state.waypoints.filter(wp => wp?.element).length;
-  const minOk = state.selectionMode === 'set' ? picked >= 2 : state.waypoints.every(wp => wp.element);
-  document.getElementById('find-path-btn').disabled = !minOk;
+  if (normalizeAppMode(state.appMode) === "study") {
+    const btn = document.getElementById("find-path-btn");
+    if (btn) btn.disabled = true;
+    return;
+  }
+  const minOk = isPathSearchInputReady();
+  const btn = document.getElementById("find-path-btn");
+  if (btn) btn.disabled = !minOk;
 }
 
 // ── Mode & Derived toggles ──────────────────────────────────────────────────
@@ -4283,7 +7084,10 @@ window.cyclePathFlow = function () {
     localStorage.setItem(getPathFlowStorageKey(), next);
   } catch (_) {}
   updatePathFlowButton();
-  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+  if (state.segments) {
+    // Use the same FLIP animation as path-tab switches (renderWithAnimation). Camera reset would skip it.
+    window.dispatch({ type: "RENDER_RESULTS" });
+  }
   schedulePersistSession();
 };
 
@@ -4297,7 +7101,11 @@ window.setDerived = function(include) {
   document.getElementById('btn-direct').classList.toggle('active',  !include);
   document.getElementById('btn-derived').classList.toggle('active',  include);
   rebuildGraph();
-  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "set-derived" });
+  if (normalizeAppMode(state.appMode) === "study") {
+    window.dispatch({ type: "RENDER_RESULTS" });
+  } else if (state.segments) {
+    window.dispatch({ type: "FIND_PATH", reason: "set-derived" });
+  }
   updatePathOptionsTriggerSummary();
   schedulePersistSession();
 };
@@ -4335,9 +7143,35 @@ function reorderWaypointsToMatchLastSolverChainIfPossible() {
     byEl.set(el, wp);
   }
 
-  const reordered = chain.map((el) => byEl.get(el));
+  const reordered = chain.map((el) => {
+    const wp = byEl.get(el);
+    if (!wp || typeof wp !== "object") return null;
+    const layerFromEl = normalizeWaypointLayerForElement(el);
+    return {
+      layer: layerFromEl ?? wp.layer ?? null,
+      element: wp.element ?? null,
+      label: typeof wp.label === "string" ? wp.label : "Point",
+    };
+  });
   if (reordered.some((wp) => !wp)) return;
   state.waypoints = reordered;
+}
+
+function requestWaypointConstraintReorderAnimation() {
+  state._waypointConstraintReorderAnimUntil = Date.now() + 280;
+}
+
+function syncWaypointSlotsToSolverChainIfPossible() {
+  const before = (state.waypoints || []).map((wp) => wp?.element || "");
+  reorderWaypointsToMatchLastSolverChainIfPossible();
+  const after = (state.waypoints || []).map((wp) => wp?.element || "");
+  // #region agent log
+  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:syncWaypointSlotsToSolverChainIfPossible',message:'sync solver chain vs panel',data:{hypothesisId:'H_sync',mode:state.selectionMode,before:before.join('|'),after:after.join('|'),changed:before.join('|')!==after.join('|')},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
+  // #endregion
+  if (before.join("|") !== after.join("|")) {
+    requestWaypointConstraintReorderAnimation();
+    renderWaypointChain();
+  }
 }
 
 window.setSelectionMode = function(mode) {
@@ -4353,7 +7187,7 @@ window.setSelectionMode = function(mode) {
   // In set mode, there is no Start/End semantics; allow removing any point.
   // Keep existing selections as-is.
   if (state.selectionMode === "ordered" && prev === "set") {
-    reorderWaypointsToMatchLastSolverChainIfPossible();
+    syncWaypointSlotsToSolverChainIfPossible();
   }
   renderWaypointChain();
 
@@ -4366,41 +7200,107 @@ window.setSelectionMode = function(mode) {
 
 window.loadExample = function(waypoints) {
   // waypoints = [{layer, element}, ...]
+  ensurePathControlsVisibleUnlessAlreadyOpen();
+  if (window.store && typeof window.store.dispatch === "function") {
+    window.store.dispatch("CLEAR_EDGE_CONSTRAINTS");
+  } else {
+    state.edgeConstraints = [];
+  }
   state.waypoints = waypoints.map(wp => ({ layer: wp.layer, element: wp.element }));
   renderWaypointChain();
   window.dispatch({ type: "FIND_PATH", reason: "load-example" });
   schedulePersistSession();
+  syncUrlFromState({ push: true });
 };
 
 // ── Find Path ───────────────────────────────────────────────────────────────
 
 window.findPath = function(opts = {}) {
-  const runId = Number.isFinite(opts?.runId) ? opts.runId : state._findRunId;
-  const picked = state.waypoints.map(wp => wp.element).filter(Boolean);
+  if (normalizeAppMode(state.appMode) === "study") {
+    return;
+  }
+  // Button uses `onclick="findPath()"` (no runId). `dispatch({ type: "FIND_PATH" })` bumps
+  // `_findRunId` then calls `findPath({ runId })`. If we reuse a stale `_findRunId`, the
+  // setTimeout body can hit `runId !== state._findRunId` and return without rendering.
+  let runId;
+  if (Number.isFinite(opts?.runId)) {
+    runId = opts.runId;
+  } else {
+    state._findRunId = (state._findRunId | 0) + 1;
+    runId = state._findRunId;
+  }
+  // Same as renderWaypointChain: `state.waypoints` is a nested Proxy with a non-array target,
+  // so Array methods may not iterate — read plain rows from the store.
+  const _plainWps0 = getPlainAppState().waypoints;
+  const wpsForPick = Array.isArray(_plainWps0) ? _plainWps0 : [];
+  const picked = wpsForPick.map((wp) => wp?.element).filter(Boolean);
   const forceFullMetamodel = !!state._pathfindFullMetamodelOnce;
   state.lastAutoOrdered = false;
+  state.edgeConstraintWarning = null;
+
+  if (!isPathSearchInputReady()) {
+    invalidatePathSearchResults();
+    checkReady();
+    return;
+  }
+
+  let findPathCoalesce = false;
+  if (window.store && typeof window.store.beginUndoCoalesce === "function") {
+    if (typeof window.store.abortUndoCoalesce === "function") {
+      window.store.abortUndoCoalesce();
+    }
+    window.store.beginUndoCoalesce();
+    findPathCoalesce = true;
+  }
+
+  const findReason = (opts && typeof opts.reason === "string" && opts.reason) || "";
+  /** Same waypoints + constraint tweak: keep hop disambiguation; full find clears it. */
+  const preserveUserChoices = findReason === "edge-flip";
 
   trackEvent("find_path", {
     selectionMode: state.selectionMode,
     includeDerived: !!state.includeDerived,
     allowAssociationFallback: !!state.allowAssociationFallback,
     waypointCount: picked.length,
-    reason: (opts && typeof opts.reason === "string" && opts.reason) || undefined,
+    reason: findReason || undefined,
   });
-  
-  window.state.userChoices = {}; // Reset decisions for the new path
-  
-  // ... rest of function
+
+  if (!preserveUserChoices) {
+    window.state.userChoices = {}; // Reset decisions for the new path
+  }
+
+  const fpThisRun = getFindPathInputFingerprintForNextRun();
+  const hadPriorCompletedFind = !!state._findPathCompletedOnce;
+  const inputsChangedFromLast =
+    hadPriorCompletedFind &&
+    state._lastFindPathInputKey != null &&
+    state._lastFindPathInputKey !== fpThisRun;
+  /* Top-bar layout: always use the wave label (sidebar skips wave only on the very first find). */
+  const loadingWave = hadPriorCompletedFind || isLayoutTop();
+  const minFindPathLoadingMs =
+    hadPriorCompletedFind && inputsChangedFromLast ? MIN_FIND_PATH_LOADING_MS : 0;
 
   try {
-    setLoading(true, "Finding…");
-    state.userChoices = {}; // Clear previous decisions
+    const tFindPathLoadingStart = performance.now();
+    setLoading(true, "Finding…", { wave: loadingWave });
+    if (!preserveUserChoices) {
+      state.userChoices = {}; // Clear previous decisions
+    }
     // Allow browser to paint loading state before doing BFS work.
     setTimeout(() => {
     let usedFullMetamodelOnce = false;
+    let findPathRunApplied = false;
     try {
     // If a newer run started while we were waiting for the UI to paint, ignore this callback.
     if (runId !== state._findRunId) return;
+    if (!isPathSearchInputReady()) {
+      invalidatePathSearchResults();
+      checkReady();
+      return;
+    }
+    const _plainWps = getPlainAppState().waypoints;
+    const wpsPlain = Array.isArray(_plainWps) ? _plainWps : [];
+    const picked = wpsPlain.map((wp) => wp?.element).filter(Boolean);
     if (!state._relaxOneShotRestore) {
       state.lastPathTemporaryRelaxation = null;
     }
@@ -4408,14 +7308,21 @@ window.findPath = function(opts = {}) {
     let segs = [];
     let pathIsFallback = false;
     let chainForExplain = null;
+    let edgeConstraintsRelaxed = false;
+    let relaxedConstraintCount = 0;
 
-    state.userChoices = {}; // Clear previous decisions
+    if (!preserveUserChoices) {
+      state.userChoices = {}; // Clear previous decisions
+    }
     state.lastAutoOrderMetrics = null;
     const searchGraph = forceFullMetamodel
       ? buildGraph({ allowedElements: null, includeDerived: state.includeDerived })
       : state.graph;
     usedFullMetamodelOnce = forceFullMetamodel;
-    const searchOptions = getSearchPathOptions({ forceFullMetamodel });
+    const searchOptions = {
+      ...getSearchPathOptions({ forceFullMetamodel }),
+      edgeConstraints: normalizedEdgeConstraintsFromState(),
+    };
     let searchStatus = "no_path";
     if (state.selectionMode === 'set') {
       const res = findBestChainForSet(searchGraph, picked, searchOptions);
@@ -4423,6 +7330,8 @@ window.findPath = function(opts = {}) {
       pathIsFallback = !!res?.isFallback;
       searchStatus = String(res?.searchStatus || "no_path");
       chainForExplain = res?.orderedPoints ?? null;
+      edgeConstraintsRelaxed = !!res?.edgeConstraintsRelaxed;
+      relaxedConstraintCount = Math.max(0, Number(res?.relaxedConstraintCount) || 0);
       state.lastAutoOrdered = true;
       state.lastAutoOrderInput = picked.slice();
       state.lastAutoOrderResult = chainForExplain ? chainForExplain.slice() : null;
@@ -4435,8 +7344,14 @@ window.findPath = function(opts = {}) {
           orderingExact: uniqN <= 8,
         };
       }
+      if (chainForExplain?.length) {
+        // #region agent log
+        fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:findPath-before-sync',message:'set mode before syncWaypointSlots',data:{hypothesisId:'H_sync',findReason,chainPreview:(chainForExplain||[]).slice(0,8)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
+        // #endregion
+        syncWaypointSlotsToSolverChainIfPossible();
+      }
     } else {
-      const waypointNames = state.waypoints.map(wp => wp.element);
+      const waypointNames = wpsPlain.map((wp) => wp.element);
       chainForExplain = waypointNames;
       const fp = findPaths(searchGraph, waypointNames, searchOptions);
       segs = fp.segments;
@@ -4445,6 +7360,18 @@ window.findPath = function(opts = {}) {
     }
 
     let hasNoPath = !segs || segs.length === 0 || segs.some(s => !s.paths || s.paths.length === 0);
+    if (!hasNoPath && edgeConstraintsRelaxed) {
+      if (window.store && typeof window.store.dispatch === "function") {
+        window.store.dispatch("CLEAR_EDGE_CONSTRAINTS");
+      } else {
+        state.edgeConstraints = [];
+      }
+      const count = relaxedConstraintCount > 0 ? relaxedConstraintCount : 1;
+      state.edgeConstraintWarning =
+        count === 1
+          ? "A pinned relationship direction was too restrictive and was unpinned for this path."
+          : `${count} pinned relationship directions were too restrictive and were unpinned for this path.`;
+    }
 
     // Guard against stale async completion (e.g. user toggles options rapidly).
     if (runId !== state._findRunId) return;
@@ -4485,9 +7412,18 @@ window.findPath = function(opts = {}) {
     computeAndSetPathFailureHints(
       hasNoPath,
       picked,
-      state.waypoints.map((wp) => wp.element)
+      wpsPlain.map((wp) => wp.element)
     );
     applyRelaxOneShotRestore();
+
+    if (!hasNoPath) {
+      if (findReason === "edge-flip") {
+        // Refresh breadcrumb chips when connect-set reordering or slot sync changed waypoint order.
+        renderWaypointChain();
+      } else {
+        state._diagramNeedsCameraReset = true;
+      }
+    }
 
     if (window.__pendingSessionExtras) {
       const ex = window.__pendingSessionExtras;
@@ -4503,17 +7439,40 @@ window.findPath = function(opts = {}) {
     }
     // Single render after all state (including session extras) is applied.
     scheduleRenderResults();
+    syncUrlFromState({ push: true });
+    findPathRunApplied = true;
     } finally {
-      applyRelaxOneShotRestore();
-      if (usedFullMetamodelOnce) {
-        state._pathfindFullMetamodelOnce = false;
-        rebuildGraph();
+      if (findPathRunApplied) {
+        state._findPathCompletedOnce = true;
+        state._lastFindPathInputKey = fpThisRun;
       }
-      setLoading(false);
-      schedulePersistSession();
+      endFindPathButtonLoadingUi();
+      const elapsed = performance.now() - tFindPathLoadingStart;
+      const extraWait =
+        minFindPathLoadingMs > 0 ? Math.max(0, minFindPathLoadingMs - elapsed) : 0;
+      const finishFindPathLoading = () => {
+        applyRelaxOneShotRestore();
+        if (usedFullMetamodelOnce) {
+          state._pathfindFullMetamodelOnce = false;
+          rebuildGraph();
+        }
+        schedulePersistSession();
+        if (findPathCoalesce && window.store && typeof window.store.endUndoCoalesce === "function") {
+          try {
+            window.store.endUndoCoalesce();
+          } catch (_) {}
+        }
+      };
+      if (extraWait > 0) setTimeout(finishFindPathLoading, extraWait);
+      else finishFindPathLoading();
     }
     }, 0);
   } catch (e) {
+    if (findPathCoalesce && window.store && typeof window.store.endUndoCoalesce === "function") {
+      try {
+        window.store.endUndoCoalesce();
+      } catch (_) {}
+    }
     console.error('findPath error:', e);
     showError(e.message);
     setLoading(false);
@@ -4541,13 +7500,128 @@ function totalHopsInSegments(segments, pathIdx) {
 
 const ALGORITHM_DETAILS_TOGGLE_SVG = `<svg class="algorithm-details-toggle__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
+/**
+ * HTML table: every composite route alternative with total syntax cost and rank
+ * (same tie order as the help text: cost → hops → fewer inferred hops).
+ * @param {{ all: any[] }|null|undefined} [groupedPre] — reuse clusterPaths() result if already computed
+ */
+function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedPre) {
+  if (!Array.isArray(segments) || segments.length === 0) return "";
+  const grouped =
+    groupedPre ??
+    (typeof clusterPaths === "function" ? clusterPaths(segments, getSearchPathOptions()) : null);
+  const { all } = grouped || {};
+  if (!all?.length) return "";
+
+  const so = getSearchPathOptions();
+  const cogOn = so.cognitiveLoadPenalty !== false;
+  const wLegend = cogOn
+    ? `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Syntax</strong> columns and <strong>Syntax Σ</strong> are base-weight totals (no depth multiplier). <strong>Total cost</strong> is the UCS objective (sum of per-segment routing costs), including cognitive-load depth penalty on relationship hops when enabled (grace <strong>${so.penaltyGracePeriod}</strong> hops, growth <strong>${so.penaltyGrowthFactor}</strong>× per extra hop).`
+    : `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Total cost</strong> matches <strong>Syntax Σ</strong> when cognitive-load penalty is off.`;
+
+  const fmtCost = (v) => (Number.isFinite(v) ? String(v) : "—");
+  const fmtRouting = (v) => {
+    if (!Number.isFinite(v)) return "—";
+    const x = Math.round(v * 1000) / 1000;
+    return String(Number.isInteger(x) ? x : x.toFixed(3).replace(/\.?0+$/, ""));
+  };
+
+  const sorted = [...all].sort((a, b) => {
+    const ar = Number.isFinite(a.ucsRoutingTotal) ? a.ucsRoutingTotal : a.totalWeight;
+    const br = Number.isFinite(b.ucsRoutingTotal) ? b.ucsRoutingTotal : b.totalWeight;
+    if (ar !== br) return ar - br;
+    if (a.totalWeight !== b.totalWeight) return a.totalWeight - b.totalWeight;
+    if (a.hopCount !== b.hopCount) return a.hopCount - b.hopCount;
+    if (a.hasDerived !== b.hasDerived) return a.hasDerived ? 1 : -1;
+    return a.pathIndex - b.pathIndex;
+  });
+
+  const rows = sorted
+    .map((meta, ord) => {
+      const rank = ord + 1;
+      const isSel = meta.pathIndex === activePathIdx;
+      const pathLabel = meta.pathIndex + 1;
+      const rowCls = isSel ? " algorithm-path-rank-row--current" : "";
+      const aria = isSel ? ' aria-current="true"' : "";
+      const cd = meta.costDirect ?? 0;
+      const cder = meta.costDerived ?? 0;
+      const ca = meta.costAssociation ?? 0;
+      const cls = meta.costLayerSkip ?? 0;
+      const cv = meta.costViolation ?? 0;
+      const syntaxSum = Number.isFinite(meta.totalWeight) ? meta.totalWeight : cd + cder + ca + cls + cv;
+      const routeCost = Number.isFinite(meta.ucsRoutingTotal) ? meta.ucsRoutingTotal : syntaxSum;
+      return `<tr class="algorithm-path-rank-row${rowCls}"${aria}>
+        <td class="algorithm-path-rank-cell--idx">${rank}</td>
+        <td class="algorithm-path-rank-cell--idx">${pathLabel}</td>
+        <td class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost">${fmtRouting(routeCost)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cd)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cder)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(ca)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cls)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cv)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(syntaxSum)}</td>
+        <td class="algorithm-path-rank-cell--num">${meta.hopCount}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<div class="algorithm-path-rank-wrap" role="region" aria-label="Route alternatives ranked by total cost">
+    <div class="algorithm-path-rank-title"><strong>All route alternatives</strong> — ranked by <strong>total cost</strong> (UCS routing total; includes cognitive-load depth penalty when enabled), then base syntax total, then hops (same ordering as the perspective list: Route 1 = composite index 0).</div>
+    <div class="algorithm-path-rank-weights">${wLegend}</div>
+    <div class="algorithm-path-rank-scroll">
+    <table class="algorithm-path-rank-table">
+      <thead>
+        <tr>
+          <th scope="col" class="algorithm-path-rank-cell--idx">Rank</th>
+          <th scope="col" class="algorithm-path-rank-cell--idx">Route</th>
+          <th scope="col" class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost" title="UCS routing total (sum of per-segment costs); includes cognitive-load depth penalty on relationship hops when enabled — this is what ranking uses">Total cost</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B explicit (uppercase) hops × explicit weight">${so.pathWeightDirect}× Explicit</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="§5.7 inferred (lowercase) hops × inferred weight">${so.pathWeightDerived}× Inferred</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="§5.2.4 Association bridge hops × association weight">${so.pathWeightAssociation}× Assoc.</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Layer-skipping surcharge (per hop meta)">${so.pathWeightLayerSkip}× Layer-skip</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Semantic / pedagogy violation add-on (per flagged hop)">${so.pathViolationPenalty}× Violation</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Sum of syntax-weight columns (base weights; excludes cognitive depth multiplier)">Syntax Σ</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Relationship hops (nodes − 1)">Hops</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+
 /** Single grey box: connect-set order visible; cost / UCS math behind Algorithm Details toggle. */
 function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
   if (!metrics) return "";
   const hops = totalHopsInSegments(segments, pathIdx);
-  const scoreStr = Number.isFinite(metrics.totalScore) ? String(metrics.totalScore) : "—";
-  const orderShort = metrics.orderingExact ? "exact ordering" : "heuristic ordering";
+  const grouped =
+    typeof clusterPaths === "function"
+      ? clusterPaths(segments, getSearchPathOptions())
+      : null;
+  const selectedMeta = grouped?.byPathIndex?.[String(pathIdx)];
   const so = getSearchPathOptions();
+  const routingSelected =
+    selectedMeta && Number.isFinite(selectedMeta.ucsRoutingTotal)
+      ? selectedMeta.ucsRoutingTotal
+      : null;
+  const baseSelected =
+    selectedMeta && Number.isFinite(selectedMeta.totalWeight) ? selectedMeta.totalWeight : null;
+  const scoreStr =
+    routingSelected != null
+      ? String(Math.round(routingSelected * 1000) / 1000)
+      : baseSelected != null
+        ? String(baseSelected)
+        : Number.isFinite(metrics.totalScore)
+          ? String(metrics.totalScore)
+          : "—";
+  const syntaxBaseSuffix =
+    so.cognitiveLoadPenalty !== false &&
+    routingSelected != null &&
+    baseSelected != null &&
+    Math.abs(routingSelected - baseSelected) > 1e-6
+      ? ` <span class="connect-set-note-syntax-base" title="Unmultiplied syntax-weight sum">(syntax base ${String(baseSelected)})</span>`
+      : "";
+  const orderShort = metrics.orderingExact ? "exact ordering" : "heuristic ordering";
   const chainStr =
     orderedChain?.length ? orderedChain.map((n) => String(n).trim()).filter(Boolean).join(" → ") : "";
   const panelOpen = algorithmDetailsPanelInitiallyOpen();
@@ -4557,6 +7631,7 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
   const btnTitle = panelOpen ? "Hide Routing Math" : "Show Routing Math";
   const btnAria =
     panelOpen ? "Hide routing math details" : "Show routing math details";
+  const rankingTable = buildPathAlternativesRankingTableHtml(segments, pathIdx, grouped);
   return `<div class="connect-set-note-tech" role="note">
     <div class="connect-set-note-tech-headrow">
       ${headMain}
@@ -4564,7 +7639,7 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
     </div>
     <div class="algorithm-debug-panel${panelOpen ? " show" : ""}">
       <span class="connect-set-note-tech-line">
-        <strong>Total cost</strong> ${scoreStr}
+        <strong>Total cost</strong> ${scoreStr}${syntaxBaseSuffix}
         <span class="connect-set-note-sep" aria-hidden="true">·</span>
         <strong>Chain</strong> ${hops} hop${hops !== 1 ? "s" : ""}
         <span class="connect-set-note-sep" aria-hidden="true">·</span>
@@ -4574,7 +7649,8 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
         <span class="connect-set-note-sep" aria-hidden="true">·</span>
         <strong>UCS</strong> · max ${so.maxDepth} hops/segment
       </span>
-      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: direct = ${so.pathWeightDirect}, derived = ${so.pathWeightDerived}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
+      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: explicit = ${so.pathWeightDirect}, inferred = ${so.pathWeightDerived}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
+      ${rankingTable}
     </div>
   </div>`;
 }
@@ -4598,7 +7674,7 @@ function layerBadgeClassForLabel(layerLabel) {
       return "path-badge--layer-business";
     case "Application-Heavy":
       return "path-badge--layer-application";
-    case "Tech/Physical-Heavy":
+    case "Technology-Heavy":
       return "path-badge--layer-tech";
     default:
       return "path-badge--layer-fullstack";
@@ -4622,7 +7698,7 @@ function precisionTooltip(precisionLabel) {
   if (precisionLabel === "Executive Summary") {
     return "This path uses ArchiMate Derivation rules (Cost=5) to hide technical complexity for a business audience.";
   }
-  return "This path follows only direct ArchiMate relationships (Cost=1) to provide the most granular engineering view.";
+  return "This path follows only explicit ArchiMate relationships (Cost=1) to provide the most granular engineering view.";
 }
 
 function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
@@ -4727,7 +7803,7 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
     const actions = [];
     if (canEnableSimplified) {
       actions.push({
-        label: "Enable Simplified (+Derived)",
+        label: "Enable Simplified (+Inferred)",
         onClick: () => setDerived(true),
       });
     }
@@ -4752,7 +7828,7 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
     const actions = [];
     if (canGroundTruth) {
       actions.push({
-        label: "Switch to Ground-Truth (Direct)",
+        label: "Switch to Ground-Truth (Explicit)",
         onClick: () => setDerived(false),
       });
     }
@@ -4772,8 +7848,11 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
   if (lShare >= 0.85 && lTop.key) {
     // Pick another lens and surface concrete add/remove/replace actions from its existing suggestion engine.
     const targetSection = sectionId === "A" ? "B" : sectionId === "B" ? "A" : "A";
+    if (!isPerspectiveBucketSupported(targetSection, recCtx)) {
+      return null;
+    }
     const targetPrimary = buildPerspectiveSuggestions(targetSection, grouped, segments, activePathIdx, recCtx);
-    const targetAction = resolvePerspectiveEmptyCta(targetSection, grouped, targetPrimary, recCtx);
+    const targetAction = resolvePerspectiveEmptyCta(targetSection, grouped, targetPrimary, recCtx, segments, activePathIdx);
     const targetAdd = targetAction.mode === "add" && (!targetPrimary || targetPrimary.length === 0)
       ? buildFallbackPerspectiveAddSuggestions(targetSection, grouped, segments, activePathIdx, recCtx)
       : targetPrimary;
@@ -4796,10 +7875,10 @@ function layerTooltip(layerLabel) {
       return "Most hops touch Motivation, Strategy, or Business elements.";
     case "Application-Heavy":
       return "Most hops touch Application-layer elements.";
-    case "Tech/Physical-Heavy":
-      return "Most hops touch Technology, Physical, or Implementation elements.";
+    case "Technology-Heavy":
+      return "Most hops touch Technology or Implementation elements.";
     case "Full-Stack Alignment":
-      return "Connects upper layers (Motivation/Strategy/Business) with infrastructure (Application and/or Technology/Physical), or a balanced mix.";
+      return "Connects upper layers (Motivation/Strategy/Business) with infrastructure (Application and/or Technology), or a balanced mix.";
     default:
       return layerLabel;
   }
@@ -4825,12 +7904,12 @@ function buildPathLabelsModalHtml() {
         <span class="path-labels-section-kicker">Grouping</span>
         <h4 class="path-labels-h">Route groups</h4>
       </div>
-      <p class="path-labels-p">Each group lists path alternatives that share the same <em>layer mix</em> on the route (Motivation/Strategy/Business vs Application vs Technology/Physical). Section titles follow your <strong>story theme</strong> when one is selected.</p>
+      <p class="path-labels-p">Each group lists path alternatives that share the same <em>layer mix</em> on the route (Motivation/Strategy/Business vs Application vs Technology). Section titles follow your <strong>story theme</strong> when one is selected.</p>
       <p class="path-labels-p">${classifierLine}</p>
       <div class="path-labels-route-grid">
         <div class="path-labels-route-card path-labels-route-card--upper">
           <div class="path-labels-route-card__title">${te(t.A)}</div>
-          <p class="path-labels-route-card__text">Every element on the route sits in the upper band (Motivation, Strategy, or Business). There are no Application-only or Technology/Physical hops.</p>
+          <p class="path-labels-route-card__text">Every element on the route sits in the upper band (Motivation, Strategy, or Business). There are no Application-only or Technology hops.</p>
           <div class="path-labels-mini-legend" aria-hidden="true">
             <span class="path-labels-mini-swatch" style="background:var(--layer-motivation)"></span>
             <span class="path-labels-mini-swatch" style="background:var(--layer-strategy)"></span>
@@ -4839,11 +7918,11 @@ function buildPathLabelsModalHtml() {
         </div>
         <div class="path-labels-route-card path-labels-route-card--infra">
           <div class="path-labels-route-card__title">${te(t.B)}</div>
-          <p class="path-labels-route-card__text">The route stays in Application and/or Technology/Physical (and Implementation). It does not pass through Motivation, Strategy, or Business elements.</p>
+          <p class="path-labels-route-card__text">The route stays in Application and/or Technology (and Implementation). It does not pass through Motivation, Strategy, or Business elements.</p>
           <div class="path-labels-mini-legend" aria-hidden="true">
             <span class="path-labels-mini-swatch" style="background:var(--layer-application)"></span>
             <span class="path-labels-mini-swatch" style="background:var(--layer-technology)"></span>
-            <span class="path-labels-mini-swatch" style="background:var(--layer-physical)"></span>
+            <span class="path-labels-mini-swatch" style="background:var(--layer-implementation)"></span>
           </div>
         </div>
         <div class="path-labels-route-card path-labels-route-card--cross">
@@ -4869,8 +7948,8 @@ function buildPathLabelsModalHtml() {
           <span class="path-labels-badge-explainer__desc">Most hops are in the Application layer.</span>
         </li>
         <li class="path-labels-badge-explainer__row">
-          <span class="path-labels-pill path-labels-pill--tech">Tech/Physical-Heavy</span>
-          <span class="path-labels-badge-explainer__desc">Most hops are in Technology, Physical, or Implementation.</span>
+          <span class="path-labels-pill path-labels-pill--tech">Technology-Heavy</span>
+          <span class="path-labels-badge-explainer__desc">Most hops are in Technology or Implementation.</span>
         </li>
         <li class="path-labels-badge-explainer__row">
           <span class="path-labels-pill path-labels-pill--fullstack">Full-Stack Alignment</span>
@@ -4902,19 +7981,12 @@ function buildPathLabelsModalHtml() {
 }
 
 window.openPathLabelsModal = function openPathLabelsModal() {
-  const modal = document.getElementById("path-labels-modal");
-  const body = document.getElementById("path-labels-body");
-  if (!modal || !body) return;
-  body.innerHTML = buildPathLabelsModalHtml();
-  modal.setAttribute("aria-hidden", "false");
+  showHelp(HELP_PANE_LABELS);
   document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "true");
 };
 
 window.closePathLabelsModal = function closePathLabelsModal() {
-  const modal = document.getElementById("path-labels-modal");
-  if (!modal) return;
-  modal.setAttribute("aria-hidden", "true");
-  document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "false");
+  hideHelp();
 };
 
 function initPathLabelsHelp() {
@@ -4933,7 +8005,7 @@ function getPerspectiveEmptyUiForDomain() {
   const key = normalizeDomainContext(state.domainContext);
   const fallback = {
     A: { intro: "No route currently stays only in Motivation, Strategy, or Business.", cta: "Add element to explore business lens", suggestionsLead: "Closest upper-layer elements to involve" },
-    B: { intro: "No route currently stays only in Application, Technology, Physical, or Implementation.", cta: "Add element to explore infrastructure lens", suggestionsLead: "Closest infrastructure elements to involve" },
+    B: { intro: "No route currently stays only in Application, Technology, or Implementation.", cta: "Add element to explore infrastructure lens", suggestionsLead: "Closest infrastructure elements to involve" },
     C: { intro: "No route currently bridges upper layers and infrastructure in one chain.", cta: "Add element to explore cross-layer lens", suggestionsLead: "Closest bridge candidates to involve" },
   };
   if (typeof SCENARIOS === "undefined" || !SCENARIOS) return fallback;
@@ -4947,7 +8019,7 @@ function perspectiveSectionMeaning(sectionId) {
     case "A":
       return "Upper-band lens: route hops remain in Motivation, Strategy, and Business.";
     case "B":
-      return "Infrastructure lens: route hops remain in Application and/or Technology, Physical, and Implementation.";
+      return "Infrastructure lens: route hops remain in Application and/or Technology and Implementation.";
     default:
       return "Cross-layer lens: route hops connect upper layers with Application or infrastructure.";
   }
@@ -4991,6 +8063,35 @@ function perspectiveEmptyIntro(sectionId, grouped, copy) {
     return `No route currently stays mostly in Application and infrastructure layers (at least ${pct}% of upper/infrastructure hops).`;
   }
   return `No route currently qualifies as a cross-layer balance under the ${pct}% dominant-share grouping rule.`;
+}
+
+function getPerspectiveSupportForUi(recCtx = {}) {
+  if (!recCtx?.strictViewpoint) return { A: true, B: true, C: true };
+  if (typeof getViewpointPerspectiveSupport !== "function") return { A: true, B: true, C: true };
+  return getViewpointPerspectiveSupport(normalizeViewpointKey(state.viewpoint));
+}
+
+function isPerspectiveBucketSupported(sectionId, recCtx = {}) {
+  const support = getPerspectiveSupportForUi(recCtx);
+  return !!support?.[sectionId];
+}
+
+function applySuggestedViewpoint(viewpointKey) {
+  const key = normalizeViewpointKey(viewpointKey);
+  if (!key) return;
+  const vpSel = document.getElementById("viewpoint-select");
+  if (!vpSel) return;
+  vpSel.value = key;
+  if (typeof window.onViewpointChange === "function") {
+    window.onViewpointChange();
+  }
+  const picked = (state.waypoints || []).filter((wp) => !!wp?.element).length;
+  const minOk = state.selectionMode === "set"
+    ? picked >= 2
+    : (state.waypoints || []).every((wp) => !!wp?.element);
+  if (state.segments && minOk) {
+    window.dispatch({ type: "FIND_PATH", reason: "perspective-constrained-change-viewpoint" });
+  }
 }
 
 function collectPerspectiveSuggestionSources(segments, activePathIdx) {
@@ -5055,7 +8156,7 @@ function getElementLensProfile(elementName) {
     const derivedCount = Array.isArray(row.derived) ? row.derived.length : 0;
     if (directCount + derivedCount <= 0) continue;
     const partner = row.from === key ? row.to : row.from;
-    if (!partner || seenPartners.has(partner)) continue;
+    if (!partner || partner === "Grouping" || seenPartners.has(partner)) continue;
     seenPartners.add(partner);
     const bucket = getLayerBucketForPathMeta(partner);
     if (bucket === "upper") upper += 1;
@@ -5179,7 +8280,8 @@ function rankPerspectiveSuggestions(sectionId, candidates, ctx = {}) {
       return String(a.element).localeCompare(String(b.element));
     });
     const ranked = rows.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
-    return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+    const pool = ranked.length ? ranked : rows;
+    return diversifyRankedRows(pool, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
   }
 
   if (sectionId === "B") {
@@ -5194,7 +8296,8 @@ function rankPerspectiveSuggestions(sectionId, candidates, ctx = {}) {
       return String(a.element).localeCompare(String(b.element));
     });
     const ranked = rows.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
-    return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+    const pool = ranked.length ? ranked : rows;
+    return diversifyRankedRows(pool, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
   }
 
   // Cross-layer lens: prefer elements that actually bridge both upper and infra neighbors.
@@ -5209,7 +8312,8 @@ function rankPerspectiveSuggestions(sectionId, candidates, ctx = {}) {
     return String(a.element).localeCompare(String(b.element));
   });
   const ranked = pool.filter((r) => Number.isFinite(scorePerspectiveAction(sectionId, { addElement: r.element }, ctx)));
-  return diversifyRankedRows(ranked, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
+  const usePool = ranked.length ? ranked : pool;
+  return diversifyRankedRows(usePool, { pickCount: 3 }).map(({ profile, ...rest }) => rest);
 }
 
 function perspectiveSuggestionBuckets(sectionId, grouped) {
@@ -5291,7 +8395,8 @@ function buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, ac
   candidates = candidates.filter((c) => c?.element && !selected.has(c.element));
   if (candidates.length) {
     const ranked = sortPerspectiveCandidatesHeuristic(sectionId, candidates);
-    return keepPerspectiveCandidatesThatImproveLens(sectionId, ranked, ctx);
+    const improved = keepPerspectiveCandidatesThatImproveLens(sectionId, ranked, ctx);
+    return improved.length ? improved : ranked.slice(0, 3);
   }
 
   const bucketSet = new Set(buckets);
@@ -5306,7 +8411,8 @@ function buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, ac
       bucket: getLayerBucketForPathMeta(name),
     }));
   const fallbackRanked = sortPerspectiveCandidatesHeuristic(sectionId, fromRegistry);
-  return keepPerspectiveCandidatesThatImproveLens(sectionId, fallbackRanked, ctx);
+  const improved = keepPerspectiveCandidatesThatImproveLens(sectionId, fallbackRanked, ctx);
+  return improved.length ? improved : fallbackRanked.slice(0, 3);
 }
 
 function conflictingBucketsForPerspective(sectionId) {
@@ -5368,16 +8474,41 @@ function addPerspectiveExplorationWaypoint() {
   }, 0);
 }
 
+function migrateLegacyLayerId(layerId) {
+  if (layerId == null || layerId === "") return layerId;
+  if (layerId === "Physical") return "Technology";
+  if (layerId === "Implementation & Migration") return "Implementation";
+  return layerId;
+}
+
 function normalizeWaypointLayerForElement(elementName) {
   const layer = ELEMENTS?.[elementName]?.layer || null;
   if (!layer) return null;
-  return layer === "Implementation & Migration" ? "Implementation" : layer;
+  return migrateLegacyLayerId(layer);
+}
+
+/**
+ * Keeps each waypoint's layer field aligned with its selected element. Connect-set reorder,
+ * path redraw (e.g. edge-flip), and other flows can leave a stale layer next to an updated chip.
+ */
+function syncWaypointLayersFromElements() {
+  const plain = getPlainAppState().waypoints;
+  if (!Array.isArray(plain)) return;
+  for (let i = 0; i < plain.length; i++) {
+    const el = plain[i]?.element;
+    if (!el) continue;
+    const implied = normalizeWaypointLayerForElement(el);
+    if (!implied) continue;
+    const cur = plain[i]?.layer ?? null;
+    if (implied !== cur) {
+      state.waypoints[i].layer = implied;
+    }
+  }
 }
 
 /** Match `ELEMENTS[].layer` ids (same normalization as waypoint persistence / labels). */
 function canonicalLayerIdForWaypoint(layerId) {
-  if (!layerId) return layerId;
-  return layerId === "Implementation & Migration" ? "Implementation" : layerId;
+  return migrateLegacyLayerId(layerId);
 }
 
 function addPerspectiveSuggestedElement(elementName, { expandedScope = false } = {}) {
@@ -5450,9 +8581,13 @@ function buildPerspectiveSwapCandidates(sectionId, grouped, addSuggestions, ctx 
   return diversifyRankedRows(pairs, { pickCount: 3, poolSize: 10 }).map(({ score, ...rest }) => rest);
 }
 
-function resolvePerspectiveEmptyCta(sectionId, grouped, addSuggestions, ctx = {}) {
+function resolvePerspectiveEmptyCta(sectionId, grouped, addSuggestions, ctx = {}, segments = null, activePathIdx = 0) {
   const dominantMode = perspectiveModeIsDominantShare();
-  const swap = buildPerspectiveSwapCandidates(sectionId, grouped, addSuggestions, ctx);
+  let addsForSwap = Array.isArray(addSuggestions) ? addSuggestions : [];
+  if (!addsForSwap.length && segments != null) {
+    addsForSwap = buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, activePathIdx, ctx);
+  }
+  const swap = buildPerspectiveSwapCandidates(sectionId, grouped, addsForSwap, ctx);
   if (swap.length && (dominantMode || sectionId === "A" || sectionId === "B")) {
     return {
       mode: "swap",
@@ -5488,11 +8623,13 @@ function createPerspectiveRecommendationContext() {
     : state.graph;
   const options = getSearchPathOptions({ forceFullMetamodel: usingFullMetamodel });
   const strictAllowedElements = usingFullMetamodel ? null : effectiveAllowedElements();
+  const viewpointKey = vpCtx.viewpointKey || normalizeViewpointKey(state.viewpoint);
   const viewpointName =
-    state.viewpoint && VIEWPOINTS?.[state.viewpoint]
-      ? VIEWPOINTS[state.viewpoint].name || state.viewpoint
+    viewpointKey && VIEWPOINTS?.[viewpointKey]
+      ? VIEWPOINTS[viewpointKey].name || viewpointKey
       : (state.viewpoint || "current viewpoint");
   return {
+    viewpointKey,
     strictViewpoint,
     usingFullMetamodel,
     graph,
@@ -5508,7 +8645,15 @@ function isElementOutsideStrictViewpoint(elementName, ctx) {
   return !ctx.strictAllowedElements.has(elementName);
 }
 
-window.expandPerspectiveSuggestionsToFullMetamodel = function expandPerspectiveSuggestionsToFullMetamodel() {
+window.expandPerspectiveSuggestionsToFullMetamodel = function expandPerspectiveSuggestionsToFullMetamodel(opts = {}) {
+  const fromConstrainedBucket = String(opts?.fromConstrainedBucket || "");
+  if (fromConstrainedBucket) {
+    const ok = window.confirm(
+      "Warning: Adding these elements will break your current Viewpoint constraints and revert the canvas to the Full ArchiMate Metamodel."
+    );
+    if (!ok) return;
+  }
+  state._perspectiveExpandFromConstrainedTab = fromConstrainedBucket || null;
   state._perspectiveSuggestFullMetamodel = true;
   scheduleRenderResults();
 };
@@ -5518,8 +8663,26 @@ window.restorePerspectiveSuggestionsToViewpoint = function restorePerspectiveSug
   scheduleRenderResults();
 };
 
+let perspectiveAccordionDelegated = false;
+function ensurePerspectiveAccordionDelegation() {
+  if (perspectiveAccordionDelegated) return;
+  perspectiveAccordionDelegated = true;
+  const tabsEl = document.getElementById("path-tabs");
+  if (!tabsEl) return;
+  tabsEl.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const row = target.closest(".path-perspective-item[data-path-index]");
+    if (!(row instanceof HTMLButtonElement)) return;
+    const idx = Number(row.dataset.pathIndex);
+    if (!Number.isFinite(idx)) return;
+    selectPath(idx);
+  });
+}
+
 function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
   if (!tabsEl) return { byPathIndex: {} };
+  ensurePerspectiveAccordionDelegation();
   const recCtx = createPerspectiveRecommendationContext();
   if (!recCtx.strictViewpoint && state._perspectiveSuggestFullMetamodel) {
     state._perspectiveSuggestFullMetamodel = false;
@@ -5528,6 +8691,7 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
     ? clusterPaths(segments, getSearchPathOptions())
     : { byPerspective: { A: [], B: [], C: [] }, byPathIndex: {}, all: [] };
   const titles = getPerspectiveTitlesForDomain();
+  const vpSupport = getPerspectiveSupportForUi(recCtx);
   const emptyUi = getPerspectiveEmptyUiForDomain();
   const sections = ["A", "B", "C"];
   const hasAny = grouped.all && grouped.all.length > 0;
@@ -5544,14 +8708,19 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
 
   for (const sectionId of sections) {
     const items = grouped.byPerspective?.[sectionId] || [];
+    const bucketViewpointSupported = !!vpSupport?.[sectionId];
+    const isConstrainedBucket = !!recCtx.strictViewpoint && !bucketViewpointSupported;
 
     const wrap = document.createElement("details");
-    wrap.className = "path-perspective";
+    wrap.className = "path-perspective" + (isConstrainedBucket ? " path-perspective--viewpoint-constrained" : "");
     wrap.open = activePerspective ? sectionId === activePerspective : sectionId === "A";
     wrap.innerHTML = `
       <summary class="path-perspective-head">
         <span class="path-perspective-title">${titles[sectionId] || sectionId}</span>
-        <span class="path-perspective-count">${items.length}</span>
+        <span class="path-perspective-head-right">
+          ${isConstrainedBucket ? '<span class="path-perspective-scope-tag">Out of scope</span>' : ""}
+          <span class="path-perspective-count">${items.length}</span>
+        </span>
       </summary>
     `;
 
@@ -5568,7 +8737,7 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
         row.type = "button";
         row.className = "path-perspective-item" + (meta.pathIndex === activePathIdx ? " active" : "");
         row.title = precisionTooltip(meta.precisionLabel);
-        row.onclick = () => selectPath(meta.pathIndex);
+        row.dataset.pathIndex = String(meta.pathIndex);
         row.innerHTML = `
           <span class="path-perspective-item-main">
             <strong>Route ${meta.pathIndex + 1}</strong>
@@ -5609,8 +8778,63 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
     } else {
       body.classList.add("path-perspective-body--empty");
       const copy = emptyUi?.[sectionId] || {};
+      if (isConstrainedBucket) {
+        const focusText =
+          typeof describeViewpointLayerFocus === "function"
+            ? describeViewpointLayerFocus(state.viewpoint)
+            : "the currently allowed layers";
+        const alert = document.createElement("div");
+        alert.className = "path-perspective-empty-alert";
+        const intro = document.createElement("p");
+        intro.className = "path-perspective-empty-copy";
+        intro.textContent =
+          `The active ${recCtx.viewpointName} viewpoint is strictly focused on ${focusText}. ` +
+          `Exploring this ${titles[sectionId] || sectionId} perspective would require elements outside the scope of this viewpoint.`;
+        alert.appendChild(intro);
+        body.appendChild(alert);
+
+        const alternatives = typeof suggestAlternativeViewpoints === "function"
+          ? suggestAlternativeViewpoints(sectionId, recCtx.viewpointKey || state.viewpoint, { max: 2 })
+          : [];
+        if (alternatives.length) {
+          const lead = document.createElement("p");
+          lead.className = "path-perspective-suggestion-lead";
+          lead.textContent = "To explore this perspective, try switching viewpoint:";
+          body.appendChild(lead);
+
+          const chips = document.createElement("div");
+          chips.className = "path-perspective-suggestion-chips";
+          for (const alt of alternatives) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--viewpoint";
+            chip.title = `Switch viewpoint to ${alt.name}`;
+            chip.innerHTML = `
+              <span class="path-perspective-suggestion-plus" aria-hidden="true">↔</span>
+              <span class="path-perspective-suggestion-text">${alt.name}</span>
+            `;
+            chip.onclick = () => applySuggestedViewpoint(alt.key);
+            chips.appendChild(chip);
+          }
+          body.appendChild(chips);
+        }
+
+        if (recCtx.usingFullMetamodel) {
+          const restoreBtn = document.createElement("button");
+          restoreBtn.type = "button";
+          restoreBtn.className = "path-perspective-cta";
+          restoreBtn.textContent = "Back to viewpoint-scoped recommendations";
+          restoreBtn.onclick = () => window.restorePerspectiveSuggestionsToViewpoint?.();
+          body.appendChild(restoreBtn);
+        }
+
+        wrap.appendChild(body);
+        tabsEl.appendChild(wrap);
+        continue;
+      }
+
       const primaryAddSuggestions = buildPerspectiveSuggestions(sectionId, grouped, segments, activePathIdx, recCtx);
-      const action = resolvePerspectiveEmptyCta(sectionId, grouped, primaryAddSuggestions, recCtx);
+      const action = resolvePerspectiveEmptyCta(sectionId, grouped, primaryAddSuggestions, recCtx, segments, activePathIdx);
       const addSuggestions =
         action.mode === "add" && primaryAddSuggestions.length === 0
           ? buildFallbackPerspectiveAddSuggestions(sectionId, grouped, segments, activePathIdx, recCtx)
@@ -5721,14 +8945,16 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
         }
       }
 
-      const shouldShowCta = action.mode === "remove";
+      const shouldShowCta =
+        action.mode === "remove" || (action.mode === "add" && addSuggestions.length === 0);
       if (shouldShowCta) {
         const cta = document.createElement("button");
         cta.type = "button";
         cta.className = "path-perspective-cta";
-        cta.textContent = action.mode === "remove"
-          ? action.label
-          : (copy.cta || "Add element to explore this perspective");
+        cta.textContent =
+          action.mode === "remove" && action.label
+            ? action.label
+            : copy.cta || "Add element to explore this perspective";
         cta.onclick = () => {
           if (action.mode === "remove" && action.candidates.length) {
             withVisibleEditingControls(() => removeWaypoint(action.candidates[0].index));
@@ -5766,7 +8992,7 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
   helpWrap.className = "path-tabs-help path-tabs-help--after-groups";
   helpWrap.id = "path-tabs-help";
   helpWrap.innerHTML = `<button type="button" class="path-tabs-help-link" id="path-categories-help-btn"
-    aria-expanded="false" aria-controls="path-labels-modal"
+    aria-expanded="false" aria-controls="help-modal"
     title="Open definitions for route groups and badges">What do these labels mean?</button>`;
   tabsEl.appendChild(helpWrap);
 
@@ -5789,7 +9015,55 @@ function buildTemporaryRelaxationBanner() {
   const parts = [];
   if (t.derived) parts.push("§5.7 derived relations");
   if (t.association) parts.push("Association fallback (§5.2.4)");
-  return `<div class="path-temp-relax-banner" role="status">This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open Options if you want relaxed rules to stay on.</div>`;
+  return `<div class="path-temp-relax-banner" role="status">This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Explicit vs +Inferred</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open Options if you want relaxed rules to stay on.</div>`;
+}
+
+/**
+ * True when the active route includes at least one Association hop and each such hop is
+ * pedagogy-sanctioned (VIEWPOINTS[].pedagogy / Value/Meaning, or O allowlist).
+ */
+function activeRouteAssociationHopsAllPedagogySanctioned() {
+  const segs = state.segments;
+  if (!Array.isArray(segs) || segs.length === 0) return false;
+  if (typeof isAssociationHopPedagogySanctioned !== "function") return false;
+  const pathIdx = Math.max(0, Number(state.activePathIdx) || 0);
+  const baseOpts = {};
+  try {
+    const vk = state.viewpoint != null ? String(state.viewpoint) : "";
+    if (vk && typeof getViewpointRelationshipAllowance === "function") {
+      const a = getViewpointRelationshipAllowance(vk);
+      if (a && a.size) baseOpts.allowedRelationshipCodes = a;
+    }
+  } catch (_) {}
+  let foundAnyAssoc = false;
+  for (const seg of segs) {
+    const paths = seg.paths;
+    if (!paths || !paths.length) continue;
+    const path = paths[Math.min(pathIdx, paths.length - 1)];
+    if (!path || path.length < 2) continue;
+    for (let i = 1; i < path.length; i++) {
+      const step = path[i];
+      if (!step?.isAssociation) continue;
+      foundAnyAssoc = true;
+      const sem = step.semanticHop;
+      if (!isAssociationHopPedagogySanctioned(step, sem, { ...baseOpts, resolvedPrimaryCode: "O" })) {
+        return false;
+      }
+    }
+  }
+  return foundAnyAssoc;
+}
+
+function pathFallbackBannerSoftHtml() {
+  return `<div class="path-fallback-banner path-fallback-banner--viewpoint-sanctioned" role="status">⚠️ <strong>Association-based route</strong> — the search used §5.2.4 Association where no cheaper Appendix B chain won under your weights. <strong>Every Association hop on this path fits your selected viewpoint</strong> (palette or relationship policy), so it is <strong>not</strong> shown as an informal modeling mistake. Prefer specific Appendix B relationships when they exist.</div>`;
+}
+
+function pathFallbackBannerStrictHtml() {
+  return `<div class="path-fallback-banner" role="status">⚠️ Fallback Path Used — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship.</div>`;
+}
+
+function pathFallbackBannerMergedOneShotHtml(parts) {
+  return `<div class="path-fallback-banner" role="status">⚠️ <strong>Fallback path used</strong> — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship. This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Explicit vs +Inferred</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open <strong>Options</strong> if you want relaxed rules to stay on.</div>`;
 }
 
 /**
@@ -5800,20 +9074,33 @@ function buildPathResultBanners() {
   const t = state.lastPathTemporaryRelaxation;
   const hasTemp = t && (t.derived || t.association);
   const isFallback = state.lastPathIsFallback;
+  const edgeConstraintWarning = String(state.edgeConstraintWarning || "").trim();
   const mergeAssocOneShot =
     isFallback && hasTemp && t.association;
+  const assocSanctioned = activeRouteAssociationHopsAllPedagogySanctioned();
 
   if (mergeAssocOneShot) {
+    if (assocSanctioned) {
+      let h = "";
+      if (t.derived) {
+        h += `<div class="path-temp-relax-banner" role="status">This route was found with a <strong>one-time</strong> relaxed run (§5.7 inferred relations). Your saved <strong>Options</strong> (<strong>Explicit vs +Inferred</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open Options if you want relaxed rules to stay on.</div>`;
+      }
+      h += pathFallbackBannerSoftHtml();
+      return h;
+    }
     const parts = [];
     if (t.derived) parts.push("§5.7 derived relations");
     parts.push("Association fallback (§5.2.4)");
-    return `<div class="path-fallback-banner" role="status">⚠️ <strong>Fallback path used</strong> — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship. This route was found with a <strong>one-time</strong> relaxed run (${parts.join(" and ")}). Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> / Association) were <strong>not</strong> changed. Use <strong>Find Path</strong> again with your saved options, or open <strong>Options</strong> if you want relaxed rules to stay on.</div>`;
+    return pathFallbackBannerMergedOneShotHtml(parts);
   }
 
   let html = "";
+  if (edgeConstraintWarning) {
+    html += `<div class="path-temp-relax-banner" role="status">⚠️ ${escapeHtml(edgeConstraintWarning)}</div>`;
+  }
   if (hasTemp) html += buildTemporaryRelaxationBanner();
   if (isFallback) {
-    html += `<div class="path-fallback-banner" role="status">⚠️ Fallback Path Used — at least one hop uses penalized Association (§5.2.4), not a specific Appendix B relationship.</div>`;
+    html += assocSanctioned ? pathFallbackBannerSoftHtml() : pathFallbackBannerStrictHtml();
   }
   return html;
 }
@@ -5884,8 +9171,117 @@ function ensureDefinitionsRelationshipDetailsClosed(container) {
   });
 }
 
+/**
+ * Rich “how this graph was produced” copy for Study mode (seed, viewpoint, matrix policy, growth stats).
+ * @param {{ nodes?: unknown[], edges?: unknown[] }} studyGraph
+ * @param {Record<string, unknown>|null} meta
+ * @param {{ viewpoint?: string|null, domainContext?: string, activeClusterIndex?: number|null, includeDerived?: boolean }} s
+ */
+function buildStudyScenarioProvenanceHtml(studyGraph, meta, s) {
+  const esc = escapeHtml;
+  const nodeC = Array.isArray(studyGraph?.nodes) ? studyGraph.nodes.length : 0;
+  const edgeC = Array.isArray(studyGraph?.edges) ? studyGraph.edges.length : 0;
+  const vpKey = s.viewpoint != null && String(s.viewpoint).trim() !== "" ? String(s.viewpoint) : "";
+  const vp = vpKey && typeof VIEWPOINTS !== "undefined" ? VIEWPOINTS[vpKey] : null;
+  const isFullPalette = !vpKey || (vp && vp.allElements === true);
+  const vpSentence = vp
+    ? isFullPalette
+      ? `Viewpoint <strong>${esc(vp.name)}</strong> <span class="study-prov-k">(${esc(vpKey)})</span> — full element palette (all core types allowed). Matrix rows still pass through the study relationship filter below.`
+      : `Viewpoint <strong>${esc(vp.name)}</strong> <span class="study-prov-k">(${esc(vpKey)})</span> — only types listed for this viewpoint could be picked; that shrinks the generator pool before edges are sampled.`
+    : `No viewpoint selected — same as the full <strong>Layered</strong> palette for element types.`;
+
+  let clusterLine = "";
+  try {
+    const sc = typeof SCENARIOS !== "undefined" ? SCENARIOS[s.domainContext] : null;
+    if (sc && Array.isArray(sc.clusters) && typeof s.activeClusterIndex === "number" && s.activeClusterIndex >= 0) {
+      clusterLine = `<p><strong>Story theme:</strong> <code>${esc(String(s.domainContext || "abstract"))}</code> — micro-cluster <strong>#${s.activeClusterIndex + 1}</strong> of ${esc(String(sc.clusters.length))} is active for <em>thematic</em> labels only (Appendix B validity is unchanged).</p>`;
+    } else {
+      clusterLine = `<p><strong>Story theme:</strong> <code>${esc(String(s.domainContext || "abstract"))}</code> — flat label map or no cluster rotation for this theme.</p>`;
+    }
+  } catch (_e) {
+    clusterLine = `<p><strong>Story theme:</strong> <code>${esc(String(s.domainContext || "abstract"))}</code>.</p>`;
+  }
+
+  if (!meta || typeof meta !== "object") {
+    return `
+      <div class="explain-waypoint-note study-scenario-provenance">
+        <p><strong>Study scenario</strong> — ${esc(String(nodeC))} elements, ${esc(String(edgeC))} relationships.</p>
+        <p class="study-prov-muted">Detailed provenance was not saved for this graph (generated before logging existed or session cleared).</p>
+        ${clusterLine}
+        <p class="study-prov-muted">Quiz mechanics will attach to this graph in a later step.</p>
+      </div>`;
+  }
+  if (meta.error) {
+    return `
+      <div class="explain-waypoint-note study-scenario-provenance">
+        <p class="study-prov-muted">Generator did not produce a full graph: <code>${esc(String(meta.error))}</code>.</p>
+        <p class="study-prov-muted">Quiz mechanics will attach to this graph in a later step.</p>
+      </div>`;
+  }
+
+  const storyCodes = Array.isArray(meta.studyStoryAllowlist) ? meta.studyStoryAllowlist : ["V", "R", "T", "F"];
+  const storyLine = storyCodes
+    .map((c) => {
+      const nm =
+        typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS[c]?.name
+          ? RELATIONSHIPS[c].name
+          : c;
+      return `<code>${esc(c)}</code> — ${esc(nm)}`;
+    })
+    .join(", ");
+
+  const vpRel =
+    Array.isArray(meta.viewpointRelationshipAllowlist) && meta.viewpointRelationshipAllowlist.length
+      ? `<p><strong>Viewpoint relationship gate:</strong> when the viewpoint defines allowed codes, only <code>${esc(meta.viewpointRelationshipAllowlist.join(", "))}</code> may appear — intersected with the study list above (so e.g. a code allowed by the viewpoint but not in the study list never appears).</p>`
+      : `<p><strong>Viewpoint relationship gate:</strong> this viewpoint does not restrict relationship letter codes beyond what Appendix B allows per pair; the study list below is the main filter.</p>`;
+
+  const derivedLine =
+    meta.includeDerived !== false
+      ? "§5.7 <strong>derived</strong> (lowercase) relationship letters were eligible when merging matrix rows."
+      : "§5.7 derived relationships were <strong>not</strong> considered — direct Appendix B letters only.";
+
+  const growthLine = meta.growthReachedTarget
+    ? `Growth phase reached the target <strong>${esc(String(meta.cappedTarget ?? ""))}</strong> nodes after <strong>${esc(String(meta.growthLoopIterations ?? "?"))}</strong> expansion attempts and added <strong>${esc(String(meta.growthEdgeCount ?? 0))}</strong> edges.`
+    : `Growth phase stopped at <strong>${esc(String(meta.actualNodeCount ?? nodeC))}</strong> nodes (target was <strong>${esc(String(meta.cappedTarget ?? "?"))}</strong>) after <strong>${esc(String(meta.growthLoopIterations ?? "?"))}</strong> attempts — no further valid neighbors under degree and matrix limits. It still added <strong>${esc(String(meta.growthEdgeCount ?? 0))}</strong> edges.`;
+
+  const meshPct = Math.round(Number(meta.meshPairAttemptProbability ?? 0.3) * 100);
+  const meshLine = `A second “mesh” pass considered random pairs still under the cap (~<strong>${esc(String(meshPct))}%</strong> of eligible pairs) and added <strong>${esc(String(meta.meshEdgeCount ?? 0))}</strong> extra edges. Each element allows at most <strong>${esc(String(meta.maxNodeConnections ?? "?"))}</strong> incident edges.`;
+
+  const layers = Array.isArray(meta.layersPresent) && meta.layersPresent.length
+    ? meta.layersPresent.map((L) => esc(L)).join(", ")
+    : "—";
+  const hist = meta.relationshipHistogram && typeof meta.relationshipHistogram === "object" ? meta.relationshipHistogram : {};
+  const histPills = formatCodePills(hist, "none");
+
+  return `
+    <div class="explain-waypoint-note study-scenario-provenance">
+      <p class="study-prov-lead"><strong>This diagram</strong> shows <strong>${esc(String(nodeC))}</strong> elements and <strong>${esc(String(edgeC))}</strong> relationships. Below is every decision that constrained how it was built.</p>
+      <dl class="study-prov-dl">
+        <dt>Seed element</dt>
+        <dd>Random walk began at <strong>${esc(String(meta.seedElement ?? "?"))}</strong> (Business “story starters” are preferred when they exist in the pool).</dd>
+        <dt>Size &amp; pool</dt>
+        <dd>Target size <strong>${esc(String(meta.requestedTargetSize ?? "?"))}</strong> nodes; effective cap <strong>${esc(String(meta.cappedTarget ?? "?"))}</strong> because the generator cannot exceed <strong>${esc(String(meta.elementPoolSize ?? "?"))}</strong> allowed element types after viewpoint filtering.</dd>
+        <dt>Constraining viewpoint</dt>
+        <dd>${vpSentence}</dd>
+        <dt>Study relationship policy</dt>
+        <dd>Only these Appendix B codes are allowed: ${storyLine}. Composition, Aggregation, Assignment, Specialization, Access, Association, Influence, and other codes are excluded so the story stays on dependency and dynamic links.</dd>
+        <dt>Layers in this graph</dt>
+        <dd>${layers}</dd>
+      </dl>
+      ${clusterLine}
+      ${vpRel}
+      <p><strong>Matrix / derivation:</strong> ${derivedLine}</p>
+      <p><strong>Growth:</strong> ${growthLine}</p>
+      <p><strong>Mesh:</strong> ${meshLine}</p>
+      <p><strong>Relationship mix in this graph:</strong> ${histPills}</p>
+      <p class="study-prov-muted">Quiz mechanics will attach to this graph in a later step.</p>
+    </div>`;
+}
+
 function renderResults() {
   const segments    = state.segments;
+  const isStudyMode = normalizeAppMode(state.appMode) === "study";
+  const studyGraph = state.studyProceduralGraph;
   const pathIdx     = state.activePathIdx;
   const diagramEl   = document.getElementById('path-diagram');
   const emptyEl     = document.getElementById('diagram-empty');
@@ -5895,7 +9291,75 @@ function renderResults() {
   const explainEl   = document.getElementById('explanation-content');
   const toolsEl     = document.getElementById('diagram-tools');
 
+  /** Keep diagram toolbar controls aligned with app state after any redraw (e.g. edge-flip re-find). */
+  syncDiagramOverlayButton();
+  updatePathFlowButton();
+
+  if (isStudyMode) {
+    if (tabsEl) tabsEl.style.display = "none";
+    const pth = document.getElementById("path-tabs-help");
+    if (pth) pth.hidden = true;
+    hideDiagramNoPathOverlay();
+    hidePathFailureModal();
+    if (resultsPanel) resultsPanel.classList.remove("results-panel--empty");
+    if (viewportWrap) viewportWrap.hidden = false;
+    state.mmLast = null;
+    updateMmConnectionStrip(null);
+    const hasStudyGraph =
+      studyGraph &&
+      Array.isArray(studyGraph.nodes) &&
+      studyGraph.nodes.length > 0 &&
+      Array.isArray(studyGraph.edges);
+    if (toolsEl) toolsEl.hidden = !hasStudyGraph;
+    if (!hasStudyGraph) {
+      clearDiagram(diagramEl);
+      if (emptyEl) emptyEl.style.display = "flex";
+      setExplanationRouteColumn("");
+      if (explainEl) {
+        explainEl.innerHTML =
+          '<div class="explain-waypoint-note"><strong>Study mode is active.</strong> Click <em>Generate Random Scenario</em> to create a procedural architecture graph.</div>';
+      }
+      resetDiagramPanContext();
+      state._diagramNeedsCameraReset = false;
+      resetDiagramView();
+      updateDiagramEmptyChrome();
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = "none";
+    updateDiagramEmptyChrome();
+    try {
+      renderStudyGraph(diagramEl, studyGraph, {
+        viewpointName: state.viewpoint ? (VIEWPOINTS?.[state.viewpoint]?.name || state.viewpoint) : "All elements",
+        domainContext: state.domainContext,
+        viewpointKey: state.viewpoint || "",
+      });
+      if (state._diagramNeedsCameraReset) {
+        state._diagramNeedsCameraReset = false;
+        resetDiagramView();
+      }
+    } catch (e) {
+      console.error("[study] renderStudyGraph failed", e);
+      diagramEl.innerHTML = `<p style="color:var(--invalid);font-size:13px;padding:12px">Study diagram could not be drawn. ${String(e.message || e)}</p>`;
+      resetDiagramPanContext();
+      state._diagramNeedsCameraReset = false;
+      resetDiagramView();
+    }
+    setExplanationRouteColumn("");
+    if (explainEl) {
+      explainEl.innerHTML = buildStudyScenarioProvenanceHtml(studyGraph, state.studyGraphMeta, {
+        viewpoint: state.viewpoint,
+        domainContext: state.domainContext,
+        activeClusterIndex: state.activeClusterIndex,
+        includeDerived: state.includeDerived,
+      });
+    }
+    return;
+  }
+
   const hasResults = Array.isArray(segments);
+  if (hasResults) {
+    state._viewpointClearNotice = null;
+  }
   // Match findPath / pathfinder: empty segments[] happens when connect-set search finds no valid chain
   // ([]).some(...) is false — must treat length 0 as no path or the diagram stays blank.
   const hasNoPath =
@@ -5917,6 +9381,7 @@ function renderResults() {
     hideDiagramNoPathOverlay();
     hidePathFailureModal();
     resetDiagramPanContext();
+    state._diagramNeedsCameraReset = false;
     resetDiagramView();
     if (emptyEl) emptyEl.style.display = "flex";
     if (tabsEl) tabsEl.style.display = "none";
@@ -5927,11 +9392,14 @@ function renderResults() {
     }
     setExplanationRouteColumn("");
     if (viewportWrap) viewportWrap.hidden = true;
+    syncDiagramEmptyPanelCopy();
     updateDiagramEmptyChrome();
     return;
   }
 
   if (resultsPanel) resultsPanel.classList.remove("results-panel--empty");
+
+  const pickedNames = state.waypoints.map((wp) => wp.element).filter(Boolean);
 
   if (hasNoPath) {
     state.lastPathIsFallback = false;
@@ -5945,10 +9413,10 @@ function renderResults() {
     const pth = document.getElementById("path-tabs-help");
     if (pth) pth.hidden = true;
     resetDiagramPanContext();
+    state._diagramNeedsCameraReset = false;
     resetDiagramView();
     if (viewportWrap) viewportWrap.hidden = false;
 
-    const pickedNames = state.waypoints.map((wp) => wp.element).filter(Boolean);
     const fail = getFirstFailingSegment(segments);
     const narrFrom =
       fail?.from ?? (pickedNames[0] || state.waypoints[0]?.element);
@@ -5960,6 +9428,10 @@ function renderResults() {
     const chainLabel = pickedNames.length >= 2 ? pickedNames.join(" → ") : "";
     const blockedByViewpoint = state.lastPathSearchStatus === "BLOCKED_BY_VIEWPOINT";
     const vpFailCtx = getStrictViewpointFailureContext(narrFrom, narrTo);
+    const academicDirectBlocked =
+      !state.includeDerived &&
+      normalizeSearchRigorPreset(state.searchRigorPreset) === "academic" &&
+      !state.allowAssociationFallback;
     const deadEndHtml =
       blockedByViewpoint && typeof renderViewpointBlockedPanel === "function"
         ? renderViewpointBlockedPanel({
@@ -5979,6 +9451,7 @@ function renderResults() {
             viewpointName: vpFailCtx.strict ? vpFailCtx.name : "",
             viewpointFromInGraph: !vpFailCtx.strict || vpFailCtx.fromInGraph,
             viewpointToInGraph: !vpFailCtx.strict || vpFailCtx.toInGraph,
+            academicDirectBlocked,
           })
         : `<div class="path-dead-end path-dead-end--fallback" role="status"><div class="path-dead-end__icon-wrap" aria-hidden="true"><svg class="path-dead-end__svg" width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.5"/><circle cx="32" cy="32" r="4" fill="currentColor" opacity="0.35"/><path d="M32 8 L36 28 L32 32 L28 28 Z" fill="currentColor" opacity="0.55"/></svg></div><p class="path-dead-end__fallback">No valid path found within the current settings.</p></div>`;
     showDiagramNoPathOverlay(deadEndHtml);
@@ -5995,6 +9468,7 @@ function renderResults() {
         waypointChain: pickedNames,
         failingSegmentIndex: fail?.index ?? null,
         totalSegments: segments.length,
+        academicDirectBlocked: academicDirectBlocked && !blockedByViewpoint,
       }) + diagnostics;
 
     const fromRole = ELEMENTS[narrFrom]?.metamodelRole;
@@ -6068,20 +9542,54 @@ function renderResults() {
   }
   const activePathMeta = clustered?.byPathIndex?.[String(pathIdx)] || null;
 
+  const diagramWasEmpty = !diagramEl?.querySelector("svg");
+
   // Render diagram
   try {
-    renderPath(diagramEl, segments, {
+    const renderOptions = {
       mode: state.mode,
       segmentPathIndex: pathIdx,
-      showBadges: state.showBadges,
+      showHopNumbers: diagramOverlayShowsHop(state.diagramOverlayMode),
+      showFlipControls: diagramOverlayShowsFlip(state.diagramOverlayMode),
+      relationshipLabelsOnly: clampDiagramOverlayMode(state.diagramOverlayMode) === 4,
+      showLockControls: state.showDiagramLockControls !== false,
       pathFlow: state.pathFlow,
-    });
-    if (diagramPanShouldReset(segments)) resetDiagramView();
+      viewpointName: state.viewpoint ? (VIEWPOINTS?.[state.viewpoint]?.name || state.viewpoint) : "All elements",
+      waypointNames: pickedNames,
+      waypointElementSet: new Set(pickedNames),
+      edgeConstraints: normalizedEdgeConstraintsFromState(),
+    };
+    if (state._diagramNeedsCameraReset) {
+      renderPath(diagramEl, segments, renderOptions);
+      state._diagramNeedsCameraReset = false;
+      resetDiagramView();
+    } else {
+      renderWithAnimation(diagramEl, segments, {
+        ...renderOptions,
+        onAfterAnimation: scheduleViewportCulling,
+      });
+    }
   } catch (e) {
     console.error('[NAV] renderPath failed', e);
+    state._diagramNeedsCameraReset = false;
     diagramEl.innerHTML = `<p style="color:var(--invalid);font-size:13px;padding:12px">Diagram could not be drawn. ${String(e.message || e)}</p>`;
     resetDiagramPanContext();
     resetDiagramView();
+  }
+  if (
+    diagramWasEmpty &&
+    diagramEl?.querySelector("svg") &&
+    typeof window.matchMedia === "function" &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    diagramEl.classList.add("path-diagram--entrance-fade");
+    diagramEl.addEventListener(
+      "animationend",
+      () => {
+        diagramEl.classList.remove("path-diagram--entrance-fade");
+      },
+      { once: true }
+    );
   }
   // Render explanation (connect-set routing math + UCS details at bottom — see buildConnectSetTechHtml)
   const connectSetRoutingFooter =
@@ -6110,6 +9618,8 @@ function renderResults() {
     });
     setExplanationRouteColumn(explained.routeColumn);
     explainEl.innerHTML = pathResultBanners + explained.detailColumn + connectSetRoutingFooter;
+    explainEl.setAttribute("role", "region");
+    explainEl.setAttribute("aria-label", "Pedagogical narrative and path description");
   } catch (e) {
     console.error('[NAV] explainPath failed', e);
     setExplanationRouteColumn("");
@@ -6120,6 +9630,8 @@ function renderResults() {
         Error rendering explanation. Check console for details.
       </div>` +
       connectSetRoutingFooter;
+    explainEl.setAttribute("role", "region");
+    explainEl.setAttribute("aria-label", "Pedagogical narrative and path description");
   }
 
   // Highlight metamodel
@@ -6486,7 +9998,11 @@ function countHops(segments, pathIdx) {
 }
 
 function selectPath(idx) {
-  state.activePathIdx = idx;
+  if (window.store) {
+    window.store.dispatch("SET_ACTIVE_PATH", idx);
+  } else {
+    state.activePathIdx = idx;
+  }
   sanitizeUserChoicesForActivePath();
   window.dispatch({ type: "RENDER_RESULTS" });
   schedulePersistSession();
@@ -6650,7 +10166,57 @@ function showError(msg) {
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 
-(function startUi() {
+const MOBILE_BLOCK_MQ = "(max-width: 767px)";
+
+function isMobileForceDesktopSession() {
+  try {
+    return sessionStorage.getItem(MOBILE_FORCE_DESKTOP_SESSION_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function syncMobileForceDesktopClass() {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("architrek-force-desktop-shell", isMobileForceDesktopSession());
+}
+
+function isMobileBlockedViewport() {
+  if (isMobileForceDesktopSession()) return false;
+  try {
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia(MOBILE_BLOCK_MQ).matches;
+    }
+  } catch (_) {}
+  return typeof window !== "undefined" && window.innerWidth < 768;
+}
+
+let __desktopAppStarted = false;
+
+function syncMobileBlockShell() {
+  const shell = document.getElementById("app-shell");
+  const blocker = document.getElementById("mobile-blocker");
+  if (!shell || !blocker) return;
+  syncMobileForceDesktopClass();
+  const blocked = isMobileBlockedViewport();
+  shell.setAttribute("aria-hidden", blocked ? "true" : "false");
+  blocker.setAttribute("aria-hidden", blocked ? "false" : "true");
+  document.documentElement.classList.toggle("architrek-mobile-gate-active", blocked);
+  if ("inert" in shell) shell.inert = blocked;
+  if ("inert" in blocker) blocker.inert = !blocked;
+  if (blocked) {
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  } else {
+    document.documentElement.style.overflow = "";
+    document.body.style.overflow = "";
+  }
+}
+
+function startDesktopAppFlow() {
+  if (__desktopAppStarted) return;
+  __desktopAppStarted = true;
+  refreshViewpointSelectFromCatalog();
   let showWelcome;
   try {
     showWelcome = localStorage.getItem(WELCOME_LS) !== "1";
@@ -6667,37 +10233,86 @@ function showError(msg) {
     } catch (_) {}
     bootApp();
   }
+}
+
+(function startUi() {
+  try {
+    syncMobileForceDesktopClass();
+    syncMobileBlockShell();
+
+    try {
+      const mq = window.matchMedia(MOBILE_BLOCK_MQ);
+      const onViewportChange = () => {
+        syncMobileBlockShell();
+        if (!mq.matches) startDesktopAppFlow();
+      };
+      if (typeof mq.addEventListener === "function") mq.addEventListener("change", onViewportChange);
+      else if (typeof mq.addListener === "function") mq.addListener(onViewportChange);
+    } catch (_) {
+      window.addEventListener("resize", () => {
+        syncMobileBlockShell();
+        if (!isMobileBlockedViewport()) startDesktopAppFlow();
+      });
+    }
+
+    if (isMobileBlockedViewport()) {
+      return;
+    }
+    startDesktopAppFlow();
+  } catch (err) {
+    console.error("[ArchiTrek] startUi / desktop boot failed:", err);
+  }
 })();
 
 document.getElementById("feedback-form")?.addEventListener("submit", (e) => {
   e.preventDefault();
   submitFeedbackReport();
 });
+document.getElementById("header-feedback-btn")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  openFeedbackModal();
+});
 document.getElementById("feedback-copy-btn")?.addEventListener("click", () => {
   copyFeedbackReport();
 });
 
+document.getElementById("mobile-reminder-btn")?.addEventListener("click", () => {
+  sendMobileReminder();
+});
+document.getElementById("mobile-try-anyway-btn")?.addEventListener("click", () => {
+  try {
+    sessionStorage.setItem(MOBILE_FORCE_DESKTOP_SESSION_KEY, "1");
+  } catch (_) {}
+  syncMobileForceDesktopClass();
+  syncMobileBlockShell();
+  startDesktopAppFlow();
+});
+
 // Modal close wiring (backdrop / close button / ESC)
 document.addEventListener('click', (e) => {
-  const el = e.target;
+  let el = e.target;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
   if (!(el instanceof Element)) return;
-  if (el.closest('[data-feedback-close="1"]')) closeFeedbackModal();
+  if (el.closest('[data-feedback-close="1"]')) window.closeFeedbackModal?.();
   if (el.closest('[data-el-close="1"]')) closeElementInfoModal();
   if (el.closest('[data-mm-close="1"]')) closeMetamodelModal();
-  if (el.closest('[data-path-labels-close="1"]')) closePathLabelsModal();
   if (el.closest('[data-theme-splash-close="1"]')) closeThemeSplashModal();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (window.closeDiagramDownloadMenu?.()) {
+    e.preventDefault();
+    return;
+  }
   const ts = document.getElementById('theme-splash-modal');
   if (ts && ts.style.display === 'flex') {
     closeThemeSplashModal();
     e.preventDefault();
     return;
   }
-  const pl = document.getElementById('path-labels-modal');
-  if (pl && pl.getAttribute('aria-hidden') === 'false') {
-    closePathLabelsModal();
+  const hm = document.getElementById('help-modal');
+  if (hm && hm.getAttribute('aria-hidden') === 'false') {
+    hideHelp();
     e.preventDefault();
     return;
   }
@@ -6715,7 +10330,7 @@ document.addEventListener('keydown', (e) => {
   }
   const fb = document.getElementById('feedback-modal');
   if (fb && fb.style.display === 'flex') {
-    closeFeedbackModal();
+    window.closeFeedbackModal?.();
     e.preventDefault();
     return;
   }
@@ -6765,55 +10380,556 @@ window.toggleFullScreen = function() {
   }
 };
 
-window.downloadDiagram = function() {
-  const svg = document.querySelector('#path-diagram svg');
-  if (!svg) {
-    alert("No diagram to download!");
-    return;
+function getPathExportDescriptor() {
+  return {
+    segments: state.segments,
+    pathIndex: state.activePathIdx ?? 0,
+    relationships: typeof RELATIONSHIPS !== "undefined" ? RELATIONSHIPS : {},
+    resolveRelationshipCode:
+      typeof window.resolvedRelationshipCodeForHop === "function"
+        ? (step, hopIndex) => window.resolvedRelationshipCodeForHop(step, hopIndex)
+        : undefined,
+  };
+}
+
+if (typeof window.initExportController === "function") {
+  window.initExportController({
+    getState: () => state,
+    trackEvent,
+    getPathExportDescriptor,
+    getShareableUrl: getShareableDiagramUrl,
+  });
+}
+
+function initDiagramToolbarOptions() {
+  const wrap = document.querySelector(".diagram-options-wrap");
+  const btn = document.getElementById("btn-diagram-options");
+  const pop = document.getElementById("diagram-options-popover");
+  if (!wrap || !btn || !pop) return;
+
+  function closeDiagramOptionsMenu() {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    pop.style.top = "";
+    pop.style.left = "";
+    pop.style.position = "";
+    pop.style.zIndex = "";
   }
 
-  trackEvent("download_diagram", {
-    waypointCount: (state.waypoints || []).map((w) => w && w.element).filter(Boolean).length,
-    mode: state.mode,
+  function syncOptionsPopoverPosition() {
+    if (typeof window.syncFixedPopoverNearAnchor === "function") {
+      window.syncFixedPopoverNearAnchor(btn, pop);
+    }
+  }
+
+  window.__syncDiagramOptionsPopoverPosition = function () {
+    if (!pop.hidden) syncOptionsPopoverPosition();
+  };
+
+  window.closeDiagramOptionsMenu = closeDiagramOptionsMenu;
+
+  window.toggleDiagramOptions = function (event) {
+    if (event?.preventDefault) event.preventDefault();
+    if (event?.stopPropagation) event.stopPropagation();
+    if (pop.hidden) {
+      if (typeof window.closeDiagramDownloadMenu === "function") window.closeDiagramDownloadMenu();
+      syncDiagramOptionsFormFromState();
+      pop.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      syncOptionsPopoverPosition();
+      const firstFocus = pop.querySelector("input");
+      if (firstFocus instanceof HTMLElement) firstFocus.focus();
+    } else {
+      closeDiagramOptionsMenu();
+    }
+  };
+
+  pop.addEventListener("change", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement)) return;
+
+    if (t.name === "diagram-path-flow" && t.type === "radio" && t.checked) {
+      const v = t.value;
+      if (!PATH_FLOW_ORDER.includes(v)) return;
+      state.pathFlow = v;
+      try {
+        localStorage.setItem(getPathFlowStorageKey(), v);
+      } catch (_) {}
+      if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+      schedulePersistSession();
+      return;
+    }
+
+    if (t.id === "opt-hop-numbers" || t.id === "opt-flip-controls" || t.id === "opt-rel-names") {
+      const hopEl = document.getElementById("opt-hop-numbers");
+      const flipEl = document.getElementById("opt-flip-controls");
+      const relEl = document.getElementById("opt-rel-names");
+      if (!hopEl || !flipEl || !relEl) return;
+
+      if (t.id === "opt-rel-names" && relEl.checked) {
+        hopEl.checked = false;
+        flipEl.checked = false;
+      } else if ((t.id === "opt-hop-numbers" || t.id === "opt-flip-controls") && (hopEl.checked || flipEl.checked)) {
+        relEl.checked = false;
+      }
+
+      const next = overlayModeFromChecks(hopEl.checked, flipEl.checked, relEl.checked);
+      if (clampDiagramOverlayMode(state.diagramOverlayMode) === next) return;
+      state.diagramOverlayMode = next;
+      if (state.segments) {
+        state._diagramNeedsCameraReset = true;
+        window.dispatch({ type: "RENDER_RESULTS" });
+      }
+      schedulePersistSession();
+      return;
+    }
+
+    if (t.id === "opt-lock-controls") {
+      state.showDiagramLockControls = !!t.checked;
+      if (state.segments) {
+        state._diagramNeedsCameraReset = true;
+        window.dispatch({ type: "RENDER_RESULTS" });
+      }
+      schedulePersistSession();
+    }
   });
 
-  // Clone the SVG so we don't accidentally modify the live DOM
-  const clone = svg.cloneNode(true);
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  document.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!(target instanceof Node)) return;
+    if (wrap.contains(target)) return;
+    closeDiagramOptionsMenu();
+  });
 
-  // Convert SVG node to a string
-  const svgData = new XMLSerializer().serializeToString(clone);
-  
-  // Create a Blob and a URL for it
-  const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    if (pop.hidden) return;
+    closeDiagramOptionsMenu();
+    btn.focus();
+  });
+}
 
-  // Generate a dynamic filename based on the selected waypoints
-  const waypoints = state.waypoints.map(w => w.element).filter(Boolean).join("_to_").replace(/\s+/g, "");
-  const filename = waypoints ? `ArchiTrek_${waypoints}.svg` : "ArchiTrek_Path.svg";
+initDiagramToolbarOptions();
 
-  // Create a temporary link to trigger the download
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  
-  document.body.appendChild(link);
-  link.click();
-  
-  // Clean up
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-};
+function initEdgeContextMenu() {
+  const host = document.body;
+  if (!host) return;
 
+  const menu = document.createElement("div");
+  menu.className = "edge-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-hidden", "true");
+  menu.hidden = true;
+
+  const relWrap = document.createElement("div");
+  relWrap.className = "edge-context-menu-submenu-wrap";
+  const relTrigger = document.createElement("button");
+  relTrigger.type = "button";
+  relTrigger.className = "edge-context-menu-item edge-context-menu-item--has-submenu";
+  relTrigger.setAttribute("role", "menuitem");
+  relTrigger.setAttribute("aria-haspopup", "true");
+  relTrigger.setAttribute("aria-expanded", "false");
+  relTrigger.innerHTML = `<span class="edge-context-menu-label">Relationship type</span><span class="edge-context-menu-caret" aria-hidden="true">▸</span>`;
+  const relPanel = document.createElement("div");
+  relPanel.className = "edge-context-submenu";
+  relPanel.setAttribute("role", "menu");
+  relPanel.hidden = true;
+  relWrap.append(relTrigger, relPanel);
+
+  const flipWrap = document.createElement("div");
+  flipWrap.className = "edge-context-menu-submenu-wrap";
+  const flipBtn = document.createElement("button");
+  flipBtn.type = "button";
+  flipBtn.className = "edge-context-menu-item edge-context-menu-item--has-submenu";
+  flipBtn.setAttribute("role", "menuitem");
+  flipBtn.setAttribute("aria-haspopup", "true");
+  flipBtn.setAttribute("aria-expanded", "false");
+  flipBtn.innerHTML = `<span class="edge-context-menu-label">Flip direction</span><span class="edge-context-menu-caret" aria-hidden="true">▸</span>`;
+  const flipPanel = document.createElement("div");
+  flipPanel.className = "edge-context-submenu edge-context-submenu--under";
+  flipPanel.setAttribute("role", "menu");
+  flipPanel.hidden = true;
+  flipWrap.append(flipBtn, flipPanel);
+
+  const pinBtn = document.createElement("button");
+  pinBtn.type = "button";
+  pinBtn.className = "edge-context-menu-item";
+  pinBtn.setAttribute("role", "menuitem");
+  pinBtn.textContent = "Pin current direction";
+
+  const unpinBtn = document.createElement("button");
+  unpinBtn.type = "button";
+  unpinBtn.className = "edge-context-menu-item";
+  unpinBtn.setAttribute("role", "menuitem");
+  unpinBtn.textContent = "Unpin forced direction";
+
+  menu.append(relWrap, flipWrap, pinBtn, unpinBtn);
+  host.appendChild(menu);
+
+  const stateRef = {
+    open: false,
+    hopIndex: null,
+    from: "",
+    to: "",
+    relationshipCodes: [],
+    reverseRelationshipCodes: [],
+    currentCode: "",
+  };
+
+  function setItemDisabled(btn, disabled) {
+    btn.classList.toggle("is-disabled", !!disabled);
+    btn.setAttribute("aria-disabled", disabled ? "true" : "false");
+    if (disabled) btn.setAttribute("tabindex", "-1");
+    else btn.removeAttribute("tabindex");
+  }
+
+  function closeSubmenu() {
+    relPanel.hidden = true;
+    relTrigger.setAttribute("aria-expanded", "false");
+    flipPanel.hidden = true;
+    flipBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function openRelationshipSubmenu() {
+    if (relWrap.hidden) return;
+    relPanel.hidden = false;
+    relTrigger.setAttribute("aria-expanded", "true");
+    flipPanel.hidden = true;
+    flipBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function openFlipSubmenu() {
+    if (flipBtn.getAttribute("aria-disabled") === "true") return;
+    flipPanel.hidden = false;
+    flipBtn.setAttribute("aria-expanded", "true");
+    relPanel.hidden = true;
+    relTrigger.setAttribute("aria-expanded", "false");
+  }
+
+  function closeMenu() {
+    if (!stateRef.open) return;
+    stateRef.open = false;
+    stateRef.hopIndex = null;
+    stateRef.from = "";
+    stateRef.to = "";
+    stateRef.relationshipCodes = [];
+    stateRef.reverseRelationshipCodes = [];
+    stateRef.currentCode = "";
+    menu.hidden = true;
+    menu.setAttribute("aria-hidden", "true");
+    closeSubmenu();
+  }
+
+  function getFlatSteps() {
+    if (!Array.isArray(state.segments) || state.segments.length === 0) return [];
+    return flattenSegments(state.segments, state.activePathIdx ?? 0);
+  }
+
+  function getHopMeta(hopIndex) {
+    const ix = Number(hopIndex);
+    if (!Number.isInteger(ix) || ix < 1) return null;
+    const flat = getFlatSteps();
+    if (!flat.length || ix >= flat.length) return null;
+    const prev = flat[ix - 1];
+    const curr = flat[ix];
+    const from = String(prev?.element || "").trim();
+    const to = String(curr?.element || "").trim();
+    if (!from || !to || from === to) return null;
+    const codes = Array.isArray(curr?.codes) ? curr.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean) : [];
+    const pickerCodes =
+      codes.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+        ? window.relationshipPickerCodesFromMatrixCodes(codes)
+        : codes;
+    const currentCode = typeof window.resolvedRelationshipCodeForHop === "function"
+      ? String(window.resolvedRelationshipCodeForHop(curr, ix) || pickerCodes[0] || "").toUpperCase()
+      : String(pickerCodes[0] || "").toUpperCase();
+    return {
+      hopIndex: ix,
+      from,
+      to,
+      step: curr,
+      relationshipCodes: pickerCodes.map((c) => String(c || "").toUpperCase()).filter(Boolean),
+      currentCode,
+    };
+  }
+
+  function directedConstraintState(from, to) {
+    const list = normalizedEdgeConstraintsFromState();
+    const hasForward = list.some((c) => c.type === "FORCED_DIRECTION" && c.sourceId === from && c.targetId === to);
+    const hasReverse = list.some((c) => c.type === "FORCED_DIRECTION" && c.sourceId === to && c.targetId === from);
+    return { hasForward, hasReverse, hasAny: hasForward || hasReverse };
+  }
+
+  function relationshipPreviewSvg(code, direction = "forward") {
+    const c = String(code || "").toUpperCase();
+    const isAssoc = c === "O";
+    const isRealization = c === "R";
+    const isAggregation = c === "G";
+    const isComposition = c === "C";
+    const isServing = c === "V";
+    const isTriggering = c === "T";
+    const isFlow = c === "F";
+    const left = direction === "reverse";
+    const x1 = left ? 18 : 2;
+    const x2 = left ? 2 : 18;
+    const dash = isAssoc ? "4 2" : (isServing || isFlow ? "none" : (isRealization ? "3 2" : "none"));
+    const head = left
+      ? "2,5 6,2 6,8"
+      : "18,5 14,2 14,8";
+    const diamond = isComposition
+      ? (left ? '<polygon points="18,5 15,3 12,5 15,7" fill="#0f172a"/>' : '<polygon points="2,5 5,3 8,5 5,7" fill="#0f172a"/>')
+      : isAggregation
+        ? (left ? '<polygon points="18,5 15,3 12,5 15,7" fill="white" stroke="#0f172a" stroke-width="1"/>' : '<polygon points="2,5 5,3 8,5 5,7" fill="white" stroke="#0f172a" stroke-width="1"/>')
+        : "";
+    const arrowHead = isAssoc
+      ? ""
+      : isTriggering
+        ? `<polygon points="${head}" fill="#0f172a"/>`
+        : `<polyline points="${head}" fill="none" stroke="#0f172a" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>`;
+    return `<svg class="edge-context-arrow-preview" viewBox="0 0 20 10" aria-hidden="true"><line x1="${x1}" y1="5" x2="${x2}" y2="5" stroke="#0f172a" stroke-width="1.35" ${dash !== "none" ? `stroke-dasharray="${dash}"` : ""}/>${diamond}${arrowHead}</svg>`;
+  }
+
+  function reverseRelationshipCodesForPair(from, to) {
+    const mergeFn =
+      typeof window.mergeMatrixRowForPair === "function"
+        ? window.mergeMatrixRowForPair
+        : (typeof mergeMatrixRowForPair === "function" ? mergeMatrixRowForPair : null);
+    if (!mergeFn) return [];
+    const row = mergeFn(to, from, true);
+    const merged = Array.isArray(row?.merged) ? row.merged : [];
+    if (!merged.length) return [];
+    const upper = merged.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+    const picker =
+      upper.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+        ? window.relationshipPickerCodesFromMatrixCodes(upper)
+        : upper;
+    return picker.map((c) => String(c || "").toUpperCase()).filter(Boolean);
+  }
+
+  function buildRelationshipSubmenu(codes, hopIndex, currentCode) {
+    relPanel.innerHTML = "";
+    for (const code of codes) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "edge-context-submenu-item";
+      row.setAttribute("role", "menuitemradio");
+      const isCurrent = String(code).toUpperCase() === String(currentCode).toUpperCase();
+      row.setAttribute("aria-checked", isCurrent ? "true" : "false");
+      row.classList.toggle("is-current", isCurrent);
+      const relName = RELATIONSHIPS?.[code]?.name || code;
+      row.innerHTML = `${relationshipPreviewSvg(code, "forward")}<span>${relName}</span>`;
+      row.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (typeof window.setEdgeChoice === "function") {
+          window.setEdgeChoice(hopIndex, code);
+        }
+        closeMenu();
+      });
+      relPanel.appendChild(row);
+    }
+  }
+
+  function buildFlipSubmenu(codes, hopIndex, from, to) {
+    flipPanel.innerHTML = "";
+    for (const code of codes) {
+      const relName = RELATIONSHIPS?.[code]?.name || code;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "edge-context-submenu-item";
+      row.setAttribute("role", "menuitem");
+      row.innerHTML = `${relationshipPreviewSvg(code, "reverse")}<span>${relName}</span>`;
+      row.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (window.store) {
+          window.store.dispatch("SET_USER_CHOICE", { hopIndex, code });
+        }
+        if (typeof window.applyEdgeConstraintFlip === "function") {
+          window.applyEdgeConstraintFlip(from, to);
+        }
+        closeMenu();
+      });
+      flipPanel.appendChild(row);
+    }
+  }
+
+  function openMenuAt(clientX, clientY, meta) {
+    stateRef.open = true;
+    stateRef.hopIndex = meta.hopIndex;
+    stateRef.from = meta.from;
+    stateRef.to = meta.to;
+    stateRef.relationshipCodes = meta.relationshipCodes;
+    stateRef.reverseRelationshipCodes = reverseRelationshipCodesForPair(meta.from, meta.to);
+    stateRef.currentCode = meta.currentCode;
+
+    const relCodes = stateRef.relationshipCodes;
+    const relEnabled = relCodes.length > 1;
+    relWrap.hidden = !relEnabled;
+    setItemDisabled(relTrigger, !relEnabled);
+    if (relEnabled) {
+      buildRelationshipSubmenu(relCodes, stateRef.hopIndex, stateRef.currentCode);
+    } else {
+      closeSubmenu();
+    }
+
+    const constraintState = directedConstraintState(stateRef.from, stateRef.to);
+    const isAssocHop = !!meta.step?.isAssociation;
+    const canFlip = !isAssocHop && stateRef.currentCode !== "O" && stateRef.reverseRelationshipCodes.length > 0;
+    const hasPinnedDirection = constraintState.hasAny;
+    const canPinCurrent = !hasPinnedDirection;
+
+    setItemDisabled(flipBtn, !canFlip);
+    if (canFlip) {
+      buildFlipSubmenu(
+        stateRef.reverseRelationshipCodes,
+        stateRef.hopIndex,
+        stateRef.from,
+        stateRef.to
+      );
+    } else {
+      flipPanel.innerHTML = "";
+      flipPanel.hidden = true;
+      flipBtn.setAttribute("aria-expanded", "false");
+    }
+    pinBtn.hidden = !canPinCurrent;
+    setItemDisabled(pinBtn, !canPinCurrent);
+    unpinBtn.hidden = !hasPinnedDirection;
+    setItemDisabled(unpinBtn, !hasPinnedDirection);
+
+    menu.hidden = false;
+    menu.setAttribute("aria-hidden", "false");
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    const rect = menu.getBoundingClientRect();
+    const pad = 8;
+    const x = Math.max(pad, Math.min(clientX, window.innerWidth - rect.width - pad));
+    const y = Math.max(pad, Math.min(clientY, window.innerHeight - rect.height - pad));
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+  }
+
+  relWrap.addEventListener("mouseenter", () => {
+    openRelationshipSubmenu();
+  });
+  flipWrap.addEventListener("mouseenter", () => {
+    openFlipSubmenu();
+  });
+
+  relTrigger.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (relWrap.hidden) return;
+    if (relPanel.hidden) {
+      openRelationshipSubmenu();
+    } else {
+      relPanel.hidden = true;
+      relTrigger.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  flipBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (flipBtn.getAttribute("aria-disabled") === "true") return;
+    if (flipPanel.hidden) {
+      openFlipSubmenu();
+    } else {
+      flipPanel.hidden = true;
+      flipBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  pinBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (pinBtn.getAttribute("aria-disabled") === "true") return;
+    if (typeof window.applyEdgeConstraintPinCurrent === "function") {
+      window.applyEdgeConstraintPinCurrent(stateRef.from, stateRef.to);
+    }
+    closeMenu();
+  });
+
+  unpinBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (unpinBtn.getAttribute("aria-disabled") === "true") return;
+    if (typeof window.removeEdgeConstraintPair === "function") {
+      window.removeEdgeConstraintPair(stateRef.from, stateRef.to, { reason: "edge-unpin-context-menu" });
+    }
+    closeMenu();
+  });
+
+  document.addEventListener("contextmenu", (ev) => {
+    if (!(ev.target instanceof Element)) return;
+    if (ev instanceof MouseEvent) {
+      const isSecondary = ev.button === 2 || !!ev.ctrlKey;
+      if (!isSecondary) return;
+    }
+    const labelHit = ev.target.closest(".rel-label-hit");
+    if (!labelHit) return;
+    const hopHost = labelHit.closest(".clickable-arrow[data-hop]");
+    if (!hopHost) return;
+    const hopIndex = Number(hopHost.getAttribute("data-hop"));
+    const meta = getHopMeta(hopIndex);
+    if (!meta) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openMenuAt(ev.clientX, ev.clientY, meta);
+  });
+
+  document.addEventListener("pointerdown", (ev) => {
+    if (!stateRef.open) return;
+    const target = ev.target;
+    if (target instanceof Node && menu.contains(target)) return;
+    closeMenu();
+  }, true);
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && stateRef.open) {
+      ev.preventDefault();
+      closeMenu();
+    }
+  });
+  window.addEventListener("blur", closeMenu);
+  window.addEventListener("resize", closeMenu);
+  window.addEventListener("scroll", closeMenu, true);
+}
+
+initEdgeContextMenu();
+
+function diagramOverlayExportLabel(mode, legacyShowBadges) {
+  const m =
+    mode != null && Number.isFinite(mode)
+      ? clampDiagramOverlayMode(mode)
+      : legacyShowBadges === false
+        ? 0
+        : 3;
+  if (m === 3) return "both (hop numbers + flip)";
+  if (m === 2) return "hop numbers only";
+  if (m === 1) return "flip direction only";
+  if (m === 4) return "relationship names only";
+  return "off";
+}
+
+function syncDiagramOverlayButton() {
+  syncDiagramOptionsFormFromState();
+}
+
+/** Toolbar overlay control cycles: both → hop → flip → names-only → off → … */
+const DIAGRAM_OVERLAY_CYCLE = [3, 2, 1, 4, 0];
 
 window.toggleBadges = function() {
-  state.showBadges = !state.showBadges;
-  const btn = document.getElementById('btn-toggle-badges');
-  if (btn) {
-    btn.textContent = state.showBadges ? "Hide #" : "Show #";
-    btn.title = state.showBadges ? "Hide hop numbers on arrows" : "Show hop numbers on arrows";
+  const cur = clampDiagramOverlayMode(state.diagramOverlayMode);
+  let ix = DIAGRAM_OVERLAY_CYCLE.indexOf(cur);
+  if (ix < 0) ix = DIAGRAM_OVERLAY_CYCLE.length - 1;
+  state.diagramOverlayMode = DIAGRAM_OVERLAY_CYCLE[(ix + 1) % DIAGRAM_OVERLAY_CYCLE.length];
+  syncDiagramOverlayButton();
+  if (state.segments) {
+    state._diagramNeedsCameraReset = true;
+    window.dispatch({ type: "RENDER_RESULTS" });
   }
-  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
   schedulePersistSession();
 };
 
@@ -6828,7 +10944,11 @@ window.onCompositeSubsToggle = function onCompositeSubsToggle() {
 
 window.setEdgeChoice = function(hopIndex, code) {
   console.log(`[DECISION] Hop ${hopIndex} set to ${code}`);
-  window.state.userChoices[hopIndex] = code;
+  if (window.store) {
+    window.store.dispatch("SET_USER_CHOICE", { hopIndex, code });
+  } else {
+    window.state.userChoices[hopIndex] = code;
+  }
   state._preserveExplainUiOnNextRender = true;
   // Re-run render to update the diagram and explanation; accordions stay open via capture/restore.
   if (window.state.segments) {
@@ -6845,7 +10965,13 @@ window.cycleEdgeChoice = function(hopIndex) {
   const step = flatSteps[hopIndex];
   if (!step || !step.codes || step.codes.length <= 1) return;
 
-  const list = step.codes;
+  const matrixCodes = step.codes;
+  const list =
+    typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+      ? window.relationshipPickerCodesFromMatrixCodes(matrixCodes)
+      : matrixCodes.slice();
+  if (!list.length) return;
+
   const raw = state.userChoices[hopIndex];
   const committed =
     raw != null &&
@@ -6858,8 +10984,8 @@ window.cycleEdgeChoice = function(hopIndex) {
     const currentChoice =
       typeof window.resolvedRelationshipCodeForHop === "function"
         ? window.resolvedRelationshipCodeForHop(step, hopIndex)
-        : (state.userChoices[hopIndex] ?? step.codes[0]);
-    currentIndex = step.codes.findIndex(
+        : (state.userChoices[hopIndex] ?? list[0]);
+    currentIndex = list.findIndex(
       (c) => String(c).toUpperCase() === String(currentChoice).toUpperCase()
     );
   }
@@ -6867,3 +10993,181 @@ window.cycleEdgeChoice = function(hopIndex) {
 
   window.setEdgeChoice(hopIndex, list[nextIndex]);
 };
+
+function refreshCoachOverlayOnly() {
+  if (!state.segments) return;
+  const tabsEl = document.getElementById("path-tabs");
+  if (!tabsEl) return;
+  const clustered = renderPerspectiveAccordion(tabsEl, state.segments, state.activePathIdx ?? 0);
+  state.pathClusters = clustered;
+  const help = document.getElementById("path-tabs-help");
+  if (help) help.hidden = tabsEl.style.display === "none";
+}
+
+if (window.store) {
+  if (typeof window.initWaypointEditor === "function") {
+    window.initWaypointEditor({
+      store: window.store,
+      deps: {
+        renderWaypointChain,
+        checkReady,
+        updateQuickExamplesVisibility,
+      },
+    });
+  }
+  if (typeof window.initCoachOverlay === "function") {
+    window.initCoachOverlay({
+      store: window.store,
+      deps: {
+        refreshCoachOverlay: () => {
+          refreshCoachOverlayOnly();
+        },
+      },
+    });
+  }
+  if (typeof window.initPerspectiveAccordion === "function") {
+    window.initPerspectiveAccordion({
+      store: window.store,
+      deps: {
+        renderPerspectiveAccordion: () => {
+          if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+        },
+      },
+    });
+  }
+
+  (function scheduleHistoryControlsAndShortcuts() {
+    function runWhenDomReady(fn) {
+      if (typeof document === "undefined") return;
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fn, { once: true });
+      } else {
+        fn();
+      }
+    }
+
+    runWhenDomReady(function initHistoryControlsAndShortcuts() {
+      const store = window.store;
+      const undoBtn = document.getElementById("undo-btn");
+      const redoBtn = document.getElementById("redo-btn");
+      if (!store || typeof store.undo !== "function" || typeof store.redo !== "function") return;
+
+      function syncHistoryButtons() {
+        const { canUndo, canRedo } =
+          typeof store.getHistoryAvailability === "function" ? store.getHistoryAvailability() : { canUndo: false, canRedo: false };
+        if (undoBtn) {
+          undoBtn.disabled = false;
+          undoBtn.classList.toggle("history-arrow--inactive", !canUndo);
+          undoBtn.setAttribute("aria-disabled", canUndo ? "false" : "true");
+        }
+        if (redoBtn) {
+          redoBtn.disabled = false;
+          redoBtn.classList.toggle("history-arrow--inactive", !canRedo);
+          redoBtn.setAttribute("aria-disabled", canRedo ? "false" : "true");
+        }
+      }
+
+      /** Waypoints, mode toggles, viewpoint selects, and diagram are not fully store-driven — resync after jump. */
+      function refreshUiAfterHistoryJump() {
+        try {
+          renderWaypointChain();
+        } catch (_) {}
+        try {
+          checkReady();
+        } catch (_) {}
+        try {
+          updateQuickExamplesVisibility();
+        } catch (_) {}
+        const m = state.selectionMode === "ordered" ? "ordered" : "set";
+        document.getElementById("btn-ordered")?.classList.toggle("active", m === "ordered");
+        document.getElementById("btn-set")?.classList.toggle("active", m === "set");
+        try {
+          updatePathModeHint();
+        } catch (_) {}
+        try {
+          updateConnectSetExploratoryWarning();
+        } catch (_) {}
+        try {
+          updatePathOptionsTriggerSummary();
+        } catch (_) {}
+
+        const vp = state.viewpoint;
+        const v = vp == null || vp === "" ? "" : String(vp);
+        for (const id of ["viewpoint-select", "header-viewpoint-select"]) {
+          const sel = document.getElementById(id);
+          if (!sel) continue;
+          if (v && [...sel.options].some((o) => o.value === v)) sel.value = v;
+          else sel.value = "";
+        }
+        try {
+          updateViewpointHelpUi();
+        } catch (_) {}
+        try {
+          syncUrlFromState({ push: false });
+        } catch (_) {}
+        if (state.segments) {
+          try {
+            window.dispatch({ type: "RENDER_RESULTS" });
+          } catch (_) {}
+        }
+      }
+
+      if (typeof store.subscribeHistory === "function") {
+        store.subscribeHistory(() => {
+          syncHistoryButtons();
+        });
+      } else {
+        syncHistoryButtons();
+      }
+
+      undoBtn?.addEventListener("click", () => {
+        const av = typeof store.getHistoryAvailability === "function" ? store.getHistoryAvailability() : {};
+        if (!av.canUndo) return;
+        if (!store.undo()) return;
+        syncHistoryButtons();
+        refreshUiAfterHistoryJump();
+      });
+      redoBtn?.addEventListener("click", () => {
+        const av = typeof store.getHistoryAvailability === "function" ? store.getHistoryAvailability() : {};
+        if (!av.canRedo) return;
+        if (!store.redo()) return;
+        syncHistoryButtons();
+        refreshUiAfterHistoryJump();
+      });
+
+      document.addEventListener(
+        "keydown",
+        (e) => {
+          const key = typeof e.key === "string" ? e.key.toLowerCase() : "";
+          if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+          if (key !== "z" && key !== "y") return;
+
+          const el = e.target;
+          if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+
+          if (key === "z" && e.shiftKey) {
+            e.preventDefault();
+            if (!store.redo()) return;
+            syncHistoryButtons();
+            refreshUiAfterHistoryJump();
+            return;
+          }
+          if (key === "z" && !e.shiftKey) {
+            e.preventDefault();
+            if (!store.undo()) return;
+            syncHistoryButtons();
+            refreshUiAfterHistoryJump();
+            return;
+          }
+          if (key === "y") {
+            e.preventDefault();
+            if (!store.redo()) return;
+            syncHistoryButtons();
+            refreshUiAfterHistoryJump();
+          }
+        },
+        true
+      );
+    });
+  })();
+}

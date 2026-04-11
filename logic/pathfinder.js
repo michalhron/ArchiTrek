@@ -14,8 +14,10 @@
  * EXPORTS:
  *   findPaths(graph, waypoints, options) → { segments, isFallback }
  *   scorePath(path) → number (lower = better; tie-break after weighted cost)
- *   pathTotalWeight(path, weights?) → number (sum of hop weights; defaults 1 / 5 / 100 / 15)
- *   normalizePathWeights(options) → { direct, derived, association, layerSkip }
+ *   pathTotalWeight(path, weights?) → number (pedagogical base sum of hop weights; defaults 1 / 5 / 100 / 15)
+ *   path.ucsRoutingCost — when present on UCS results, internal routing total (exponential cognitive-load depth penalty on relationship hops only); sortPathsByMetric prefers this over base total.
+ *   pathCostBreakdown(path, weights?) → per–cost-type weighted subtotals (direct / derived / association / layer-skip / violation); uses base hop weights only
+ *   normalizePathWeights(options) → { direct, derived, association, violation, layerSkip }
  *   clusterPaths(segments, options?) → perspective/label metadata for UI grouping
  *   findBestChainForSet(graph, points, options) → { orderedPoints, segments, totalScore, isFallback }
  */
@@ -151,11 +153,15 @@ const PATH_DERIVED_WEIGHT = 5;
 const PATH_ASSOCIATION_PENALTY = 100;
 const PATH_VIOLATION_PENALTY = 50;
 const PATH_LAYER_SKIP_PENALTY = 15;
-const CORE_STACK_LAYERS = new Set(["Business", "Application", "Technology", "Physical"]);
+/** First N hops use exponent 0 for cognitive depth penalty (tunable via options). */
+const DEFAULT_PENALTY_GRACE_PERIOD = 3;
+/** Base of exponential multiplier on relationship hop weight after the grace period. */
+const DEFAULT_PENALTY_GROWTH_FACTOR = 2.5;
+const CORE_STACK_LAYERS = new Set(["Business", "Application", "Technology"]);
 
 const PEDAGOGY_RULE_LABELS = Object.freeze({
-  Direct: "Direct relationship (Appendix B).",
-  Derived: "Logical derivation chain.",
+  Direct: "Explicit relationship (Appendix B).",
+  Derived: "Inferred link (§5.7 logical derivation chain).",
   Association: "Generic link (§5.2.4 Association).",
 });
 
@@ -190,6 +196,38 @@ function normalizePathWeights(o = {}) {
   };
 }
 
+function clampPenaltyGracePeriod(n) {
+  const x = Math.round(Number(n));
+  if (!Number.isFinite(x)) return DEFAULT_PENALTY_GRACE_PERIOD;
+  return Math.max(0, Math.min(24, x));
+}
+
+function clampPenaltyGrowthFactor(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return DEFAULT_PENALTY_GROWTH_FACTOR;
+  return Math.max(1.01, Math.min(10, x));
+}
+
+/**
+ * @param {{ cognitiveLoadPenalty?: boolean, penaltyGracePeriod?: number, penaltyGrowthFactor?: number }} [o]
+ */
+function normalizeCognitiveLoadOptions(o = {}) {
+  return {
+    cognitiveLoadPenalty: o.cognitiveLoadPenalty !== false,
+    penaltyGracePeriod: clampPenaltyGracePeriod(o.penaltyGracePeriod ?? DEFAULT_PENALTY_GRACE_PERIOD),
+    penaltyGrowthFactor: clampPenaltyGrowthFactor(o.penaltyGrowthFactor ?? DEFAULT_PENALTY_GROWTH_FACTOR),
+  };
+}
+
+/**
+ * @param {number} depth1Based — hop index of the edge being added (first hop = 1)
+ * @param {{ cognitiveLoadPenalty: boolean, penaltyGracePeriod: number, penaltyGrowthFactor: number }} opts
+ */
+function cognitivePenaltyMultiplier(depth1Based, opts) {
+  if (!opts.cognitiveLoadPenalty) return 1;
+  return Math.pow(opts.penaltyGrowthFactor, Math.max(0, depth1Based - opts.penaltyGracePeriod));
+}
+
 /**
  * @param {object} o
  */
@@ -214,12 +252,10 @@ function getLayerRank(elementName) {
       return 3;
     case "Technology":
       return 4;
-    case "Physical":
-      return 5;
     case "Composite":
-      return 6;
+      return 5;
     case "Implementation":
-      return 7;
+      return 6;
     default:
       return Number.POSITIVE_INFINITY;
   }
@@ -238,8 +274,6 @@ function getArchimateLayerElevation(elementName) {
       return 3;
     case "Technology":
       return 2;
-    case "Physical":
-      return 1;
     default:
       return null;
   }
@@ -370,11 +404,29 @@ function resolvePrimaryCodeForSemanticTier(step, semanticHop, opts) {
 }
 
 /**
+ * Delegates to isAssociationHopPedagogySanctioned (viewpoints.js) when present.
+ * @param {PathStep|undefined|null} step
+ * @param {{ from?: string, to?: string }|undefined|null} semanticHop
+ * @param {{ allowedRelationshipCodes?: Set<string>|null, viewpointKey?: string|null }|undefined} [opts]
+ */
+function isAssociationSanctionedForPedagogy(step, semanticHop, opts) {
+  if (typeof isAssociationHopPedagogySanctioned === "function") {
+    return isAssociationHopPedagogySanctioned(step, semanticHop, opts);
+  }
+  if (step?.isAssociation !== true) return false;
+  const fromEl = semanticHop?.from ?? "";
+  const toEl = step?.element ?? semanticHop?.to ?? "";
+  if (fromEl === "Value" || fromEl === "Meaning" || toEl === "Value" || toEl === "Meaning") return true;
+  const allowed = opts?.allowedRelationshipCodes;
+  return !!(allowed && typeof allowed.has === "function" && allowed.has("O"));
+}
+
+/**
  * Classify a single hop's semantic tier for drill-down pedagogy UI.
- * Order: violations → Association [O] (always informal) → derived §5.7 → direct structural.
+ * Order: violations → Association [O] (informal, except sanctioned cases) → derived §5.7 → direct structural.
  * @param {PathStep|undefined|null} step
  * @param {{ rule?: string, ruleLabel?: string, violation?: string, violationLabel?: string, primaryCode?: string }|undefined|null} semanticHop
- * @param {{ resolvedPrimaryCode?: string }|undefined} [opts] — pass UI-resolved code so Association (O) is not masked by pickPrimaryRelCode’s non-O preference
+ * @param {{ resolvedPrimaryCode?: string, allowedRelationshipCodes?: Set<string>|null }|undefined} [opts] — pass UI-resolved code so Association (O) is not masked by pickPrimaryRelCode’s non-O preference; optional viewpoint O whitelist
  * @returns {{ strength: "Strong"|"Valid"|"Informal", title: string, reason: string }}
  */
 function classifyHopSemanticTier(step, semanticHop, opts) {
@@ -392,6 +444,19 @@ function classifyHopSemanticTier(step, semanticHop, opts) {
     };
   }
   if (isAssociationHop) {
+    if (isAssociationSanctionedForPedagogy(step, semanticHop, opts)) {
+      const reason =
+        typeof associationPedagogySanctionReason === "function"
+          ? associationPedagogySanctionReason(step, semanticHop, opts)
+          : "Association (§5.2.4) is permitted in this modeling context.";
+      return {
+        strength: "Valid",
+        title: "Association (§5.2.4) — permitted in this context.",
+        reason,
+        badgeMapping: "Permitted",
+        skipRouteChainDowngrade: true,
+      };
+    }
     return {
       strength: "Informal",
       title: "Generic Association (§5.2.4).",
@@ -404,6 +469,10 @@ function classifyHopSemanticTier(step, semanticHop, opts) {
       title: "Strictly derived per §5.7.",
       reason: pedagogyRuleLabel("Derived"),
     };
+  }
+  if (typeof viewpointPaletteCapsDirectStrengthTier === "function") {
+    const cap = viewpointPaletteCapsDirectStrengthTier(semanticHop, step, opts);
+    if (cap) return cap;
   }
   return {
     strength: "Strong",
@@ -481,9 +550,47 @@ function pathTotalWeight(path, weights) {
   return w;
 }
 
+/**
+ * Per–cost-type weighted subtotals for a stitched path (same rules as {@link pathTotalWeight}).
+ * @param {Path} path
+ * @param {{ direct: number, derived: number, association: number, violation: number, layerSkip: number }} [weights]
+ * @returns {{ direct: number, derived: number, association: number, violation: number, layerSkip: number, total: number }}
+ */
+function pathCostBreakdown(path, weights) {
+  const wcfg = weights || normalizePathWeights({});
+  const ruleTrace = Array.isArray(path?.ruleTrace) ? path.ruleTrace : [];
+  let direct = 0;
+  let derived = 0;
+  let association = 0;
+  let violation = 0;
+  let layerSkip = 0;
+  for (let i = 1; i < path.length; i++) {
+    const step = path[i];
+    if (step.isAssociation) {
+      association += wcfg.association;
+    } else if (step.isDirect === false) {
+      derived += wcfg.derived;
+    } else {
+      direct += wcfg.direct;
+    }
+    const hopMeta = ruleTrace[i - 1] || step?.semanticHop;
+    if (hopMeta && hopMeta.violation && hopMeta.violation !== "None") {
+      violation += wcfg.violation;
+    }
+    if (hopMeta && Number.isFinite(hopMeta.layerSkipPenalty) && hopMeta.layerSkipPenalty > 0) {
+      layerSkip += hopMeta.layerSkipPenalty;
+    }
+  }
+  const total = direct + derived + association + violation + layerSkip;
+  return { direct, derived, association, violation, layerSkip, total };
+}
+
 function sortPathsByMetric(paths, weights) {
   const wcfg = weights || normalizePathWeights({});
   return paths.sort((a, b) => {
+    const ra = Number.isFinite(a?.ucsRoutingCost) ? a.ucsRoutingCost : pathTotalWeight(a, wcfg);
+    const rb = Number.isFinite(b?.ucsRoutingCost) ? b.ucsRoutingCost : pathTotalWeight(b, wcfg);
+    if (ra !== rb) return ra - rb;
     const wa = pathTotalWeight(a, wcfg);
     const wb = pathTotalWeight(b, wcfg);
     if (wa !== wb) return wa - wb;
@@ -563,15 +670,17 @@ function heapPop(heap) {
 function ucsSegment(graph, start, target, options = {}) {
   const { maxDepth = 6, maxPaths = 5, maxStates = 25000, includeDerived = true } = options;
   const weights = normalizePathWeights(options);
+  const cognitiveOpts = normalizeCognitiveLoadOptions(options);
   const sem = normalizeSemanticOptions(options);
   const allowedRelationshipCodes = normalizeAllowedRelationshipCodes(options.allowedRelationshipCodes);
   const startLayer = typeof getElementLayer === "function" ? getElementLayer(start) : "Unknown";
   const targetLayer = typeof getElementLayer === "function" ? getElementLayer(target) : "Unknown";
   const coreToCore = CORE_STACK_LAYERS.has(startLayer) && CORE_STACK_LAYERS.has(targetLayer);
 
-  const withPathMeta = (path, ruleTrace, totalWeight) => {
+  const withPathMeta = (path, ruleTrace, baseCost, routingCost) => {
     path.ruleTrace = ruleTrace;
-    path.totalWeight = totalWeight;
+    path.totalWeight = baseCost;
+    path.ucsRoutingCost = routingCost;
     const pathStrength = pathStrengthFromTrace(path, ruleTrace);
     path.pathStrength = pathStrength;
     path.semanticStrength = semanticStrengthFromPathStrength(pathStrength);
@@ -580,7 +689,7 @@ function ucsSegment(graph, start, target, options = {}) {
 
   if (start === target) {
     const p = [{ element: start, codes: null, isDirect: null }];
-    return [withPathMeta(p, [], 0)];
+    return [withPathMeta(p, [], 0, 0)];
   }
 
   if (!graph.has(start)) return [];
@@ -593,6 +702,7 @@ function ucsSegment(graph, start, target, options = {}) {
     ruleTrace: [],
     visited: startVisited,
     cost: 0,
+    baseCost: 0,
     hopCount: 0,
     derCount: 0,
     traj: "neutral",
@@ -603,7 +713,7 @@ function ucsSegment(graph, start, target, options = {}) {
   while (heap.length && results.length < maxPaths * 4) {
     const st = heapPop(heap);
     if (!st) break;
-    const { path, ruleTrace, visited, cost, hopCount, derCount, traj } = st;
+    const { path, ruleTrace, visited, cost, baseCost, hopCount, derCount, traj } = st;
     const current = path[path.length - 1].element;
 
     if (hopCount >= maxDepth) continue;
@@ -661,6 +771,8 @@ function ucsSegment(graph, start, target, options = {}) {
       const w = hopWeight(edge, to, weights);
       const vp = violation !== "None" ? weights.violation : 0;
       const layerSkipAdd = layerSkipPenaltyForHop(current, to, weights);
+      const currentDepth = hopCount + 1;
+      const mult = cognitivePenaltyMultiplier(currentDepth, cognitiveOpts);
       const step = pathStepFromEdge(edge, current, {
         includeDerived,
         matrixRow: matrixRowForStep ?? undefined,
@@ -683,10 +795,12 @@ function ucsSegment(graph, start, target, options = {}) {
       step.semanticHop = hopMeta;
       const newRuleTrace = [...ruleTrace, hopMeta];
       const newDer = derCount + (edge.isDirect === false ? 1 : 0);
-      const newCost = cost + w + vp + layerSkipAdd;
+      const baseStep = w + vp + layerSkipAdd;
+      const newBaseCost = baseCost + baseStep;
+      const newCost = cost + w * mult + vp + layerSkipAdd;
 
       if (to === target) {
-        results.push(withPathMeta(newPath, newRuleTrace, newCost));
+        results.push(withPathMeta(newPath, newRuleTrace, newBaseCost, newCost));
       } else {
         const newVisited = new Set(visited);
         if (sem.enforceGrammar) {
@@ -699,6 +813,7 @@ function ucsSegment(graph, start, target, options = {}) {
           ruleTrace: newRuleTrace,
           visited: newVisited,
           cost: newCost,
+          baseCost: newBaseCost,
           hopCount: hopCount + 1,
           derCount: newDer,
           traj: nextTraj,
@@ -717,9 +832,9 @@ function segmentPaths(graph, from, to, options = {}) {
   const { allowAssociationFallback = false } = options;
   const raw = ucsSegment(graph, from, to, options);
   if (!raw.length) return raw;
-  if (pathHasAssociationHop(raw[0]) && !allowAssociationFallback) return [];
-  // Best path is strict, but UCS also returns worse alternatives — those can still use Association.
-  // When fallback is off, every returned tab must be strict-only.
+  // When fallback is off, prefer any strict (non-Association) path in the UCS result set.
+  // Do not drop the whole result just because the *cheapest* ranked path uses Association (§5.2.4):
+  // a matrix-backed route may still appear as an alternative tab.
   if (!allowAssociationFallback) {
     const strictOnly = raw.filter((p) => !pathHasAssociationHop(p));
     return strictOnly.length ? strictOnly : [];
@@ -765,12 +880,20 @@ function pairKey(a, b) {
  */
 function makePairwiseBestPathGetter(graph, opts = {}) {
   const weights = normalizePathWeights(opts);
+  const allowAssociationForPairs =
+    opts.allowAssociationForPairs instanceof Set ? opts.allowAssociationForPairs : null;
   const cache = new Map(); // key: "A→B" -> { bestPath, score }
   return (a, b) => {
     const k = pairKey(a, b);
     const hit = cache.get(k);
     if (hit) return hit;
-    const paths = segmentPaths(graph, a, b, opts);
+    const pairOpts =
+      allowAssociationForPairs &&
+      allowAssociationForPairs.has(k) &&
+      opts.allowAssociationFallback !== true
+        ? { ...opts, allowAssociationFallback: true }
+        : opts;
+    const paths = segmentPaths(graph, a, b, pairOpts);
     const bestPath = paths?.[0] ?? null;
     const score = pathWeightedScoreOrInfinity(bestPath, weights);
     const res = { bestPath, score };
@@ -779,11 +902,87 @@ function makePairwiseBestPathGetter(graph, opts = {}) {
   };
 }
 
+function buildSetDirectionRules(points, edgeConstraints = []) {
+  const pointSet = new Set(points || []);
+  const nextBySource = new Map();
+  const prevByTarget = new Map();
+  const allowAssociationForPairs = new Set();
+  const rules = [];
+  for (const raw of edgeConstraints || []) {
+    if (!raw || raw.type !== "FORCED_DIRECTION") continue;
+    const sourceId = String(raw.sourceId || "").trim();
+    const targetId = String(raw.targetId || "").trim();
+    if (!sourceId || !targetId || sourceId === targetId) continue;
+    if (!pointSet.has(sourceId) || !pointSet.has(targetId)) continue;
+    if (nextBySource.has(sourceId) && nextBySource.get(sourceId) !== targetId) {
+      return { ok: false, reason: "CONFLICTING_SOURCE", nextBySource, prevByTarget, rules, allowAssociationForPairs };
+    }
+    if (prevByTarget.has(targetId) && prevByTarget.get(targetId) !== sourceId) {
+      return { ok: false, reason: "CONFLICTING_TARGET", nextBySource, prevByTarget, rules, allowAssociationForPairs };
+    }
+    nextBySource.set(sourceId, targetId);
+    prevByTarget.set(targetId, sourceId);
+    rules.push({ sourceId, targetId });
+    if (raw.requiresAssociation === true) {
+      allowAssociationForPairs.add(pairKey(sourceId, targetId));
+    }
+  }
+
+  for (const start of nextBySource.keys()) {
+    const visited = new Set();
+    let cur = start;
+    while (nextBySource.has(cur)) {
+      if (visited.has(cur)) return { ok: false, reason: "CYCLE", nextBySource, prevByTarget, rules, allowAssociationForPairs };
+      visited.add(cur);
+      cur = nextBySource.get(cur);
+    }
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    nextBySource,
+    prevByTarget,
+    rules,
+    allowAssociationForPairs,
+  };
+}
+
+function canAppendSetPointWithRules(order, depth, candidate, rules) {
+  if (!rules || (!rules.nextBySource?.size && !rules.prevByTarget?.size)) return true;
+  if (depth === 0) {
+    return !rules.prevByTarget.has(candidate);
+  }
+  const prev = order[depth - 1];
+  const requiredNext = rules.nextBySource.get(prev);
+  if (requiredNext && requiredNext !== candidate) return false;
+  const requiredPrev = rules.prevByTarget.get(candidate);
+  if (requiredPrev && requiredPrev !== prev) return false;
+  return true;
+}
+
+function chainSatisfiesSetRules(order, rules) {
+  if (!rules || (!rules.nextBySource?.size && !rules.prevByTarget?.size)) return true;
+  if (!Array.isArray(order) || order.length === 0) return true;
+  for (let i = 0; i < order.length; i++) {
+    const cur = order[i];
+    const prev = i > 0 ? order[i - 1] : null;
+    if (i === 0 && rules.prevByTarget.has(cur)) return false;
+    const mustPrev = rules.prevByTarget.get(cur);
+    if (mustPrev && mustPrev !== prev) return false;
+    if (i > 0) {
+      const mustNext = rules.nextBySource.get(prev);
+      if (mustNext && mustNext !== cur) return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Exact best Hamiltonian PATH (not cycle) by brute-force permutations.
  * Use for small N only.
  */
-function bestOrderingExact(points, getPair) {
+function bestOrderingExact(points, getPair, { canAppend = null } = {}) {
   const n = points.length;
   let best = null; // { order, score }
 
@@ -799,6 +998,7 @@ function bestOrderingExact(points, getPair) {
     for (let i = 0; i < n; i++) {
       if (used[i]) continue;
       const el = points[i];
+      if (typeof canAppend === "function" && !canAppend(order, depth, el)) continue;
       if (depth > 0) {
         const prev = order[depth - 1];
         const { score } = getPair(prev, el);
@@ -826,10 +1026,14 @@ function bestOrderingExact(points, getPair) {
  * - nearest-neighbor build
  * - optional 2-opt improvement
  */
-function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true } = {}) {
+function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true, canAppend = null, isOrderValid = null } = {}) {
   const uniq = [...new Set(points)];
   const n = uniq.length;
-  if (n <= 2) return { order: uniq.slice(), score: n === 2 ? getPair(uniq[0], uniq[1]).score : 0 };
+  if (n <= 2) {
+    const base = uniq.slice();
+    if (typeof isOrderValid === "function" && !isOrderValid(base)) return { order: null, score: Infinity };
+    return { order: base, score: n === 2 ? getPair(base[0], base[1]).score : 0 };
+  }
 
   const scoreChain = (ord) => {
     let s = 0;
@@ -845,6 +1049,9 @@ function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true } = {
     const remaining = new Set(uniq);
     const order = [];
     let current = uniq[startIdx];
+    if (typeof canAppend === "function" && !canAppend(order, 0, current)) {
+      return { order: null, score: Infinity };
+    }
     order.push(current);
     remaining.delete(current);
 
@@ -852,6 +1059,7 @@ function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true } = {
       let bestNext = null;
       let bestScore = Infinity;
       for (const cand of remaining) {
+        if (typeof canAppend === "function" && !canAppend(order, order.length, cand)) continue;
         const w = getPair(current, cand).score;
         if (w < bestScore) {
           bestScore = w;
@@ -863,6 +1071,7 @@ function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true } = {
       remaining.delete(bestNext);
       current = bestNext;
     }
+    if (typeof isOrderValid === "function" && !isOrderValid(order)) return { order: null, score: Infinity };
     return { order, score: scoreChain(order) };
   };
 
@@ -891,6 +1100,7 @@ function bestOrderingHeuristic(points, getPair, { tries = 4, do2opt = true } = {
           const after  = getPair(a, c).score + getPair(b, d).score;
           if (after < before) {
             const newOrd = ord.slice(0, i).concat(ord.slice(i, k + 1).reverse(), ord.slice(k + 1));
+            if (typeof isOrderValid === "function" && !isOrderValid(newOrd)) continue;
             const newScore = scoreChain(newOrd);
             if (newScore < best.score) {
               best = { order: newOrd, score: newScore };
@@ -942,8 +1152,89 @@ function buildFullMetamodelProbeGraph(options = {}) {
   });
 }
 
-function findBestChainForSet(graph, points, options = {}) {
+function countRelevantForcedDirectionConstraints(points, edgeConstraints = []) {
+  const pointSet = new Set(points || []);
+  let count = 0;
+  for (const raw of edgeConstraints || []) {
+    if (!raw || raw.type !== "FORCED_DIRECTION") continue;
+    const sourceId = String(raw.sourceId || "").trim();
+    const targetId = String(raw.targetId || "").trim();
+    if (!sourceId || !targetId || sourceId === targetId) continue;
+    if (!pointSet.has(sourceId) || !pointSet.has(targetId)) continue;
+    count++;
+  }
+  return count;
+}
+
+function solveBestChainForSetCore(graph, points, options = {}) {
   const { exactMaxPoints = 8 } = options;
+  const uniq = [...new Set((points ?? []).filter(Boolean))];
+  if (uniq.length < 2) {
+    return { orderedPoints: uniq, segments: [], totalScore: 0, isFallback: false };
+  }
+
+  const rules = buildSetDirectionRules(uniq, options.edgeConstraints);
+  if (!rules.ok) {
+    return { orderedPoints: [], segments: [], totalScore: Infinity, isFallback: false };
+  }
+
+  const getPair = makePairwiseBestPathGetter(graph, {
+    ...options,
+    allowAssociationForPairs: rules.allowAssociationForPairs,
+  });
+  const canAppend = (order, depth, el) => canAppendSetPointWithRules(order, depth, el, rules);
+  const isOrderValid = (order) => chainSatisfiesSetRules(order, rules);
+  const hasRules = rules.nextBySource.size > 0 || rules.prevByTarget.size > 0;
+
+  let best;
+  if (uniq.length <= exactMaxPoints) {
+    best = bestOrderingExact(uniq, getPair, { canAppend });
+    if (!best?.order) {
+      return { orderedPoints: [], segments: [], totalScore: Infinity, isFallback: false };
+    }
+  } else {
+    /**
+     * Heuristic may miss a valid constrained chain for larger sets; if that happens we may relax
+     * constraints in the wrapper as a pragmatic fallback to avoid hard no-path dead ends.
+     */
+    const h = bestOrderingHeuristic(uniq, getPair, {
+      canAppend,
+      isOrderValid,
+      do2opt: !hasRules,
+    });
+    if (!h?.order) {
+      return { orderedPoints: [], segments: [], totalScore: Infinity, isFallback: false };
+    }
+    best = { order: h.order, score: h.score };
+  }
+
+  // Build segments using the actual best path for each consecutive pair.
+  const orderedPoints = best.order;
+  const segments = [];
+  let totalScore = 0;
+  let isFallback = false;
+  for (let i = 0; i < orderedPoints.length - 1; i++) {
+    const from = orderedPoints[i];
+    const to = orderedPoints[i + 1];
+    const pairOpts =
+      rules.allowAssociationForPairs.has(pairKey(from, to)) && options.allowAssociationFallback !== true
+        ? { ...options, allowAssociationFallback: true }
+        : options;
+    const paths = segmentPaths(graph, from, to, pairOpts);
+    segments.push({ from, to, paths });
+    if (!paths?.length) {
+      // In case cache/heuristic picked something that became unreachable under depth caps.
+      return { orderedPoints, segments, totalScore: Infinity, isFallback: false };
+    }
+    const w = pathTotalWeight(paths[0], normalizePathWeights(options));
+    totalScore += w;
+    if (pathHasAssociationHop(paths[0])) isFallback = true;
+  }
+
+  return { orderedPoints, segments, totalScore, isFallback };
+}
+
+function findBestChainForSet(graph, points, options = {}) {
   const uniq = [...new Set((points ?? []).filter(Boolean))];
   const finalizeSetResult = (base) => {
     const hasPath = segmentsSearchSucceeded(base?.segments);
@@ -956,50 +1247,40 @@ function findBestChainForSet(graph, points, options = {}) {
     const probe = findBestChainForSet(fullGraph, points, probeOptionsWithoutViewpoint(options));
     if (probe?.searchStatus === SEARCH_STATUS.OK || segmentsSearchSucceeded(probe?.segments)) {
       out.searchStatus = SEARCH_STATUS.BLOCKED_BY_VIEWPOINT;
+      // Use the full-metamodel route for display; the filtered graph had no valid chain.
+      out.orderedPoints = probe.orderedPoints;
+      out.segments = probe.segments;
+      out.totalScore = probe.totalScore;
+      out.isFallback = probe.isFallback;
     }
     return out;
   };
 
-  if (uniq.length < 2) {
-    return finalizeSetResult({ orderedPoints: uniq, segments: [], totalScore: 0, isFallback: false });
+  const primary = finalizeSetResult(solveBestChainForSetCore(graph, points, options));
+  if (options._skipConstraintRelax === true) {
+    return { ...primary, edgeConstraintsRelaxed: false, relaxedConstraintCount: 0 };
+  }
+  if (segmentsSearchSucceeded(primary?.segments)) {
+    return { ...primary, edgeConstraintsRelaxed: false, relaxedConstraintCount: 0 };
+  }
+  const relevantConstraintCount = countRelevantForcedDirectionConstraints(uniq, options.edgeConstraints);
+  if (relevantConstraintCount <= 0) {
+    return { ...primary, edgeConstraintsRelaxed: false, relaxedConstraintCount: 0 };
   }
 
-  const getPair = makePairwiseBestPathGetter(graph, options);
-
-  let best;
-  if (uniq.length <= exactMaxPoints) {
-    best = bestOrderingExact(uniq, getPair);
-    if (!best?.order) {
-      return finalizeSetResult({ orderedPoints: [], segments: [], totalScore: Infinity, isFallback: false });
-    }
-  } else {
-    const h = bestOrderingHeuristic(uniq, getPair);
-    if (!h?.order) {
-      return finalizeSetResult({ orderedPoints: [], segments: [], totalScore: Infinity, isFallback: false });
-    }
-    best = { order: h.order, score: h.score };
+  const relaxed = findBestChainForSet(graph, points, {
+    ...options,
+    edgeConstraints: [],
+    _skipConstraintRelax: true,
+  });
+  if (!segmentsSearchSucceeded(relaxed?.segments)) {
+    return { ...primary, edgeConstraintsRelaxed: false, relaxedConstraintCount: 0 };
   }
-
-  // Build segments using the actual best path for each consecutive pair.
-  const orderedPoints = best.order;
-  const segments = [];
-  let totalScore = 0;
-  let isFallback = false;
-  for (let i = 0; i < orderedPoints.length - 1; i++) {
-    const from = orderedPoints[i];
-    const to   = orderedPoints[i + 1];
-    const paths = segmentPaths(graph, from, to, options);
-    segments.push({ from, to, paths });
-    if (!paths?.length) {
-      // In case cache/heuristic picked something that became unreachable under depth caps.
-      return finalizeSetResult({ orderedPoints, segments, totalScore: Infinity, isFallback: false });
-    }
-    const w = pathTotalWeight(paths[0], normalizePathWeights(options));
-    totalScore += w;
-    if (pathHasAssociationHop(paths[0])) isFallback = true;
-  }
-
-  return finalizeSetResult({ orderedPoints, segments, totalScore, isFallback });
+  return {
+    ...relaxed,
+    edgeConstraintsRelaxed: true,
+    relaxedConstraintCount: relevantConstraintCount,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1031,6 +1312,9 @@ function findBestChainForSet(graph, points, options = {}) {
  * @param {number} [options.pathWeightDerived=5] — UCS cost per §5.7 derived hop
  * @param {number} [options.pathWeightAssociation=100] — UCS cost per §5.2.4 Association hop
  * @param {number} [options.pathWeightLayerSkip=15] — UCS surcharge for hops that skip one or more intermediate core layers
+ * @param {boolean} [options.cognitiveLoadPenalty=true] — apply exponential depth penalty to relationship hop weight in UCS routing cost only
+ * @param {number} [options.penaltyGracePeriod=3] — first N hops use no depth exponent bump
+ * @param {number} [options.penaltyGrowthFactor=2.5] — exponential base after the grace period
  * @returns {{ segments: SegmentResult[], isFallback: boolean, searchStatus: string }}
  */
 function findPaths(graph, waypoints, options = {}) {
@@ -1065,7 +1349,11 @@ function findPaths(graph, waypoints, options = {}) {
     if (fullGraph) {
       const probe = findPaths(fullGraph, waypoints, probeOptionsWithoutViewpoint(options));
       if (probe?.searchStatus === SEARCH_STATUS.OK || segmentsSearchSucceeded(probe?.segments)) {
-        searchStatus = SEARCH_STATUS.BLOCKED_BY_VIEWPOINT;
+        return {
+          segments: probe.segments,
+          isFallback: probe.isFallback,
+          searchStatus: SEARCH_STATUS.BLOCKED_BY_VIEWPOINT,
+        };
       }
     }
   }
@@ -1176,13 +1464,143 @@ function flattenSegmentsForIndex(segments, pathIdx) {
   return flat;
 }
 
+/**
+ * Sum UCS routing costs across waypoint segments for one composite route alternative.
+ * @param {{ paths?: Path[] }[]} segments
+ * @param {number} pathIdx
+ * @param {{ direct: number, derived: number, association: number, violation: number, layerSkip: number }} weights
+ */
+function compositeStitchedUcsRoutingCost(segments, pathIdx, weights) {
+  let sum = 0;
+  for (let s = 0; s < (segments?.length || 0); s++) {
+    const path = segments[s].paths?.[pathIdx] ?? segments[s].paths?.[0];
+    if (!path?.length) continue;
+    if (Number.isFinite(path.ucsRoutingCost)) sum += path.ucsRoutingCost;
+    else sum += pathTotalWeight(path, weights);
+  }
+  return sum;
+}
+
 function getLayerBucketForPathMeta(elementName) {
-  const layer = ELEMENTS?.[elementName]?.layer ?? "Unknown";
+  const layer =
+    typeof getElementLayer === "function"
+      ? getElementLayer(elementName)
+      : (() => {
+          const L = ELEMENTS?.[elementName]?.layer ?? "Unknown";
+          return L === "Physical" ? "Technology" : L;
+        })();
   if (layer === "Motivation" || layer === "Strategy" || layer === "Business") return "upper";
   if (layer === "Application") return "middle";
-  if (layer === "Technology" || layer === "Physical" || layer === "Implementation") return "lower";
+  if (layer === "Technology" || layer === "Implementation") return "lower";
   if (layer === "Composite") return "composite";
   return "other";
+}
+
+function normalizePerspectiveBucketSupport(raw, fallback) {
+  if (raw == null || typeof raw !== "object") return { ...fallback };
+  return {
+    A: typeof raw.A === "boolean" ? raw.A : !!fallback.A,
+    B: typeof raw.B === "boolean" ? raw.B : !!fallback.B,
+    C: typeof raw.C === "boolean" ? raw.C : !!fallback.C,
+  };
+}
+
+/**
+ * Compute which perspective buckets are naturally reachable under a viewpoint palette.
+ * A = upper, B = infrastructure, C = cross-layer.
+ * @param {string|null|undefined} viewpointKey
+ * @returns {{ A: boolean, B: boolean, C: boolean }}
+ */
+function getViewpointPerspectiveSupport(viewpointKey) {
+  const key = viewpointKey == null ? "" : String(viewpointKey);
+  const vp = key && typeof VIEWPOINTS !== "undefined" ? VIEWPOINTS?.[key] : null;
+  const allowAll = !vp || !!vp.allElements;
+  const computed = allowAll
+    ? { A: true, B: true, C: true }
+    : (() => {
+      let supportsUpperPalette = false;
+      let supportsInfraPalette = false;
+      const elements = Array.isArray(vp.elements) ? vp.elements : [];
+      for (const elementName of elements) {
+        const bucket = getLayerBucketForPathMeta(elementName);
+        if (bucket === "upper") supportsUpperPalette = true;
+        if (bucket === "middle" || bucket === "lower") supportsInfraPalette = true;
+      }
+      return {
+        A: supportsUpperPalette,
+        B: supportsInfraPalette,
+        C: supportsUpperPalette && supportsInfraPalette,
+      };
+    })();
+
+  const overrides =
+    typeof VIEWPOINT_PERSPECTIVE_SUPPORT_OVERRIDES !== "undefined" && key
+      ? VIEWPOINT_PERSPECTIVE_SUPPORT_OVERRIDES?.[key]
+      : null;
+  return normalizePerspectiveBucketSupport(overrides, computed);
+}
+
+/**
+ * Human-readable summary of the active viewpoint's layer focus.
+ * @param {string|null|undefined} viewpointKey
+ * @returns {string}
+ */
+function describeViewpointLayerFocus(viewpointKey) {
+  const key = viewpointKey == null ? "" : String(viewpointKey);
+  const vp = key && typeof VIEWPOINTS !== "undefined" ? VIEWPOINTS?.[key] : null;
+  if (!vp) return "all layers";
+  if (vp.allElements) return "all ArchiMate layers";
+  const labels = [];
+  const seen = new Set();
+  const elements = Array.isArray(vp.elements) ? vp.elements : [];
+  for (const name of elements) {
+    const layer =
+      typeof getElementLayer === "function"
+        ? getElementLayer(name)
+        : (() => {
+            const L = ELEMENTS?.[name]?.layer;
+            if (!L) return null;
+            return L === "Physical" ? "Technology" : L;
+          })();
+    if (!layer || seen.has(layer)) continue;
+    seen.add(layer);
+    labels.push(layer);
+  }
+  if (!labels.length) return "the selected element palette";
+  if (labels.length === 1) return `${labels[0]} layer`;
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]} layers`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]} layers`;
+}
+
+/**
+ * Recommend viewpoints that support a target perspective bucket.
+ * @param {"A"|"B"|"C"|string} targetBucket
+ * @param {string|null|undefined} currentKey
+ * @param {{ max?: number }} [opts]
+ * @returns {Array<{ key: string, name: string }>}
+ */
+function suggestAlternativeViewpoints(targetBucket, currentKey, opts = {}) {
+  const bucket = String(targetBucket || "").toUpperCase();
+  if (bucket !== "A" && bucket !== "B" && bucket !== "C") return [];
+  const max = Math.max(1, Math.min(5, Number(opts.max ?? 2)));
+  const cur = currentKey == null ? "" : String(currentKey);
+  const out = [];
+  const all = typeof VIEWPOINTS !== "undefined" && VIEWPOINTS ? Object.keys(VIEWPOINTS) : [];
+  for (const key of all) {
+    if (!key || key === cur) continue;
+    const vp = VIEWPOINTS[key];
+    if (!vp) continue;
+    const support = getViewpointPerspectiveSupport(key);
+    if (!support[bucket]) continue;
+    out.push({ key, name: vp.name || key });
+  }
+  out.sort((a, b) => {
+    const aLayered = a.key === "layered" ? 0 : 1;
+    const bLayered = b.key === "layered" ? 0 : 1;
+    if (aLayered !== bLayered) return aLayered - bLayered;
+    return String(a.name).localeCompare(String(b.name));
+  });
+  return out.slice(0, max);
 }
 
 function classifyPrecisionLabel(flatSteps) {
@@ -1201,11 +1619,11 @@ function classifyLayerLabel(flatSteps) {
   const lower = counts.lower;
 
   if (middle > upper && middle > lower) return "Application-Heavy";
-  if (lower > upper && lower >= middle) return "Tech/Physical-Heavy";
+  if (lower > upper && lower >= middle) return "Technology-Heavy";
   if (upper > lower && upper >= middle) return "Business-Heavy";
   if (upper > 0 && lower > 0) return "Full-Stack Alignment";
   if (middle > 0 && upper === 0 && lower === 0) return "Application-Heavy";
-  if (lower > 0 && upper === 0) return "Tech/Physical-Heavy";
+  if (lower > 0 && upper === 0) return "Technology-Heavy";
   if (upper > 0 && lower === 0) return "Business-Heavy";
   return "Full-Stack Alignment";
 }
@@ -1261,7 +1679,7 @@ function classifyPerspective(
  *   byPerspective: { A: any[], B: any[], C: any[] },
  *   byPathIndex: Record<string, any>,
  *   all: any[]
- * }}
+ * }} Each meta includes costDirect, costDerived, costAssociation, costLayerSkip, costViolation (weighted subtotals), ucsRoutingTotal.
  */
 function clusterPaths(segments, weightOpts = {}) {
   const weights = normalizePathWeights(weightOpts);
@@ -1275,6 +1693,8 @@ function clusterPaths(segments, weightOpts = {}) {
     if (!flatSteps.length) continue;
     const hopCount = Math.max(0, flatSteps.length - 1);
     const totalWeight = pathTotalWeight(flatSteps, weights);
+    const ucsRoutingTotal = compositeStitchedUcsRoutingCost(segments, i, weights);
+    const bd = pathCostBreakdown(flatSteps, weights);
     const layerLabel = classifyLayerLabel(flatSteps);
     const precisionLabel = classifyPrecisionLabel(flatSteps);
     const perspective = classifyPerspective(flatSteps, {
@@ -1288,6 +1708,12 @@ function clusterPaths(segments, weightOpts = {}) {
       pathIndex: i,
       hopCount,
       totalWeight,
+      ucsRoutingTotal,
+      costDirect: bd.direct,
+      costDerived: bd.derived,
+      costAssociation: bd.association,
+      costLayerSkip: bd.layerSkip,
+      costViolation: bd.violation,
       layerLabel,
       precisionLabel,
       perspective,
@@ -1348,7 +1774,13 @@ function findNearestElementsByBucket(graph, sourceElements, targetBuckets, optio
         out.push({
           element: node,
           distance: dist,
-          layer: ELEMENTS?.[node]?.layer ?? "Unknown",
+          layer:
+            typeof getElementLayer === "function"
+              ? getElementLayer(node)
+              : (() => {
+                  const L = ELEMENTS?.[node]?.layer ?? "Unknown";
+                  return L === "Physical" ? "Technology" : L;
+                })(),
           bucket,
         });
         if (out.length >= maxResults) break;

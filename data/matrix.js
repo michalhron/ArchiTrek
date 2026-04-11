@@ -894,7 +894,7 @@ const MATRIX = [
   { from:"Application Interaction", to:"Application Service",       direct:["R"],               derived:["V","T","F"] },
   { from:"Application Interaction", to:"Data Object",               direct:["A"],               derived:[] },
 
-  // Application layer — downward Technology / Physical / Composite (derived)
+  // Application layer — downward Technology / Composite (derived)
   { from:"Application Collaboration", to:"Artifact", direct:[],                  derived:["A"] },
   { from:"Application Collaboration", to:"Communication Network", direct:[],                  derived:["V","T","F"] },
   { from:"Application Collaboration", to:"Device", direct:[],                  derived:["V","T","F"] },
@@ -1903,7 +1903,7 @@ const MATRIX = [
 
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PHYSICAL LAYER
+  // TECHNOLOGY LAYER — §10.4 physical elements (same app layer as IT infrastructure)
   // ══════════════════════════════════════════════════════════════════════════
 
   // FROM Distribution Network 

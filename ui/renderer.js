@@ -17,6 +17,33 @@
  * geometry live in data/rendererVisuals.js (loaded before this script; see index.html).
  */
 
+const {
+  clamp,
+  horizontalStrokeEndXForLabel,
+  horizontalRelLabelStackHalfH,
+  shadeHex,
+  wrapLabel,
+  swimlaneLabelRectHitsObstacles,
+  swimlaneCountLabelObstacleHits,
+  clampVertStraddleLabelYToSegment,
+  estimateSwimlaneVertStraddleLabelRect,
+  estimateSwimlaneHorizontalLabelRect,
+  segmentsFromOrthogonalD,
+  verticalStraddleYExtentFromOrthoPath,
+  rectEdgeLabelInflate,
+  rectsOverlapLabelSpace,
+  createEdgeLabelSpaceRegistry,
+  buildEdgeLabelCollisionOffsets,
+  nudgeSwimlaneRelLabelAgainstObstacles,
+  startsWithArticle,
+  looksLikeProperNoun,
+  withArticle,
+  sentenceCaseStart,
+  compositeIllustrationAggPath,
+  escPathDiag,
+} = window.rendererUtils || {};
+const { computeCompactPlan } = window.layoutEngine || {};
+
 function compositePatternSubCandidates(pattern) {
   if (!pattern) return [];
   if (Array.isArray(pattern.subCandidates) && pattern.subCandidates.length) return pattern.subCandidates;
@@ -140,6 +167,27 @@ function verticalLayoutStepOuterHeight(_elementName) {
   return EL_H;
 }
 
+/**
+ * ArchiMate-style technology component (tabs + body), canonical view 140×90;
+ * scaled uniformly to fit the inner box (x, y, w, h). Order: three tabs, then main rect on top.
+ */
+function technologyComponentRectSpecs(x, y, w, h) {
+  const vw = 140;
+  const vh = 90;
+  const scale = Math.min(w / vw, h / vh);
+  const bw = vw * scale;
+  const bh = vh * scale;
+  const ox = x + (w - bw) / 2;
+  const oy = y + (h - bh) / 2;
+  const R = (rx, ry, rw, rh) => ({
+    x: ox + rx * scale,
+    y: oy + ry * scale,
+    width: rw * scale,
+    height: rh * scale,
+  });
+  return [R(10, 15, 30, 12), R(10, 39, 30, 12), R(10, 63, 30, 12), R(35, 5, 95, 80)];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MINI ICONS FOR SELECTORS
 // Exposed as a global helper for the visual element picker (ui/app.js).
@@ -195,6 +243,12 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
                  Q0.8,0.8 ${0.8+r},0.8
                  Z" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
       }
+      case "pill": {
+        const iw = w - 1.6;
+        const ih = h - 1.6;
+        const rx = Math.min(iw, ih) / 2;
+        return `<rect x="0.8" y="0.8" width="${iw}" height="${ih}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+      }
       case "document": {
         const fold = DOCUMENT_SHAPE_FOLD;
         const d = `
@@ -214,6 +268,15 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
           <polygon points="0.8,${0.8+d} ${w-0.8-d},${0.8+d} ${w-0.8-d},${h-0.8} 0.8,${h-0.8}"
                    fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`.trim();
       }
+      case "technology-component": {
+        const specs = technologyComponentRectSpecs(0.8, 0.8, w - 1.6, h - 1.6);
+        return specs
+          .map(
+            (r) =>
+              `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`
+          )
+          .join("");
+      }
       case "plateau":
         return `
           <rect x="0.8" y="0.8" width="${w-1.6}" height="${h-1.6}" rx="0" ry="0" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
@@ -226,14 +289,17 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
     }
   })();
 
-  const badgeMarkup = iconFn && elementName !== "Value" ? (() => {
+  const badgeMarkup =
+    iconFn && elementName !== "Value"
+      ? (() => {
     const pad = 3;
     const d = shape.type === "cube" ? SHAPE_CUBE_DEPTH : 0;
     const doc = shape.type === "document";
-    const gx = w - 12 - pad - d - (doc ? DOCUMENT_ICON_INSET_X : 0) - CORNER_GLYPH_NUDGE_X;
+    const gx = w - ICON_GLYPH_SIZE - pad - d - (doc ? DOCUMENT_ICON_INSET_X : 0) - CORNER_GLYPH_NUDGE_X;
     const gy = pad + d + (doc ? DOCUMENT_ICON_INSET_Y : 0) + CORNER_GLYPH_NUDGE_Y;
     return `<g transform="translate(${gx}, ${gy})" color="${stroke}">${iconFn()}</g>`;
-  })() : "";
+  })()
+      : "";
 
   return `<svg xmlns="http://www.w3.org/2000/svg"
     width="${size}" height="${Math.max(12, Math.round(size * (h / w)))}"
@@ -243,6 +309,31 @@ window.getElementMiniSvg = function getElementMiniSvg(elementName, size = 18) {
       ${shapeMarkup}
       ${badgeMarkup}
     </svg>`;
+};
+
+/**
+ * ArchiMate corner glyph on a small tile filled with the same color as diagram boxes ({@link getColor}).
+ * Glyph is slightly scaled down so strokes read a bit finer at breadcrumb size.
+ */
+window.getElementGlyphSvg = function getElementGlyphSvg(elementName, size = 20) {
+  const boxFill = getColor(elementName);
+  /** Hairline: barely darker than fill (same hue family), not a neutral charcoal */
+  const edgeStroke =
+    typeof shadeHex === "function" ? shadeHex(boxFill, -0.065) : boxFill;
+  const glyphStroke = "#2f2f2b";
+  const iconFn = ICONS[elementName];
+  const inner =
+    typeof iconFn === "function"
+      ? iconFn()
+      : `<rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`;
+  const glyph = `<g transform="translate(6,6) scale(0.86) translate(-6,-6)" style="color:${glyphStroke}">${inner}</g>`;
+  const bg = `<rect x="0.5" y="0.5" width="11" height="11" rx="2.4" fill="${boxFill}" stroke="${edgeStroke}" stroke-width="0.28"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg"
+    width="${size}"
+    height="${size}"
+    viewBox="0 0 12 12"
+    preserveAspectRatio="xMidYMid meet"
+    style="display:block">${bg}${glyph}</svg>`;
 };
 
 window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, width = 240, height = 72) {
@@ -271,7 +362,7 @@ window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, w
 
   if (iconFn && elementName !== "Value") {
     const pad = 8;
-    const glyphSize = 14;
+    const glyphSize = ICON_GLYPH_SIZE;
     const d = shape.type === "cube" ? SHAPE_CUBE_DEPTH : 0;
     const doc = shape.type === "document";
     const innerW = w - 1.6;
@@ -288,21 +379,49 @@ window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, w
   }
 
   const leftPad = 18;
-  const nameMax = Math.max(10, Math.floor((w - leftPad - 18) / 9));
-  const words = String(elementName).split(" ");
+  const fontSize = 20;
+  const innerW = w - 1.6;
+  const textLeft = x + leftPad;
+  const padIcon = 8;
+  const glyphSize = ICON_GLYPH_SIZE;
+  const d = shape.type === "cube" ? SHAPE_CUBE_DEPTH : 0;
+  const docShape = shape.type === "document";
+  const maxTextPxWidth =
+    iconFn && elementName !== "Value"
+      ? Math.max(
+          40,
+          x +
+            innerW -
+            glyphSize -
+            padIcon -
+            d -
+            (docShape ? DOCUMENT_ICON_INSET_X : 0) -
+            CORNER_GLYPH_NUDGE_X -
+            6 -
+            textLeft,
+        )
+      : Math.max(40, x + innerW - 12 - textLeft);
+  const approxChar = fontSize * 0.52;
+  const maxChars = Math.max(8, Math.floor(maxTextPxWidth / approxChar));
+
+  const words = String(elementName).split(/\s+/).filter(Boolean);
   const lines = [];
   let current = "";
   for (const word of words) {
-    const next = (current ? current + " " : "") + word;
-    if (next.length > nameMax && current) {
-      lines.push(current);
-      current = word;
-    } else {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxChars || !current) {
       current = next;
+      continue;
     }
+    lines.push(current);
+    current = word;
+    if (lines.length >= 2) break;
   }
-  if (current) lines.push(current);
-  const nameLines = lines.slice(0, 2);
+  if (lines.length < 2 && current) lines.push(current);
+  if (lines.length >= 2 && words.join(" ").length > lines.join(" ").length) {
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/\s+$/, "") + "…";
+  }
+  const nameLines = lines.length ? lines : [String(elementName)];
 
   const nameStartY = y + h / 2 - (nameLines.length === 2 ? 6 : 0);
   for (let i = 0; i < nameLines.length; i++) {
@@ -311,7 +430,7 @@ window.getElementPickerTileSvg = function getElementPickerTileSvg(elementName, w
       y: nameStartY + i * 18,
       "text-anchor": "start",
       "dominant-baseline": "middle",
-      "font-size": "20",
+      "font-size": String(fontSize),
       "font-family": "DM Sans, system-ui, sans-serif",
       "font-weight": "800",
       fill: "#111",
@@ -350,78 +469,6 @@ function svgEl(tag, attrs, ...children) {
 
 function getColor(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName]?.color ? ELEMENTS[elementName].color : "#f0f0f0"; }
 
-function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
-
-/**
- * End X of the drawn stroke for flat horizontal hops — matches path inset toward the target
- * ({@link ARROW_MARKER_TARGET_CLEARANCE}), not the raw port x2. Centers labels on the visible gap.
- */
-function horizontalStrokeEndXForLabel(x1, x2, y1, y2, orthogonal) {
-  const clr = ARROW_MARKER_TARGET_CLEARANCE;
-  if (Math.abs(y1 - y2) >= 0.5) return x2;
-  if (orthogonal) {
-    if (Math.abs(x2 - x1) > clr) return x2 + Math.sign(x1 - x2) * clr;
-    return x2;
-  }
-  if (Math.abs(x2 - x1) > clr) return x2 + Math.sign(x1 - x2) * clr;
-  return x2;
-}
-
-/** Half-height of the inline horizontal rel-label row (must match makeRelLabel horizontal branch). */
-function horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList) {
-  const hasHopBadge = showBadges && hopIndex != null;
-  const hopBadgeR = hasHopBadge ? (codesList.length > 1 ? 9 : 7) : 0;
-  const nLinesH = Math.max(1, (labelLines ?? [""]).length);
-  const lineHH = 10.0;
-  const textHalfH = Math.max(lineHH * 0.56, (nLinesH * lineHH) / 2);
-  const multilineExtra = nLinesH > 1 ? 2 : 0;
-  return Math.max(hasHopBadge ? hopBadgeR + 1 : 0, textHalfH) + multilineExtra;
-}
-
-function shadeHex(hex, amt) {
-  const h = (hex || "").trim(); const m = /^#?([0-9a-f]{6})$/i.exec(h); if (!m) return hex;
-  const num = parseInt(m[1], 16); const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
-  const t = amt >= 0 ? 255 : 0, p = Math.abs(amt);
-  const rr = Math.round((t - r) * p + r), gg = Math.round((t - g) * p + g), bb = Math.round((t - b) * p + b);
-  return `#${((1 << 24) + (rr << 16) + (gg << 8) + bb).toString(16).slice(1)}`;
-}
-
-function wrapLabel(text, maxChars = REL_LABEL_MAX_CHARS, maxLines = REL_LABEL_MAX_LINES) {
-  const raw = String(text ?? "").trim();
-  if (!raw) return [""];
-
-  const tokens = raw
-    .replace(/\s*\/\s*/g, " / ")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  const lines = [];
-  let current = "";
-
-  const push = () => {
-    if (current.trim()) lines.push(current.trim());
-    current = "";
-  };
-
-  for (const tok of tokens) {
-    const next = current ? `${current} ${tok}` : tok;
-    if (next.length > maxChars && current) {
-      push();
-      current = tok;
-    } else {
-      current = next;
-    }
-    if (lines.length >= maxLines) break;
-  }
-  push();
-
-  const consumed = lines.join(" ").length;
-  if (consumed < raw.length && lines.length) {
-    lines[lines.length - 1] = lines[lines.length - 1].replace(/\s+$/, "") + "…";
-  }
-  return lines.slice(0, Math.max(1, maxLines));
-}
-
 function makeRelLabel(mx, my, labelLines, {
   // Match element subtitle scale (e.g. "Business Role") more closely.
   fontSize = 8.5,
@@ -429,7 +476,8 @@ function makeRelLabel(mx, my, labelLines, {
   hopIndex = null,
   /** Number printed on the badge; defaults to hopIndex (path step). Use visual index when path order ≠ diagram order. */
   badgeDisplayNumber = null,
-  showBadges = true,
+  showHopNumbers = true,
+  showFlipIcons = true,
   hasChoices = false,
   /** @deprecated Kept for call-site compatibility; horizontal labels use a centered badge+name row above the stroke. */
   horizontalBadgeAnchorX = null,
@@ -454,8 +502,11 @@ function makeRelLabel(mx, my, labelLines, {
    * Used to keep spine badges from being bisected by the line.
    */
   forceBadgeCenterOffsetFromLineEast = null,
+  /** Solid rect behind badge+text (off by default; text uses stroked halo for contrast on lines). */
+  labelSolidBackground = false,
 } = {}) {
   const labelG = svgEl("g", { class: "rel-label" });
+  const bgFill = "var(--surface, #ffffff)";
 
   if (verticalStraddle) {
     const anchor = straddleAnchorX != null ? straddleAnchorX : mx;
@@ -464,13 +515,18 @@ function makeRelLabel(mx, my, labelLines, {
       straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)
         ? Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE)
         : VERT_BADGE_NAME_GAP;
-    const lines = labelLines ?? [""];
-    const nLines = Math.max(1, lines.length);
+    const lines = labelLines && labelLines.length ? labelLines : [];
+    const nLines = lines.length;
 
     const badgeCy = 0;
-    const showHop = hopIndex != null && showBadges;
+    const showHop = hopIndex != null && showHopNumbers;
+    const relLineH = lineH;
+    const textHalfHVert =
+      nLines === 0 ? 0 : Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
+    const stackHalfH = Math.max((showHop ? badgeR : 0) + 2, textHalfHVert);
     const badgeNum = badgeDisplayNumber != null ? badgeDisplayNumber : hopIndex;
-    const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+    const approxTextW =
+      nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
     /** Full width of badge + gap + text (east: circle left → text right; west: text left → circle right). */
     const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
     const approxW = textStartXEast + approxTextW;
@@ -495,19 +551,24 @@ function makeRelLabel(mx, my, labelLines, {
 
     if (straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)) {
       const lineX = straddleLineStrokeX;
+      const lineBuf = Math.max(
+        SPINE_BADGE_CLEAR_FROM_LINE,
+        typeof LABEL_TO_LINE_BUFFER_PX === "number" ? LABEL_TO_LINE_BUFFER_PX : 15,
+      );
       if (verticalStraddleWest) {
         const circleRight = stackX + circleCx + badgeR;
-        const maxRight = lineX - SPINE_BADGE_CLEAR_FROM_LINE;
+        const maxRight = lineX - lineBuf;
         if (circleRight > maxRight) {
           stackX -= circleRight - maxRight;
         }
       } else {
         if (forceBadgeCenterOffsetFromLineEast != null && Number.isFinite(forceBadgeCenterOffsetFromLineEast)) {
           // Exact spine/bus offset: badge center sits at (lineX + offset), not "minimum clearance".
-          stackX = lineX + forceBadgeCenterOffsetFromLineEast - circleCx;
+          // Staircase/nudges in straddleAnchorX must not pull the stack past the line — line buffer wins.
+          stackX = lineX + forceBadgeCenterOffsetFromLineEast - circleCx + (straddleAnchorX - lineX);
         }
         const leftEdge = stackX;
-        const minLeft = lineX + SPINE_BADGE_CLEAR_FROM_LINE;
+        const minLeft = lineX + lineBuf;
         if (leftEdge < minLeft) {
           stackX += minLeft - leftEdge;
         }
@@ -516,6 +577,22 @@ function makeRelLabel(mx, my, labelLines, {
 
     const stackG = svgEl("g", { class: "rel-label-stack" });
     stackG.setAttribute("transform", `translate(${stackX}, ${my})`);
+
+    if (labelSolidBackground) {
+      const bgPad = 5;
+      const bw = approxW + 2 * bgPad;
+      const bh = 2 * stackHalfH + 2 * bgPad;
+      stackG.appendChild(svgEl("rect", {
+        class: "rel-label-bg",
+        x: -bgPad,
+        y: -stackHalfH - bgPad,
+        width: bw,
+        height: bh,
+        rx: 4,
+        fill: bgFill,
+        "pointer-events": "none",
+      }));
+    }
 
     let badgeG = null;
     if (showHop) {
@@ -543,81 +620,126 @@ function makeRelLabel(mx, my, labelLines, {
       badgeG.appendChild(badgeText);
     }
 
-    const codeLabel = svgEl("text", {
-      x: textBlockX,
-      "text-anchor": textAnchor,
-      "font-size": String(fontSize),
-      "font-family": "DM Sans, system-ui, sans-serif",
-      fill: "var(--lbl-fill, #2f2f2b)",
-      "paint-order": "stroke",
-      stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
-      "stroke-width": "4",
-      "stroke-linejoin": "round",
-      style: "transition: fill 0.15s ease, stroke 0.15s ease;",
-    });
-    if (nLines === 1) {
-      codeLabel.setAttribute("y", "0");
-      codeLabel.setAttribute("dominant-baseline", "central");
-    } else {
-      codeLabel.setAttribute("y", String(-lineH / 2));
-      codeLabel.setAttribute("dominant-baseline", "alphabetic");
+    let codeLabel = null;
+    if (nLines > 0) {
+      codeLabel = svgEl("text", {
+        x: textBlockX,
+        "text-anchor": textAnchor,
+        "font-size": String(fontSize),
+        "font-family": "DM Sans, system-ui, sans-serif",
+        fill: "var(--lbl-fill, #2f2f2b)",
+        "paint-order": "stroke",
+        stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
+        "stroke-width": "4",
+        "stroke-linejoin": "round",
+        style: "transition: fill 0.15s ease, stroke 0.15s ease;",
+      });
+      if (nLines === 1) {
+        codeLabel.setAttribute("y", "0");
+        codeLabel.setAttribute("dominant-baseline", "central");
+      } else {
+        codeLabel.setAttribute("y", String(-lineH / 2));
+        codeLabel.setAttribute("dominant-baseline", "alphabetic");
+      }
+      lines.forEach((ln, i) => {
+        const tspan = svgEl("tspan", { x: textBlockX, dy: i === 0 ? "0" : String(lineH) });
+        tspan.textContent = ln;
+        codeLabel.appendChild(tspan);
+      });
     }
-    lines.forEach((ln, i) => {
-      const tspan = svgEl("tspan", { x: textBlockX, dy: i === 0 ? "0" : String(lineH) });
-      tspan.textContent = ln;
-      codeLabel.appendChild(tspan);
-    });
     if (verticalStraddleWest) {
-      stackG.appendChild(codeLabel);
+      if (codeLabel) stackG.appendChild(codeLabel);
       if (badgeG) stackG.appendChild(badgeG);
     } else {
       if (badgeG) stackG.appendChild(badgeG);
-      stackG.appendChild(codeLabel);
+      if (codeLabel) stackG.appendChild(codeLabel);
     }
 
+    labelG.appendChild(stackG);
     const hitCenterX = stackX + approxW / 2;
     const hitCenterY = my;
     const hitPadX = Math.max(72, approxW / 2 + 14);
     const hitPadY = nLines > 1 ? 36 : 28;
     labelG.appendChild(svgEl("rect", {
+      class: "rel-label-hit",
       x: hitCenterX - hitPadX,
       y: hitCenterY - hitPadY,
       width: hitPadX * 2,
       height: hitPadY * 2,
       fill: "transparent",
+      "pointer-events": "all",
       cursor: "pointer",
     }));
-    labelG.appendChild(stackG);
-    return { labelG, codeLabel };
+    /** World-space center for the path-edge flip: beside the hop badge (not past the full label width). */
+    const FLIP_ICON_R = 10;
+    const FLIP_GAP = 8;
+    let flipIconWorld = null;
+    if (showHop) {
+      if (verticalStraddleWest) {
+        // [text][badge]: immediately left of the badge (world X of badge left − gap − flip radius).
+        // Equivalent to stackX + circleCx − badgeR − FLIP_GAP − FLIP_ICON_R (not stackX − badgeR − …, since the badge is not at local x=0).
+        flipIconWorld = {
+          x: stackX + circleCx - badgeR - FLIP_GAP - FLIP_ICON_R,
+          y: my,
+        };
+      } else {
+        // [badge][text]: immediately right of the badge (spec: stackX + BADGE_R + FLIP_ICON_R + FLIP_GAP); y centered on row.
+        flipIconWorld = {
+          x: stackX + badgeR + FLIP_ICON_R + FLIP_GAP,
+          y: my,
+        };
+      }
+    } else if (showFlipIcons) {
+      if (verticalStraddleWest) {
+        flipIconWorld = {
+          x: stackX - FLIP_GAP - FLIP_ICON_R,
+          y: my,
+        };
+      } else {
+        flipIconWorld = {
+          x: stackX + approxW + FLIP_GAP + FLIP_ICON_R,
+          y: my,
+        };
+      }
+    }
+    return { labelG, codeLabel, flipIconWorld };
   }
 
   // Horizontal: my is the vertical center of the badge+name row (drawArrow places it just above the stroke).
-  const linesH = labelLines ?? [""];
-  const nLinesH = Math.max(1, linesH.length);
-  const approxTextWHoriz = Math.min(170, Math.max(48, linesH.join(" ").length * (fontSize * 0.55)));
+  const linesH = labelLines && labelLines.length ? labelLines : [];
+  const nLinesH = linesH.length;
+  const approxTextWHoriz =
+    nLinesH === 0 ? 0 : Math.min(170, Math.max(48, linesH.join(" ").length * (fontSize * 0.55)));
   const badgeRHoriz = hasChoices ? 9 : 7;
-  const showHopH = hopIndex != null && showBadges;
+  const showHopH = hopIndex != null && showHopNumbers;
   const horizTextGap = VERT_BADGE_NAME_GAP;
   const textStartXHoriz = showHopH ? 2 * badgeRHoriz + horizTextGap : 0;
   const totalWHoriz = textStartXHoriz + approxTextWHoriz;
-  const textHalfHHoriz = Math.max(lineH * 0.56, (nLinesH * lineH) / 2);
+  const textHalfHHoriz =
+    nLinesH === 0 ? 0 : Math.max(lineH * 0.56, (nLinesH * lineH) / 2);
   const multilineExtraHoriz = nLinesH > 1 ? 2 : 0;
   const stackHalfHHoriz = Math.max(showHopH ? badgeRHoriz + 1 : 0, textHalfHHoriz) + multilineExtraHoriz;
   const stackOriginX = mx - totalWHoriz / 2;
 
   const hitPadX = Math.max(90, totalWHoriz / 2 + 24);
   const hitPadY = Math.max(22, stackHalfHHoriz + 12);
-  labelG.appendChild(svgEl("rect", {
-    x: mx - hitPadX,
-    y: my - hitPadY,
-    width: hitPadX * 2,
-    height: hitPadY * 2,
-    fill: "transparent",
-    cursor: "pointer",
-  }));
 
   const stackG = svgEl("g", { class: "rel-label-stack rel-label-stack--horizontal" });
   stackG.setAttribute("transform", `translate(${stackOriginX}, ${my})`);
+
+  if (labelSolidBackground) {
+    const bgPad = 5;
+    stackG.appendChild(svgEl("rect", {
+      class: "rel-label-bg",
+      x: -bgPad,
+      y: -stackHalfHHoriz - bgPad,
+      width: totalWHoriz + 2 * bgPad,
+      height: 2 * stackHalfHHoriz + 2 * bgPad,
+      rx: 4,
+      fill: bgFill,
+      "pointer-events": "none",
+    }));
+  }
 
   let badgeG = null;
   if (showHopH) {
@@ -649,37 +771,65 @@ function makeRelLabel(mx, my, labelLines, {
   }
 
   const textAnchorX = showHopH ? textStartXHoriz : totalWHoriz / 2;
-  const codeLabel = svgEl("text", {
-    x: textAnchorX,
-    "text-anchor": showHopH ? "start" : "middle",
-    "font-size": String(fontSize),
-    "font-family": "DM Sans, system-ui, sans-serif",
-    fill: "var(--lbl-fill, #2f2f2b)",
-    "paint-order": "stroke",
-    stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
-    "stroke-width": "4",
-    "stroke-linejoin": "round",
-    style: "transition: fill 0.15s ease, stroke 0.15s ease;",
-  });
   /** Multi-line: baselines sit above the geometric text center; nudge down so the block lines up with the badge. */
   const multiLineVisualNudge = nLinesH > 1 ? 2 : 0;
-  if (nLinesH === 1) {
-    codeLabel.setAttribute("y", "0");
-    codeLabel.setAttribute("dominant-baseline", "central");
-  } else {
-    codeLabel.setAttribute("y", String(-lineH / 2 + multiLineVisualNudge));
-    codeLabel.setAttribute("dominant-baseline", "alphabetic");
+  let codeLabel = null;
+  if (nLinesH > 0) {
+    codeLabel = svgEl("text", {
+      x: textAnchorX,
+      "text-anchor": showHopH ? "start" : "middle",
+      "font-size": String(fontSize),
+      "font-family": "DM Sans, system-ui, sans-serif",
+      fill: "var(--lbl-fill, #2f2f2b)",
+      "paint-order": "stroke",
+      stroke: "var(--lbl-stroke, var(--surface, #ffffff))",
+      "stroke-width": "4",
+      "stroke-linejoin": "round",
+      style: "transition: fill 0.15s ease, stroke 0.15s ease;",
+    });
+    if (nLinesH === 1) {
+      codeLabel.setAttribute("y", "0");
+      codeLabel.setAttribute("dominant-baseline", "central");
+    } else {
+      codeLabel.setAttribute("y", String(-lineH / 2 + multiLineVisualNudge));
+      codeLabel.setAttribute("dominant-baseline", "alphabetic");
+    }
+    linesH.forEach((ln, i) => {
+      const tspan = svgEl("tspan", { x: textAnchorX, dy: i === 0 ? "0" : String(lineH) });
+      tspan.textContent = ln;
+      codeLabel.appendChild(tspan);
+    });
+    stackG.appendChild(codeLabel);
   }
-  linesH.forEach((ln, i) => {
-    const tspan = svgEl("tspan", { x: textAnchorX, dy: i === 0 ? "0" : String(lineH) });
-    tspan.textContent = ln;
-    codeLabel.appendChild(tspan);
-  });
-
-  stackG.appendChild(codeLabel);
   labelG.appendChild(stackG);
+  labelG.appendChild(svgEl("rect", {
+    class: "rel-label-hit",
+    x: mx - hitPadX,
+    y: my - hitPadY,
+    width: hitPadX * 2,
+    height: hitPadY * 2,
+    fill: "transparent",
+    "pointer-events": "all",
+    cursor: "pointer",
+  }));
 
-  return { labelG, codeLabel };
+  const FLIP_ICON_R_H = 10;
+  const FLIP_UNDER_BADGE_GAP = 4;
+  let flipIconWorld = null;
+  if (showHopH) {
+    // Centered under the hop badge (same for compact lanes — left-of-stack overlapped neighbor nodes).
+    flipIconWorld = {
+      x: stackOriginX + badgeRHoriz,
+      y: my + badgeRHoriz + FLIP_ICON_R_H + FLIP_UNDER_BADGE_GAP,
+    };
+  } else if (showFlipIcons) {
+    flipIconWorld = {
+      x: mx,
+      y: my + stackHalfHHoriz + FLIP_ICON_R_H + FLIP_UNDER_BADGE_GAP,
+    };
+  }
+
+  return { labelG, codeLabel, flipIconWorld };
 }
 
 function wrapSvgTextLines(svg, text, maxWidthPx, {
@@ -891,6 +1041,13 @@ const EXPLAIN_BADGE_TIP_HTML = {
       <p class="explain-rich-tip__p"><strong>Automatic:</strong> The logic identified this as a necessary bridge to complete your selected path.</p>
     </div>
   `.trim(),
+  "forced-direction": `
+    <div class="explain-rich-tip">
+      <p class="explain-rich-tip__p"><strong>Forced direction</strong></p>
+      <p class="explain-rich-tip__p">You chose a directional constraint between two waypoints. The pathfinder respects it: this hop is shown and interpreted in the direction illustrated (left &rarr; right in the summary), even when the underlying matrix relationship could be read the other way.</p>
+      <p class="explain-rich-tip__p">Arrowheads and relationship labels follow that reading so they stay consistent with your waypoint order.</p>
+    </div>
+  `.trim(),
 };
 
 function explainSemanticStrengthTipHtml(sourceEl) {
@@ -945,6 +1102,14 @@ function initExplainBadgeTips() {
   container.dataset.explainBadgeTipsInit = "1";
 
   let badgeTipEl = null;
+  const coarseNoHover = (() => {
+    try {
+      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+      return window.matchMedia("(hover: none), (pointer: coarse)").matches;
+    } catch (_) {
+      return false;
+    }
+  })();
 
   const targetFromEvent = (e) => {
     const raw = e.target;
@@ -953,6 +1118,7 @@ function initExplainBadgeTips() {
   };
 
   container.addEventListener("pointerover", (e) => {
+    if (coarseNoHover) return;
     const el = targetFromEvent(e);
     if (!el) return;
     if (badgeTipEl === el) return;
@@ -963,6 +1129,7 @@ function initExplainBadgeTips() {
   });
 
   container.addEventListener("pointerout", (e) => {
+    if (coarseNoHover) return;
     const rel = e.relatedTarget;
     if (badgeTipEl && (!rel || !badgeTipEl.contains(rel))) {
       hideArchiHoverTip();
@@ -986,6 +1153,38 @@ function initExplainBadgeTips() {
       badgeTipEl = null;
     });
   });
+
+  if (coarseNoHover) {
+    container.addEventListener("click", (e) => {
+      const el = targetFromEvent(e);
+      if (!el) return;
+      const key = el.getAttribute("data-explain-tip");
+      if (!key) return;
+      if (badgeTipEl === el && _archiHoverTip && _archiHoverTip.style.display !== "none") {
+        hideArchiHoverTip();
+        badgeTipEl = null;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      badgeTipEl = el;
+      showExplainBadgeRichTip(e, key, el);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    document.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (!badgeTipEl) return;
+        const t = e.target;
+        if (t instanceof Element && t.closest(".explain-badge-tip[data-explain-tip]")) return;
+        hideArchiHoverTip();
+        badgeTipEl = null;
+      },
+      true
+    );
+  }
 }
 
 window.initExplainBadgeTips = initExplainBadgeTips;
@@ -1023,7 +1222,8 @@ function drawStandardElement(name, x, y, w, h, opts = {}) {
   g.appendChild(drawShape(shape.type, x, y, w, h, color));
 
   // Value (ellipse) has no corner glyph; Meaning shows a thought-bubble badge like other motivation types.
-  const showCornerGlyph = iconFn && w > 60 && canonicalName !== "Value";
+  const showCornerGlyph =
+    iconFn && w > 60 && canonicalName !== "Value";
   if (showCornerGlyph) {
     const cube = shape.type === "cube";
     const doc = shape.type === "document";
@@ -1110,6 +1310,11 @@ function drawStandardElement(name, x, y, w, h, opts = {}) {
   const startY = titleCenterY - ((lines.length - 1) * (lineH / 2));
   const titleFill = highlightMissingLabel ? "#b45309" : "#111";
   const textAnchorX = x + padX + maxTextW / 2;
+  /** Soft halo for contrast on tinted shapes — avoids thick stroked outlines that read as solid boxes per line. */
+  const titleHaloStyle =
+    "filter: drop-shadow(0 0 0.55px rgb(255,255,255)) drop-shadow(0 0 1.25px rgba(255,255,255,0.93));";
+  const subtitleHaloStyle =
+    "filter: drop-shadow(0 0 0.45px rgb(255,255,255)) drop-shadow(0 0 1px rgba(255,255,255,0.88));";
 
   lines.forEach((line, i) => {
     const txt = svgEl("text", {
@@ -1117,10 +1322,7 @@ function drawStandardElement(name, x, y, w, h, opts = {}) {
       "text-anchor": "middle", "dominant-baseline": "central",
       "font-size": fontSize, "font-family": "DM Sans, system-ui, sans-serif",
       "font-weight": "700", fill: titleFill, "pointer-events": "none",
-      "paint-order": "stroke fill",
-      stroke: "var(--surface, #ffffff)",
-      "stroke-width": "3",
-      "stroke-linejoin": "round",
+      style: titleHaloStyle,
     });
     txt.textContent = line;
     g.appendChild(txt);
@@ -1141,10 +1343,7 @@ function drawStandardElement(name, x, y, w, h, opts = {}) {
         fill: "#334155",
         opacity: "0.9",
         "pointer-events": "none",
-        "paint-order": "stroke fill",
-        stroke: "var(--surface, #ffffff)",
-        "stroke-width": "2.4",
-        "stroke-linejoin": "round",
+        style: subtitleHaloStyle,
       }, line));
     });
   }
@@ -1170,7 +1369,44 @@ function shouldHighlightMissingThematicLabels() {
 
 /** Caches one random pick per domain + element so labels do not flicker on redraw. */
 const SCENARIO_LABEL_VARIANT_CACHE = new Map();
-let scenarioVariantCacheForDomain = null;
+/** Invalidated when domain or {@code state.activeClusterIndex} changes. */
+let scenarioLabelCacheSignature = null;
+
+/**
+ * Label map for the active theme: cluster slice when {@code SCENARIOS[key].clusters} exists,
+ * otherwise the flat {@code labels} object.
+ */
+function getActiveScenarioLabelsMap(key) {
+  const sc =
+    typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[key] ? SCENARIOS[key] : null;
+  if (!sc) return {};
+  const clusters = Array.isArray(sc.clusters) ? sc.clusters : [];
+  if (clusters.length) {
+    let idx = typeof window !== "undefined" && window.state ? window.state.activeClusterIndex : null;
+    if (idx == null || !Number.isFinite(Number(idx))) idx = 0;
+    idx = Math.max(0, Math.min(clusters.length - 1, Math.floor(Number(idx))));
+    const slice = clusters[idx];
+    return slice && slice.labels && typeof slice.labels === "object" ? slice.labels : {};
+  }
+  return sc.labels && typeof sc.labels === "object" ? sc.labels : {};
+}
+
+function getScenarioLabelCacheSignature(key) {
+  const clusterIdx =
+    typeof window !== "undefined" && window.state && window.state.activeClusterIndex != null
+      ? String(window.state.activeClusterIndex)
+      : "";
+  return `${key}\0${clusterIdx}`;
+}
+
+function clearScenarioLabelVariantCache() {
+  SCENARIO_LABEL_VARIANT_CACHE.clear();
+  scenarioLabelCacheSignature = null;
+}
+
+if (typeof window !== "undefined") {
+  window.clearScenarioLabelVariantCache = clearScenarioLabelVariantCache;
+}
 
 function resolveScenarioMappedLabel(domainKey, canonical, raw) {
   if (typeof raw === "string") return raw;
@@ -1194,14 +1430,12 @@ function resolveScenarioMappedLabel(domainKey, canonical, raw) {
 function getScenarioDisplayName(elementName) {
   const canonical = String(elementName || "");
   const key = activeDomainContextKey();
-  if (scenarioVariantCacheForDomain !== key) {
+  const sig = getScenarioLabelCacheSignature(key);
+  if (scenarioLabelCacheSignature !== sig) {
     SCENARIO_LABEL_VARIANT_CACHE.clear();
-    scenarioVariantCacheForDomain = key;
+    scenarioLabelCacheSignature = sig;
   }
-  const labels =
-    typeof SCENARIOS !== "undefined" && SCENARIOS && SCENARIOS[key]?.labels
-      ? SCENARIOS[key].labels
-      : {};
+  const labels = getActiveScenarioLabelsMap(key);
   const hasKey = Object.prototype.hasOwnProperty.call(labels, canonical);
   const resolved = hasKey ? resolveScenarioMappedLabel(key, canonical, labels[canonical]) : null;
   const hasMapping = hasKey && resolved != null;
@@ -1223,33 +1457,14 @@ function explainAbstractSublineFromScenario(scenario) {
   return `<span class="path-node-chip-abstract">${escPathDiag(scenario.canonical)}</span>`;
 }
 
+/** Hop summary row: always show the official element type on line 2 so every endpoint matches the stacked card chrome (icon + title + uppercase type). */
+function explainHopSummaryAbstractSubline(scenario) {
+  if (!scenario?.canonical) return "";
+  return `<span class="path-node-chip-abstract">${escPathDiag(scenario.canonical)}</span>`;
+}
+
 function getDomainLabel(elementName) {
   return getScenarioDisplayName(elementName).display;
-}
-
-function startsWithArticle(term) {
-  return /^(?:the|a|an)\b/i.test(String(term || "").trim());
-}
-
-function looksLikeProperNoun(term) {
-  const t = String(term || "").trim();
-  if (!t) return false;
-  const forcedProper = new Set(["Emperor Palpatine", "Darth Vader"]);
-  if (forcedProper.has(t)) return true;
-  return /^(?:Emperor|Darth|General|Admiral|Doctor|Dr\.|Mr\.|Ms\.|Mrs\.)\b/.test(t);
-}
-
-function withArticle(term) {
-  const t = String(term || "").trim();
-  if (!t) return "";
-  if (startsWithArticle(t) || looksLikeProperNoun(t)) return t;
-  return `the ${t}`;
-}
-
-function sentenceCaseStart(text) {
-  const t = String(text || "");
-  if (!t) return "";
-  return t[0].toUpperCase() + t.slice(1);
 }
 
 function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignVertical = false, illustrationSeed = "", hideCompositeIllustrations = false, diagUpperOnWest = null, compactCornerSide = "left", swimlaneCompositeSubsBelowDiagonal = false, swimlaneCompositePlacement = null, swimlaneExcludeAdjacentIllustrationSubs = null } = {}) {
@@ -1259,33 +1474,44 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
   const subtitle = scenario.isThematic ? scenario.canonical : "";
   const pattern = COMPOSITE_PATTERNS[safeName];
   const g = svgEl("g", { class: "archimate-element", style: "cursor: pointer;" });
+  g.setAttribute("data-node-id", safeName);
+  const hoverTipsEnabled = (() => {
+    try {
+      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return true;
+      return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    } catch (_) {
+      return true;
+    }
+  })();
 
   // Small tooltip: only show when the label is actually truncated in-box.
-  g.addEventListener("mouseenter", (e) => {
-    try {
-      const wouldTruncate = labelWouldTruncateInBox(measureSvg, mainLabel, w, { subtitle });
-      if (!wouldTruncate) {
-        hideArchiHoverTip();
-        return;
-      }
-      const fill = typeof getColor === "function" ? getColor(safeName) : "#ffffff";
-      const stroke = "#2f2f2b";
-      const iconSvg =
-        (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function")
-          ? window.getElementMiniSvg(safeName, 18)
-          : "";
-      setArchiHoverTipContent({
-        displayName: mainLabel,
-        canonicalName: safeName,
-        fill,
-        stroke,
-        iconSvg,
-      });
-      showArchiHoverTip(e);
-    } catch (_) {}
-  });
-  g.addEventListener("mousemove", (e) => moveArchiHoverTip(e));
-  g.addEventListener("mouseleave", () => hideArchiHoverTip());
+  if (hoverTipsEnabled) {
+    g.addEventListener("mouseenter", (e) => {
+      try {
+        const wouldTruncate = labelWouldTruncateInBox(measureSvg, mainLabel, w, { subtitle });
+        if (!wouldTruncate) {
+          hideArchiHoverTip();
+          return;
+        }
+        const fill = typeof getColor === "function" ? getColor(safeName) : "#ffffff";
+        const stroke = "#2f2f2b";
+        const iconSvg =
+          (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function")
+            ? window.getElementMiniSvg(safeName, 18)
+            : "";
+        setArchiHoverTipContent({
+          displayName: mainLabel,
+          canonicalName: safeName,
+          fill,
+          stroke,
+          iconSvg,
+        });
+        showArchiHoverTip(e);
+      } catch (_) {}
+    });
+    g.addEventListener("mousemove", (e) => moveArchiHoverTip(e));
+    g.addEventListener("mouseleave", () => hideArchiHoverTip());
+  }
 
   if (!pattern) {
     const box = drawStandardElement(mainLabel, x, y, w, h, {
@@ -1387,25 +1613,38 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
     g.appendChild(mainBox);
 
     const illEdges = svgEl("g", { class: "composite-illustration" });
-    // Upper sub → Parent: dashed diagonal into the parent corner (line only; no aggregation glyph).
+    if (measureSvg) ensureMarkers(measureSvg);
+    // Upper sub → Parent: open diamond at the parent corner (marker-end).
     {
       const sx = upperOnWest ? (xUpper + w) : xUpper;
       const sy = yUpper + h;
       const ex = upperOnWest ? x : (x + w);
       const ey = y;
       const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-      arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.appendChild(svgEl("path", {
+        ...compositeIllustrationAggPath(sx, sy, ex, ey, "end"),
+        stroke: "#333",
+        "stroke-width": "1.5",
+        fill: "none",
+        "stroke-dasharray": "4,2",
+      }));
       arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: subFirst, to: safeName, code: "G" }); };
       illEdges.appendChild(arrowG);
     }
-    // Parent → Lower sub: dashed diagonal from parent corner.
+    // Parent → Lower sub: open diamond at the parent corner (marker-start).
     {
       const sx = upperOnWest ? (x + w) : x;
       const sy = y + h;
       const ex = upperOnWest ? xLower : (xLower + w);
       const ey = yLower;
       const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-      arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.appendChild(svgEl("path", {
+        ...compositeIllustrationAggPath(sx, sy, ex, ey, "start"),
+        stroke: "#333",
+        "stroke-width": "1.5",
+        fill: "none",
+        "stroke-dasharray": "4,2",
+      }));
       arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
       illEdges.appendChild(arrowG);
     }
@@ -1465,6 +1704,7 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
     g.appendChild(mainBox);
 
     const illEdges = svgEl("g", { class: "composite-illustration" });
+    if (measureSvg) ensureMarkers(measureSvg);
 
     if (placement.mode === "below-diag") {
       const diagOnRight = !!placement.diagOnRight;
@@ -1473,7 +1713,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
       {
         const ey = ySub;
         const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-        arrowG.appendChild(svgEl("path", { d: `M ${cx} ${sy0} L ${cx} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.appendChild(svgEl("path", {
+          ...compositeIllustrationAggPath(cx, sy0, cx, ey, "start"),
+          stroke: "#333",
+          "stroke-width": "1.5",
+          fill: "none",
+          "stroke-dasharray": "4,2",
+        }));
         arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subFirst, code: "G" }); };
         illEdges.appendChild(arrowG);
       }
@@ -1482,7 +1728,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
         const ex = xRight;
         const ey = ySub;
         const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy0} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.appendChild(svgEl("path", {
+          ...compositeIllustrationAggPath(sx, sy0, ex, ey, "start"),
+          stroke: "#333",
+          "stroke-width": "1.5",
+          fill: "none",
+          "stroke-dasharray": "4,2",
+        }));
         arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
         illEdges.appendChild(arrowG);
       } else {
@@ -1490,7 +1742,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
         const ex = xLeft + w;
         const ey = ySub;
         const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy0} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.appendChild(svgEl("path", {
+          ...compositeIllustrationAggPath(sx, sy0, ex, ey, "start"),
+          stroke: "#333",
+          "stroke-width": "1.5",
+          fill: "none",
+          "stroke-dasharray": "4,2",
+        }));
         arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
         illEdges.appendChild(arrowG);
       }
@@ -1501,7 +1759,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
         const ex = xLeft + w;
         const ey = ySub;
         const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.appendChild(svgEl("path", {
+          ...compositeIllustrationAggPath(sx, sy, ex, ey, "start"),
+          stroke: "#333",
+          "stroke-width": "1.5",
+          fill: "none",
+          "stroke-dasharray": "4,2",
+        }));
         arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subFirst, code: "G" }); };
         illEdges.appendChild(arrowG);
       }
@@ -1511,7 +1775,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
         const ex = xRight;
         const ey = ySub;
         const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-        arrowG.appendChild(svgEl("path", { d: `M ${sx} ${sy} L ${ex} ${ey}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+        arrowG.appendChild(svgEl("path", {
+          ...compositeIllustrationAggPath(sx, sy, ex, ey, "start"),
+          stroke: "#333",
+          "stroke-width": "1.5",
+          fill: "none",
+          "stroke-dasharray": "4,2",
+        }));
         arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: safeName, to: subSecond, code: "G" }); };
         illEdges.appendChild(arrowG);
       }
@@ -1589,42 +1859,58 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
   g.appendChild(mainBox);
 
   const illEdges = svgEl("g", { class: "composite-illustration" });
-  const drawAggVertical = (xLine, y0, y1, fromSub) => {
+  if (measureSvg) ensureMarkers(measureSvg);
+  const drawAggVertical = (xLine, y0, y1, fromSub, diamondOn) => {
     const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-    arrowG.appendChild(svgEl("path", { d: `M ${xLine} ${y0} L ${xLine} ${y1}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+    arrowG.appendChild(svgEl("path", {
+      ...compositeIllustrationAggPath(xLine, y0, xLine, y1, diamondOn),
+      stroke: "#333",
+      "stroke-width": "1.5",
+      fill: "none",
+      "stroke-dasharray": "4,2",
+    }));
     arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
     return arrowG;
   };
-  const drawAggHorizontal = (yLine, x0, x1, fromSub) => {
+  const drawAggHorizontal = (yLine, x0, x1, fromSub, diamondOn) => {
     const arrowG = svgEl("g", { class: "clickable", style: "cursor:pointer;" });
-    arrowG.appendChild(svgEl("path", { d: `M ${x0} ${yLine} L ${x1} ${yLine}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+    arrowG.appendChild(svgEl("path", {
+      ...compositeIllustrationAggPath(x0, yLine, x1, yLine, diamondOn),
+      stroke: "#333",
+      "stroke-width": "1.5",
+      fill: "none",
+      "stroke-dasharray": "4,2",
+    }));
     arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
     return arrowG;
   };
 
   if (cornerCompact) {
-    // Bottom sub → Parent: vertical dashed.
+    // Bottom sub → Parent: vertical dashed; diamond at main bottom (path ends at y + h).
     illEdges.appendChild(drawAggVertical(
       x + w / 2,
       y + vOffset,
       y + h,
-      subSecond
+      subSecond,
+      "end"
     ));
-    // Parent ↔ side sub: horizontal dashed.
+    // Parent ↔ side sub: horizontal dashed; diamond on the parent face.
     if (xSide != null) {
       if (side === "left") {
         illEdges.appendChild(drawAggHorizontal(
           y + h / 2,
           xSide + w,
           x,
-          subFirst
+          subFirst,
+          "end"
         ));
       } else {
         illEdges.appendChild(drawAggHorizontal(
           y + h / 2,
           x + w,
           xSide,
-          subFirst
+          subFirst,
+          "start"
         ));
       }
     }
@@ -1634,7 +1920,13 @@ function drawElement(name, x, y, w = EL_W, h = EL_H, { measureSvg = null, alignV
       const xM = x + w / 2;
       const yS = isTop ? fromY + h : fromY;
       const yE = isTop ? y : y + h;
-      arrowG.appendChild(svgEl("path", { d: `M ${xM} ${yS} L ${xM} ${yE}`, stroke: "#333", "stroke-width": "1.5", fill: "none", "stroke-dasharray": "4,2" }));
+      arrowG.appendChild(svgEl("path", {
+        ...compositeIllustrationAggPath(xM, yS, xM, yE, "end"),
+        stroke: "#333",
+        "stroke-width": "1.5",
+        fill: "none",
+        "stroke-dasharray": "4,2",
+      }));
       arrowG.onclick = (e) => { e.stopPropagation(); window.expandHopDetails?.(null, { from: fromSub, to: safeName, code: "G" }); };
       return arrowG;
     };
@@ -1713,6 +2005,10 @@ function drawShape(type, x, y, w, h, fill) {
         fill, stroke, "stroke-width": sw,
       });
     }
+    case "pill": {
+      const rx = Math.min(w, h) / 2;
+      return svgEl("rect", { x, y, width: w, height: h, rx, ry: rx, fill, stroke, "stroke-width": sw });
+    }
     case "cube": {
       const d = 10; 
       const g = svgEl("g", {});
@@ -1734,6 +2030,13 @@ function drawShape(type, x, y, w, h, fill) {
       g.appendChild(top);
       g.appendChild(side);
       g.appendChild(front);
+      return g;
+    }
+    case "technology-component": {
+      const g = svgEl("g", {});
+      for (const r of technologyComponentRectSpecs(x, y, w, h)) {
+        g.appendChild(svgEl("rect", { ...r, fill, stroke, "stroke-width": sw }));
+      }
       return g;
     }
     case "document": {
@@ -1809,16 +2112,16 @@ function pathStepWithCanonicalMatrixRow(step, fromEl, toEl) {
 }
 
 /**
- * Short label for relationship-choice buttons: Appendix B direct vs §5.7 derived from the matrix row.
- * Association (O) is the universal fallback (§5.2.4), not an Appendix B cell code — show as distinct from Direct/Derived.
+ * Short label for relationship-choice buttons: Appendix B explicit vs §5.7 inferred from the matrix row.
+ * Association (O) is the universal fallback (§5.2.4), not an Appendix B cell code — show as distinct from Explicit/Inferred.
  */
 function relChoiceMatrixKindLabel(code, matrixDirectCodes, matrixDerivedCodes) {
   const U = String(code || "").toUpperCase();
   if (U === "O") return "Generic";
   const d = (matrixDirectCodes || []).map((c) => String(c).toUpperCase());
   const der = (matrixDerivedCodes || []).map((c) => String(c).toUpperCase());
-  if (d.includes(U)) return "Direct";
-  if (der.includes(U)) return "Derived";
+  if (d.includes(U)) return "Explicit";
+  if (der.includes(U)) return "Inferred";
   return "";
 }
 
@@ -1874,302 +2177,77 @@ function edgeChoiceCommittedForHop(hopIndex, codesList) {
   return pickerCodes.some((c) => String(c).toUpperCase() === u);
 }
 
-function swimlaneLabelRectHitsObstacles(rect, obstacles) {
-  for (const r of obstacles) {
-    if (!(rect.right <= r.left || rect.left >= r.right || rect.bottom <= r.top || rect.top >= r.bottom)) {
-      return true;
-    }
+/**
+ * Minimum horizontal gap between swimlane columns so the widest hop label fits in the inter-node channel.
+ */
+function estimateSwimlaneHopLabelWidthPx(step, hopIndex) {
+  const codesList = step?.codes?.length ? step.codes : [];
+  if (!codesList.length) return SWIMLANE_COMPACT_COL_GAP;
+  const choiceUndecided =
+    hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
+  const active =
+    hopIndex != null ? resolvedRelationshipCodeForHop({ codes: codesList }, hopIndex) : String(codesList[0] ?? "O");
+  const labelLines = wrapLabel(
+    choiceUndecided ? describeRelCodesForDiagramLabel(codesList) : describeRelCodesForDiagramLabel([active])
+  );
+  const fontSize = 8.5;
+  const lines = labelLines ?? [""];
+  const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+  const hasChoices = codesList.length > 1;
+  const showHop = hopIndex != null;
+  const hopBadgeR = showHop ? (hasChoices ? 9 : 7) : 0;
+  const textStartW = showHop ? 2 * hopBadgeR + VERT_BADGE_NAME_GAP : 0;
+  return textStartW + approxTextW + 20;
+}
+
+function normalizeEdgeConstraintForRender(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const sourceId = String(raw.sourceId ?? raw.source ?? "").trim();
+  const targetId = String(raw.targetId ?? raw.target ?? "").trim();
+  if (!sourceId || !targetId || sourceId === targetId) return null;
+  const type = raw.type === "LOCKED_RELATIONSHIP" ? "LOCKED_RELATIONSHIP" : "FORCED_DIRECTION";
+  return { sourceId, targetId, type };
+}
+
+function hasDirectedEdgeConstraint(edgeConstraints, source, target, type = "FORCED_DIRECTION") {
+  if (!Array.isArray(edgeConstraints) || !source || !target) return false;
+  for (const raw of edgeConstraints) {
+    const c = normalizeEdgeConstraintForRender(raw);
+    if (!c) continue;
+    if (c.type !== type) continue;
+    if (c.sourceId === source && c.targetId === target) return true;
   }
   return false;
 }
 
-/** How many swimlane obstacle rects intersect a label bounds (for picking east vs west straddle). */
-function swimlaneCountLabelObstacleHits(rawRect, obstacles) {
-  const pad = 10;
-  const rect = {
-    left: rawRect.left - pad,
-    right: rawRect.right + pad,
-    top: rawRect.top - pad,
-    bottom: rawRect.bottom + pad,
-  };
-  let n = 0;
-  for (const o of obstacles) {
-    if (!(rect.right <= o.left || rect.left >= o.right || rect.bottom <= o.top || rect.top >= o.bottom)) n++;
-  }
-  return n;
-}
-
 /**
- * Keeps vertical-straddle hop labels on the Y range of the drawn connector segment (after obstacle nudges,
- * which can otherwise push badge+text by ±100px and look “random” vs the stroke).
+ * If this hop’s element pair has a {@code FORCED_DIRECTION} constraint, returns the stored
+ * source→target reading (Appendix B row used for that arrow). Otherwise null.
+ * Stroke direct vs derived must follow this row — not path segment order — or flips mis-classify
+ * when e.g. Serving is direct Interface→Collaboration but derived Collaboration→Interface.
  */
-function clampVertStraddleLabelYToSegment(labelY, yLoL, yHiL, labelLines, codesList, hopIndex, showBadges) {
-  const relLineH = 11.5;
-  const nLines = Math.max(1, (labelLines ?? [""]).length);
-  const showHop = hopIndex != null && showBadges;
-  const badgeR = showHop ? (codesList.length > 1 ? 11 : 9) : 0;
-  const textHalfH = Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
-  const stackHalfH = Math.max(badgeR + 2, textHalfH);
-  const edgePad = 3;
-  const lenL = yHiL - yLoL;
-  if (lenL <= 1e-6) return labelY;
-  const safeTop = yLoL + stackHalfH + edgePad;
-  const safeBottom = yHiL - stackHalfH - edgePad;
-  if (safeTop <= safeBottom) {
-    return clamp(labelY, safeTop, safeBottom);
+function forcedDirectionEndpointsForHop(edgeConstraints, semanticFrom, semanticTo) {
+  if (!Array.isArray(edgeConstraints) || !semanticFrom || !semanticTo) return null;
+  if (hasDirectedEdgeConstraint(edgeConstraints, semanticFrom, semanticTo, "FORCED_DIRECTION")) {
+    return { from: semanticFrom, to: semanticTo };
   }
-  const mid = (yLoL + yHiL) / 2;
-  return Math.max(
-    yLoL + stackHalfH + edgePad,
-    Math.min(mid, yHiL - stackHalfH - edgePad),
-  );
-}
-
-/**
- * Mirrors {@link makeRelLabel} vertical-straddle placement for obstacle tests (same stackX / width heuristics).
- */
-function estimateSwimlaneVertStraddleLabelRect({
-  straddleAnchorX,
-  labelY,
-  straddleExtraX,
-  effectiveVerticalStraddleWest,
-  straddleLineStrokeX,
-  forceBadgeCenterOffsetFromLineEast,
-  labelLines,
-  codesList,
-  hopIndex,
-  showBadges,
-}) {
-  const hasChoices = codesList.length > 1;
-  const fontSize = 8.5;
-  const relLineH = 11.5;
-  const badgeR = hasChoices ? 9 : 7;
-  const showHop = hopIndex != null && showBadges;
-  const textGap =
-    straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)
-      ? Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE)
-      : VERT_BADGE_NAME_GAP;
-  const lines = labelLines ?? [""];
-  const nLines = Math.max(1, lines.length);
-  const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-  const textStartXEast = showHop ? 2 * badgeR + textGap : 0;
-  /** Slight margin so nudge tests don’t underestimate vs real makeRelLabel + spine clearance. */
-  const approxW = textStartXEast + approxTextW + 18;
-  const textHalfH = Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
-  const stackHalfH = Math.max((showHop ? badgeR : 0) + 2, textHalfH);
-
-  let stackX;
-  let circleCx = showHop ? badgeR : 0;
-  if (effectiveVerticalStraddleWest) {
-    stackX = straddleAnchorX - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
-    circleCx = approxTextW + textGap + badgeR;
-  } else {
-    stackX = straddleAnchorX + straddleExtraX + BADGE_LINE_CLEARANCE;
-    circleCx = badgeR;
+  if (hasDirectedEdgeConstraint(edgeConstraints, semanticTo, semanticFrom, "FORCED_DIRECTION")) {
+    return { from: semanticTo, to: semanticFrom };
   }
-
-  if (straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)) {
-    const lineX = straddleLineStrokeX;
-    if (effectiveVerticalStraddleWest) {
-      const circleRight = stackX + circleCx + badgeR;
-      const maxRight = lineX - SPINE_BADGE_CLEAR_FROM_LINE;
-      if (circleRight > maxRight) {
-        stackX -= circleRight - maxRight;
-      }
-    } else {
-      if (forceBadgeCenterOffsetFromLineEast != null && Number.isFinite(forceBadgeCenterOffsetFromLineEast)) {
-        stackX = lineX + forceBadgeCenterOffsetFromLineEast - circleCx;
-      }
-      const leftEdge = stackX;
-      const minLeft = lineX + SPINE_BADGE_CLEAR_FROM_LINE;
-      if (leftEdge < minLeft) {
-        stackX += minLeft - leftEdge;
-      }
-    }
-  }
-
-  return {
-    left: stackX,
-    right: stackX + approxW,
-    top: labelY - stackHalfH,
-    bottom: labelY + stackHalfH,
-  };
-}
-
-function estimateSwimlaneHorizontalLabelRect(labelLineX, labelY, labelLines, hopIndex, showBadges, hasChoices) {
-  const fontSize = 8.5;
-  const lineH = 10.0;
-  const showHop = hopIndex != null && showBadges;
-  const lines = labelLines ?? [""];
-  const nLines = Math.max(1, lines.length);
-  const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-  const badgeR = hasChoices ? 9 : 7;
-  const textStartX = showHop ? 2 * badgeR + VERT_BADGE_NAME_GAP : 0;
-  const totalW = textStartX + approxTextW;
-  const textHalfH = Math.max(lineH * 0.56, (nLines * lineH) / 2);
-  const multilineExtra = nLines > 1 ? 2 : 0;
-  const stackHalfH = Math.max(showHop ? badgeR + 1 : 0, textHalfH) + multilineExtra;
-  const pad = 8;
-  return {
-    left: labelLineX - totalW / 2 - pad,
-    right: labelLineX + totalW / 2 + pad,
-    top: labelY - stackHalfH - pad,
-    bottom: labelY + stackHalfH + pad,
-  };
-}
-
-function nudgeSwimlaneRelLabelAgainstObstacles({
-  labelLineX,
-  labelY,
-  straddleAnchorX,
-  useVertStraddle,
-  effectiveVerticalStraddleWest,
-  straddleExtraX,
-  straddleLineStrokeX,
-  forceBadgeCenterOffsetFromLineEast,
-  labelLines,
-  codesList,
-  hopIndex,
-  showBadges,
-  obstacles,
-}) {
-  if (!obstacles || obstacles.length === 0) {
-    return { labelLineX, labelY, straddleAnchorX };
-  }
-  const hasChoices = codesList.length > 1;
-
-  const tryOffset = (dx, dy) => {
-    const sax = straddleAnchorX + (useVertStraddle ? dx : 0);
-    const lx = labelLineX + dx;
-    const ly = labelY + dy;
-    const rawRect = useVertStraddle
-      ? estimateSwimlaneVertStraddleLabelRect({
-          straddleAnchorX: sax,
-          labelY: ly,
-          straddleExtraX,
-          effectiveVerticalStraddleWest,
-          straddleLineStrokeX,
-          forceBadgeCenterOffsetFromLineEast,
-          labelLines,
-          codesList,
-          hopIndex,
-          showBadges,
-        })
-      : estimateSwimlaneHorizontalLabelRect(lx, ly, labelLines, hopIndex, showBadges, hasChoices);
-    const pad = 10;
-    const rect = {
-      left: rawRect.left - pad,
-      right: rawRect.right + pad,
-      top: rawRect.top - pad,
-      bottom: rawRect.bottom + pad,
-    };
-    return !swimlaneLabelRectHitsObstacles(rect, obstacles);
-  };
-
-  /**
-   * When the stroke has a fixed vertical spine/bus X ({@code straddleLineStrokeX}), horizontal nudges
-   * must not move {@code straddleAnchorX}: {@code makeRelLabel} only enforces min clearance *past*
-   * the line, so sliding the anchor east detaches the badge stack from the actual connector (spread
-   * swimlanes: labels drift to lane bands while H–V–H runs far to the right).
-   */
-  const lockStraddleToStrokeX =
-    useVertStraddle &&
-    straddleLineStrokeX != null &&
-    Number.isFinite(straddleLineStrokeX);
-
-  /** Horizontal inline labels: keep nudges small so text stays near the stroke (swimlane obstacle avoid). */
-  const OFFSETS = useVertStraddle
-    ? lockStraddleToStrokeX
-      ? [
-          [0, 0],
-          [0, -22],
-          [0, 22],
-          [0, -44],
-          [0, 44],
-          [0, -66],
-          [0, 66],
-        ]
-      : [
-          [0, 0],
-          [0, -22],
-          [0, 22],
-          [0, -44],
-          [0, 44],
-          [0, -66],
-          [0, 66],
-          [36, 0],
-          [-36, 0],
-          [52, 0],
-          [-52, 0],
-          [68, 0],
-          [-68, 0],
-          [84, 0],
-          [-84, 0],
-          [100, 0],
-          [-100, 0],
-          [120, 0],
-          [-120, 0],
-          [36, -22],
-          [36, 22],
-          [-36, -22],
-          [-36, 22],
-          [68, -28],
-          [-68, -28],
-          [68, 28],
-          [-68, 28],
-          [0, -88],
-          [0, 88],
-          [0, -110],
-          [0, 110],
-        ]
-    : [
-        [0, 0],
-        [0, -11],
-        [0, 11],
-        [0, -18],
-        [0, 18],
-        [0, -22],
-        [0, 22],
-        [0, -30],
-        [0, 30],
-        [0, -36],
-        [0, 36],
-        [0, -44],
-        [0, 44],
-        [24, 0],
-        [-24, 0],
-        [40, 0],
-        [-40, 0],
-        [56, 0],
-        [-56, 0],
-        [72, 0],
-        [-72, 0],
-        [24, -18],
-        [-24, -18],
-        [24, 18],
-        [-24, 18],
-        [40, -22],
-        [-40, -22],
-        [40, 22],
-        [-40, 22],
-      ];
-  for (const [dx, dy] of OFFSETS) {
-    if (tryOffset(dx, dy)) {
-      return {
-        labelLineX: labelLineX + dx,
-        labelY: labelY + dy,
-        straddleAnchorX: straddleAnchorX + (useVertStraddle ? dx : 0),
-      };
-    }
-  }
-  return { labelLineX, labelY, straddleAnchorX };
+  return null;
 }
 
 function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   hopIndex = null,
   /** Shown on the hop badge (1…n top-to-bottom). Defaults to hopIndex; set in vertical compact when path order ≠ visual order. */
   displayHopIndex = null,
-  showBadges = true,
+  showHopNumbers = true,
+  showFlipControls = true,
+  showLockControls = true,
+  /**
+   * Show relationship-type text on edges without hop badges or flip controls (diagram “names only” overlay mode).
+   */
+  relationshipLabelsOnly = false,
   strokeOnly = false,
   interactiveOnly = false,
   /** True when this hop crosses a swimlane band (nudge labels off the lane divider line). */
@@ -2179,6 +2257,10 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    * Endpoints stay right-center of source and left-center of target.
    */
   orthogonal = false,
+  /** Custom routing selector for callers that need explicit path forms. */
+  pathType = "linear",
+  /** When pathType=manhattan, force the horizontal run Y (typically a lane gap midpoint). */
+  manhattanMidY = null,
   /**
    * When orthogonal and the hop changes layer (different y): draw a cubic Bézier instead of H–V–H so
    * the link reads as one smooth curve and does not waste horizontal space on long elbow legs.
@@ -2234,9 +2316,52 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    * Optional; when null, only the source-side clamp (bus X ≥ x1) is applied after the return-elbow nudge.
    */
   swimlaneOrthoBusMaxX = null,
+  /**
+   * Optional shared registry of node obstacles + placed label bounds; {@link createEdgeLabelSpaceRegistry}.
+   * Used to nudge labels so bounding boxes do not overlap during the interactive render pass.
+   */
+  labelSpaceRegistry = null,
+  /** True for universal §5.2.4 Association bridge edges from {@link buildGraph} (informal last resort). */
+  isAssociationBridge = false,
+  /** Semantic source element for this hop (used by edge-constraint UI). */
+  semanticFrom = null,
+  /** Semantic target element for this hop (used by edge-constraint UI). */
+  semanticTo = null,
+  /**
+   * Waypoint element set from current query (reserved for future stricter flip scope).
+   * Flip visibility follows diagram overlay prefs; {@link window.__validateEdgeConstraintFlip} still
+   * rejects impossible direction swaps.
+   */
+  waypointElementSet = null,
+  /** Active user edge constraints. */
+  edgeConstraints = null,
+  /**
+   * When set, skip automatic relationship-label placement and anchor the label stack at this point
+   * (Study mode: labels near the target / arrowhead).
+   */
+  overrideRelLabelPosition = null,
 } = {}) {
+  const showCanvasLabels = showHopNumbers || showFlipControls || showLockControls || relationshipLabelsOnly;
+  const showInlineEdgeActionButtons = false;
   const OUTER_BYPASS_RETURN_ELBOW_MIN_PX = 50;
-  const codesList = codes && codes.length ? codes : [];
+  /**
+   * Store holds FORCED_DIRECTION as user-chosen source→target. Path drawing uses semanticFrom→semanticTo
+   * along the route; when the user flips, the constraint is the inverse pair — redraw the stroke from
+   * target→source so arrowheads match the forced reading (matrix row + markers from reversed orientation).
+   */
+  const reverseLayout =
+    !!semanticFrom &&
+    !!semanticTo &&
+    Array.isArray(edgeConstraints) &&
+    hasDirectedEdgeConstraint(edgeConstraints, semanticTo, semanticFrom, "FORCED_DIRECTION") &&
+    !hasDirectedEdgeConstraint(edgeConstraints, semanticFrom, semanticTo, "FORCED_DIRECTION");
+
+  let codesList = codes && codes.length ? [...codes] : [];
+  if (reverseLayout && typeof mergeMatrixRowForPair === "function") {
+    const row = mergeMatrixRowForPair(semanticTo, semanticFrom, true);
+    if (row?.merged?.length) codesList = row.merged.map((c) => String(c).toUpperCase());
+  }
+
   const choiceUndecided =
     hopIndex != null && codesList.length > 1 && !edgeChoiceCommittedForHop(hopIndex, codesList);
   const activeCode =
@@ -2245,11 +2370,60 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       : (codesList[0] ?? "O");
   const UPPER = activeCode.toUpperCase();
   const style = ARROW_STYLES[UPPER] ?? ARROW_STYLES["O"];
-  const isDirectForStroke = (() => {
-    if (matrixDirectCodes && matrixDirectCodes.includes(UPPER)) return true;
-    if (matrixDerivedCodes && matrixDerivedCodes.includes(UPPER)) return false;
-    return isDirect;
-  })();
+  /**
+   * Vertical same-column paths shorten the start so a drawn start marker sits in the gap (see VERT_EDGE_INSET).
+   * Most relationship codes have no start marker — applying that inset anyway made shafts look truncated.
+   */
+  const applyVertStartInset = style.startMarker != null && style.startMarker !== "none";
+  let rowMd = matrixDirectCodes;
+  let rowMder = matrixDerivedCodes;
+  if (reverseLayout && typeof mergeMatrixRowForPair === "function") {
+    const row = mergeMatrixRowForPair(semanticTo, semanticFrom, true);
+    if (row?.direct?.length) rowMd = row.direct.map((c) => String(c).toUpperCase());
+    if (row?.derived?.length) rowMder = row.derived.map((c) => String(c).toUpperCase());
+  }
+  const isAssocBridge = !!isAssociationBridge;
+  const forcedEnds = forcedDirectionEndpointsForHop(edgeConstraints, semanticFrom, semanticTo);
+  const lockEligible =
+    !!forcedEnds &&
+    !!semanticFrom &&
+    !!semanticTo &&
+    showLockControls &&
+    UPPER !== "O" &&
+    !isAssocBridge;
+  let isDirectForStroke;
+  if (forcedEnds && typeof mergeMatrixRowForPair === "function") {
+    const row = mergeMatrixRowForPair(forcedEnds.from, forcedEnds.to, true);
+    if (row.direct.includes(UPPER)) isDirectForStroke = true;
+    else if (row.derived.includes(UPPER)) isDirectForStroke = false;
+    else isDirectForStroke = isDirect;
+  } else {
+    isDirectForStroke = (() => {
+      if (rowMd && rowMd.includes(UPPER)) return true;
+      if (rowMder && rowMder.includes(UPPER)) return false;
+      return isDirect;
+    })();
+  }
+
+  if (reverseLayout) {
+    const sx = x1;
+    const sy = y1;
+    x1 = x2;
+    y1 = y2;
+    x2 = sx;
+    y2 = sy;
+    if (
+      outerArcCShape &&
+      Number.isFinite(outerArcCShape.tx) &&
+      [outerArcCShape.sx, outerArcCShape.sy, outerArcCShape.ex, outerArcCShape.ey].every(Number.isFinite)
+    ) {
+      const o = outerArcCShape;
+      outerArcCShape = { tx: o.tx, sx: o.ex, sy: o.ey, ex: o.sx, ey: o.sy };
+    } else {
+      outerArcCShape = null;
+    }
+    outerArcTrackX = null;
+  }
 
   ensureMarkers(svg);
 
@@ -2276,6 +2450,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   /** @type {{ sy: number, ey: number, sx: number, ex: number } | null} */
   let outerArcCShapeMeta = null;
   let outerArcFixedLabelY = null;
+  const useManhattan = pathType === "manhattan";
   if (
     outerArcCShape &&
     Number.isFinite(outerArcCShape.tx) &&
@@ -2300,36 +2475,28 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     outerArcCShapeApplied = true;
     outerArcCShapeMeta = { sx, sy, ex: exR, ey };
     outerArcFixedLabelY = (sy + ey) / 2;
-
-    // #region agent log
-    __agentLog(
-      "ui/renderer.js:mkArrowPath outerArcCShape",
-      "outerArcCShape path computed",
-      {
-        hopIndex,
-        txC,
-        sx,
-        sy,
-        ex,
-        exR,
-        ey,
-        returnSegLen: Math.abs(exR - txC),
-        d,
-      },
-      "pre-fix",
-      "B"
-    );
-    // #endregion
   }
 
   if (!outerArcCShapeApplied) {
-  if (verticalSwimlanePorts) {
+  if (useManhattan) {
+    const runY = Number.isFinite(manhattanMidY) ? manhattanMidY : (y1 + y2) / 2;
+    const clrZ = ARROW_MARKER_TARGET_CLEARANCE;
+    const y2z =
+      Math.abs(y2 - runY) > clrZ ? y2 - Math.sign(y2 - runY) * clrZ : y2;
+    d = `M ${x1} ${y1} L ${x1} ${runY} L ${x2} ${runY} L ${x2} ${y2z}`;
+    orthoMidX = (x1 + x2) / 2;
+    orthoVertical = true;
+    swimlaneColElbow = true;
+    pathCurved = false;
+    straightVerticalInset = false;
+  } else if (verticalSwimlanePorts) {
     if (sameX) {
       const isLv = len > 8;
       // Inset only the path start so the start marker sits in the gap; end at the target edge so
       // marker-end (arrow/triangle) touches the destination box — symmetric inset on both ends
       // leaves both markers floating mid-gap (reads as “random” placement).
-      const insetStart = isLv ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+      const insetStart =
+        isLv && applyVertStartInset ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
       if (y1 < y2) {
         y1s = y1 + insetStart;
         y2s = y2;
@@ -2444,7 +2611,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     }
   } else if (sameX) {
     const isLongVertical = len > 8;
-    const insetStart = isLongVertical ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
+    const insetStart =
+      isLongVertical && applyVertStartInset ? Math.min(VERT_EDGE_INSET, len * 0.28) : 0;
     if (y1 < y2) {
       y1s = y1 + insetStart;
       y2s = y2;
@@ -2519,31 +2687,6 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       straightVerticalInset = false;
       pathCurved = false;
     }
-
-    // #region agent log
-    __agentLog(
-      "ui/renderer.js:mkArrowPath outerArcTrackX",
-      "outerArcTrackX route decision",
-      {
-        hopIndex,
-        verticalSwimlanePorts,
-        orthogonal,
-        sameX,
-        x1,
-        y1,
-        x2,
-        y2,
-        y1s,
-        y2s,
-        txArc,
-        x2Bus,
-        returnSegLen: Math.abs(x2Bus - txArc),
-        d,
-      },
-      "pre-fix",
-      "C"
-    );
-    // #endregion
   }
 
   /** Horizontal swimlanes: H–V–H between different columns (same as vertical elbow, needs straddle + leader even when len ≤ 10). */
@@ -2562,31 +2705,46 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     swimlaneColElbow ||
     orthogonalCornerRoute;
 
-  const isDash = !choiceUndecided && (style.line === "dashed" || !isDirectForStroke);
+  /** Association (§5.2.4) is undirected in the metamodel — no meaningful direction flip on the diagram. */
+  const flipEligible =
+    !!semanticFrom &&
+    !!semanticTo &&
+    showFlipControls &&
+    UPPER !== "O" &&
+    !isAssocBridge;
+  /**
+   * Association (O) is always solid. Serving (V) uses the §4.2-style solid stroke and open arrowhead
+   * for every hop — not the derived-relationship dashed stroke — so it matches the language reference.
+   */
+  const isDash =
+    !isAssocBridge &&
+    (style.line === "dashed" || (!isDirectForStroke && UPPER !== "O" && UPPER !== "V"));
 
   const mkStrokePath = () => {
     const attrs = {
       d: d,
-      stroke: "#333",
-      "stroke-width": choiceUndecided ? "1.5" : "1.6",
+      stroke: isAssocBridge
+        ? "var(--path-association-warning-stroke, #c27820)"
+        : "#333",
+      "stroke-width": isAssocBridge ? "1.85" : "1.6",
       fill: "none",
-      class: "archimate-arrow-stroke",
-      "stroke-dasharray": choiceUndecided ? "3 5" : isDash ? "6,3" : "none",
-      "marker-end":
-        choiceUndecided || style.endMarker === "none"
-          ? ""
-          : `url(#end-${UPPER}-${isDirectForStroke ? "d" : "r"})`,
-      "marker-start":
-        choiceUndecided || style.startMarker === "none" ? "" : `url(#start-${UPPER})`,
+      class: isAssocBridge
+        ? "archimate-arrow-stroke archimate-arrow-stroke--association-bridge graph-edge"
+        : "archimate-arrow-stroke graph-edge",
+      "stroke-dasharray": isAssocBridge ? "none" : isDash ? "6,3" : "none",
+      "marker-end": style.endMarker === "none" ? "" : `url(#end-${UPPER}-${isDirectForStroke ? "d" : "r"})`,
+      "marker-start": style.startMarker === "none" ? "" : `url(#start-${UPPER})`,
       "pointer-events": "none",
     };
-    if (choiceUndecided || pathCurved) attrs["stroke-linecap"] = "round";
+    if (choiceUndecided || pathCurved || isAssocBridge) attrs["stroke-linecap"] = "round";
     return svgEl("path", attrs);
   };
 
   if (strokeOnly) {
     const g = svgEl("g", {
-      class: `archimate-arrow-stroke-layer${choiceUndecided ? " provisional" : ""}`,
+      class: `archimate-arrow-stroke-layer${choiceUndecided ? " provisional" : ""}${
+        isAssocBridge ? " archimate-arrow--association-bridge" : ""
+      }`,
     });
     g.appendChild(mkStrokePath());
     return g;
@@ -2597,28 +2755,73 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       ? describeRelCodesForDiagramLabel(codesList)
       : describeRelCodesForDiagramLabel([activeCode])
   );
-  const yLoL = outerArcCShapeMeta
+  /** Relationship-type text on arrows only when "Relationship names" overlay is on, or when the hop is still ambiguous. */
+  const displayRelLines = relationshipLabelsOnly || choiceUndecided ? labelLines : [];
+
+  const parsedOrtho = pathCurved ? null : segmentsFromOrthogonalD(d);
+  let inlineLongestHorizontal = null;
+  let verticalMidYFromLongestVSeg = null;
+  if (parsedOrtho && parsedOrtho.segs.length) {
+    let longest = parsedOrtho.segs[0];
+    for (const s of parsedOrtho.segs) {
+      if (s.len > longest.len) longest = s;
+    }
+    const maxVL = Math.max(0, ...parsedOrtho.segs.filter((s) => s.kind === "v").map((s) => s.len));
+    const maxHL = Math.max(0, ...parsedOrtho.segs.filter((s) => s.kind === "h").map((s) => s.len));
+    if (
+      useVertStraddle &&
+      !sameColumnVertical &&
+      !sameColumnOuterCShape &&
+      longest.kind === "h" &&
+      longest.len > maxVL + 0.5 &&
+      longest.len > 10 &&
+      // Swimlane H–V–H cross-lane: longest horizontal legs must not switch to “inline row” mode — that
+      // drops straddle placement and anchors Y to a lane’s horizontal leg or chord midpoint (often the
+      // lane band divider), so badges float away from the vertical bus.
+      !(crossLaneEdge && orthogonalCornerRoute)
+    ) {
+      inlineLongestHorizontal = { midX: longest.midX, midY: longest.midY };
+    } else if (useVertStraddle && longest.kind === "v" && maxVL >= maxHL - 1e-6 && longest.len > 6) {
+      verticalMidYFromLongestVSeg = longest.midY;
+    } else if (useVertStraddle && crossLaneEdge && orthogonalCornerRoute && maxVL > 1e-6) {
+      const vSegs = parsedOrtho.segs.filter((s) => s.kind === "v");
+      if (vSegs.length) {
+        verticalMidYFromLongestVSeg = vSegs.reduce((best, s) => (s.len > best.len ? s : best), vSegs[0]).midY;
+      }
+    }
+  }
+  const forLabelStraddle = useVertStraddle && !inlineLongestHorizontal;
+
+  let yLoL = outerArcCShapeMeta
     ? Math.min(outerArcCShapeMeta.sy, outerArcCShapeMeta.ey)
     : isLongVertical
       ? Math.min(y1s, y2s)
       : orthoVertical
         ? yLo
         : Math.min(y1, y2);
-  const yHiL = outerArcCShapeMeta
+  let yHiL = outerArcCShapeMeta
     ? Math.max(outerArcCShapeMeta.sy, outerArcCShapeMeta.ey)
     : isLongVertical
       ? Math.max(y1s, y2s)
       : orthoVertical
         ? yHi
         : Math.max(y1, y2);
+  const vStraddleY = verticalStraddleYExtentFromOrthoPath(parsedOrtho);
+  if (vStraddleY != null && vStraddleY.yHi - vStraddleY.yLo > 1e-6) {
+    yLoL = vStraddleY.yLo;
+    yHiL = vStraddleY.yHi;
+  }
   const lenL = yHiL - yLoL;
   /** Geometric center of the drawn stroke — keeps every label at the same relative position in the gap. */
-  let labelAlong = useVertStraddle
+  let labelAlong = forLabelStraddle
     ? outerArcFixedLabelY != null
       ? outerArcFixedLabelY
       : (yLoL + yHiL) / 2
     : (y1 + y2) / 2;
-  if (useVertStraddle && lenL > 1e-6) {
+  if (verticalMidYFromLongestVSeg != null && forLabelStraddle && lenL > 1e-6) {
+    labelAlong = clamp(verticalMidYFromLongestVSeg, yLoL, yHiL);
+  }
+  if (forLabelStraddle && lenL > 1e-6) {
     const maxPad = Math.min(20, Math.max(12, lenL * 0.2));
     if (lenL > 2 * maxPad) {
       labelAlong = clamp(labelAlong, yLoL + maxPad, yHiL - maxPad);
@@ -2648,61 +2851,70 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     : sameColumnVertical || sameColumnOuterCShape
       ? VERT_STRADDLE_PAST_MAIN
       : 0;
-  let labelLineX = useVertStraddle
-    ? straddleAnchorX
-    : (() => {
-        if (Math.abs(y1 - y2) >= 0.5) {
-          return ((x1 + x2) / 2) + stairOffsetX + nudgeX;
-        }
-        const xEnd = horizontalStrokeEndXForLabel(x1, x2, y1, y2, orthogonal);
-        const segLeft = Math.min(x1, xEnd);
-        const segRight = Math.max(x1, xEnd);
-        const segMid = (segLeft + segRight) / 2;
-        const fontSize = 8.5;
-        const lines = labelLines ?? [""];
-        const approxTextW = Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-        const hasChoices = codesList.length > 1;
-        const showHop = hopIndex != null && showBadges;
-        const hopBadgeR = showHop ? (hasChoices ? 9 : 7) : 0;
-        const textStartW = showHop ? 2 * hopBadgeR + VERT_BADGE_NAME_GAP : 0;
-        const totalW = textStartW + approxTextW;
-        const halfW = totalW / 2;
-        const margin = 6;
-        const minLX = segLeft + halfW + margin;
-        const maxLX = segRight - halfW - margin;
-        const unclamped = segMid + stairOffsetX + nudgeX;
-        if (minLX <= maxLX) return clamp(unclamped, minLX, maxLX);
-        return unclamped;
-      })();
-  let labelY = useVertStraddle ? labelAlong + (showBadges ? 0 : 4) : (y1 + y2) / 2;
-  labelY += nudgeY;
-  /** Horizontal hops: inline badge+name row; my is row center, placed just above the stroke. */
-  if (!useVertStraddle) {
-    // Stroke uses y1,y2 from geometry — labelNudgeY must not change yLine or labels float off the dash.
-    const yLine = (y1 + y2) / 2;
-    const stackHalfH = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
-    const gapAboveStroke = 2;
-    labelY = yLine - stackHalfH - gapAboveStroke;
-  }
+  let labelLineX = inlineLongestHorizontal
+    ? inlineLongestHorizontal.midX + stairOffsetX + nudgeX
+    : forLabelStraddle
+      ? straddleAnchorX
+      : (() => {
+          if (Math.abs(y1 - y2) >= 0.5) {
+            return ((x1 + x2) / 2) + stairOffsetX + nudgeX;
+          }
+          const xEnd = horizontalStrokeEndXForLabel(x1, x2, y1, y2, orthogonal);
+          const segLeft = Math.min(x1, xEnd);
+          const segRight = Math.max(x1, xEnd);
+          const segMid = (segLeft + segRight) / 2;
+          const fontSize = 8.5;
+          const lines = displayRelLines ?? [];
+          const approxTextW =
+            lines.length === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+          const hasChoices = codesList.length > 1;
+          const showHop = hopIndex != null && showHopNumbers;
+          const hopBadgeR = showHop ? (hasChoices ? 9 : 7) : 0;
+          const textStartW = showHop ? 2 * hopBadgeR + VERT_BADGE_NAME_GAP : 0;
+          const totalW = textStartW + approxTextW;
+          const halfW = totalW / 2;
+          const margin = 6;
+          const minLX = segLeft + halfW + margin;
+          const maxLX = segRight - halfW - margin;
+          const unclamped = segMid + stairOffsetX + nudgeX;
+          if (minLX <= maxLX) return clamp(unclamped, minLX, maxLX);
+          return unclamped;
+        })();
+  let labelY = (() => {
+    if (inlineLongestHorizontal) {
+      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      return inlineLongestHorizontal.midY - sh - 2 + nudgeY;
+    }
+    let ly = forLabelStraddle ? labelAlong + (showHopNumbers ? 0 : 4) : (y1 + y2) / 2;
+    ly += nudgeY;
+    /** Horizontal hops: inline badge+name row; my is row center, placed just above the stroke. */
+    if (!forLabelStraddle) {
+      const yLine = (y1 + y2) / 2;
+      const stackHalfH = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      const gapAboveStroke = 2;
+      ly = yLine - stackHalfH - gapAboveStroke;
+    }
+    return ly;
+  })();
   /** Keep hop labels off the swimlane band divider (often coincides with the gap midpoint). */
-  if (crossLaneEdge && useVertStraddle && lenL > 1e-6) {
+  if (crossLaneEdge && forLabelStraddle && lenL > 1e-6) {
     const nudge = Math.min(6, lenL * 0.06);
     labelY -= y2 > y1 ? nudge : -nudge;
   }
-  if (useVertStraddle && lenL > 1e-6) {
+  if (forLabelStraddle && lenL > 1e-6) {
     labelY = clampVertStraddleLabelYToSegment(
       labelY,
       yLoL,
       yHiL,
-      labelLines,
+      displayRelLines,
       codesList,
       hopIndex,
-      showBadges,
+      showHopNumbers,
     );
   }
   /** Vertical stroke x (path geometry, excludes label nudge) — enforces badge clearance from spine / outer bus. */
   let straddleLineStrokeX = null;
-  if (useVertStraddle) {
+  if (forLabelStraddle) {
     if (outerArcCShapeApplied && outerArcCShape && Number.isFinite(outerArcCShape.tx)) {
       straddleLineStrokeX = outerArcCShape.tx;
     } else if (txArc != null && Number.isFinite(txArc)) {
@@ -2722,7 +2934,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     swimlaneLabelObstacles &&
     swimlaneLabelObstacles.length &&
     crossLaneEdge &&
-    useVertStraddle &&
+    forLabelStraddle &&
     !outerArcCShapeApplied
   ) {
     const rectE = estimateSwimlaneVertStraddleLabelRect({
@@ -2732,11 +2944,11 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       effectiveVerticalStraddleWest: false,
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast:
-        useVertStraddle && (sameColumnVertical || sameColumnOuterCShape) ? 22 : null,
-      labelLines,
+        forLabelStraddle && (sameColumnVertical || sameColumnOuterCShape) ? 15 : null,
+      labelLines: displayRelLines,
       codesList,
       hopIndex,
-      showBadges,
+      showHopNumbers,
     });
     const rectW = estimateSwimlaneVertStraddleLabelRect({
       straddleAnchorX,
@@ -2745,10 +2957,10 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
       effectiveVerticalStraddleWest: true,
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast: null,
-      labelLines,
+      labelLines: displayRelLines,
       codesList,
       hopIndex,
-      showBadges,
+      showHopNumbers,
     });
     const hitE = swimlaneCountLabelObstacleHits(rectE, swimlaneLabelObstacles);
     const hitW = swimlaneCountLabelObstacleHits(rectW, swimlaneLabelObstacles);
@@ -2761,49 +2973,49 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     }
   }
   const forceBadgeCenterOffsetFromLineEast =
-    useVertStraddle && !effectiveVerticalStraddleWest && (sameColumnVertical || sameColumnOuterCShape) ? 22 : null;
+    forLabelStraddle && !effectiveVerticalStraddleWest && (sameColumnVertical || sameColumnOuterCShape) ? 15 : null;
   if (swimlaneLabelObstacles && swimlaneLabelObstacles.length) {
     const nudged = nudgeSwimlaneRelLabelAgainstObstacles({
       labelLineX,
       labelY,
       straddleAnchorX,
-      useVertStraddle,
+      useVertStraddle: forLabelStraddle,
       effectiveVerticalStraddleWest,
       straddleExtraX,
       straddleLineStrokeX,
       forceBadgeCenterOffsetFromLineEast,
-      labelLines,
+      labelLines: displayRelLines,
       codesList,
       hopIndex,
-      showBadges,
+      showHopNumbers,
       obstacles: swimlaneLabelObstacles,
     });
     labelLineX = nudged.labelLineX;
     labelY = nudged.labelY;
     straddleAnchorX = nudged.straddleAnchorX;
   }
-  if (useVertStraddle && lenL > 1e-6) {
+  if (forLabelStraddle && lenL > 1e-6) {
     labelY = clampVertStraddleLabelYToSegment(
       labelY,
       yLoL,
       yHiL,
-      labelLines,
+      displayRelLines,
       codesList,
       hopIndex,
-      showBadges,
+      showHopNumbers,
     );
   }
   /**
    * Swimlane obstacle nudges can shift inline hop rows vertically; keep them tied to the horizontal stroke.
    */
   if (
-    !useVertStraddle &&
+    !forLabelStraddle &&
     swimlaneLabelObstacles &&
     swimlaneLabelObstacles.length &&
     Math.abs(y1 - y2) < 0.5
   ) {
     const yLine = (y1 + y2) / 2;
-    const sh = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
+    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
     const targetY = yLine - sh - 2;
     labelY = clamp(labelY, targetY - 52, targetY + 52);
   }
@@ -2811,25 +3023,119 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
    * East/west ports sit at mid-Y; unclamped labels sit partly above the EL_H bbox. After obstacle nudges,
    * re-clamp so the row stays within the shape band (compact + swimlane same-lane horizontal).
    */
-  if (!useVertStraddle && Math.abs(y1 - y2) < 0.5) {
+  if (!forLabelStraddle && Math.abs(y1 - y2) < 0.5) {
     const yLine = (y1 + y2) / 2;
-    const sh = horizontalRelLabelStackHalfH(labelLines, hopIndex, showBadges, codesList);
+    const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
     const minCenterY = yLine - EL_H / 2 + 2 + sh;
     if (labelY < minCenterY) labelY = minCenterY;
   }
+
+  if (labelSpaceRegistry) {
+    const hasChoices = codesList.length > 1;
+    const rawRect = forLabelStraddle
+      ? estimateSwimlaneVertStraddleLabelRect({
+          straddleAnchorX,
+          labelY,
+          straddleExtraX,
+          effectiveVerticalStraddleWest,
+          straddleLineStrokeX,
+          forceBadgeCenterOffsetFromLineEast,
+          labelLines: displayRelLines,
+          codesList,
+          hopIndex,
+          showHopNumbers,
+        })
+      : estimateSwimlaneHorizontalLabelRect(labelLineX, labelY, displayRelLines, hopIndex, showHopNumbers, hasChoices);
+    const worldRect = {
+      left: rawRect.left,
+      right: rawRect.right,
+      top: rawRect.top,
+      bottom: rawRect.bottom,
+    };
+    const { dx, dy } = labelSpaceRegistry.resolvePlacement(worldRect);
+    labelLineX += dx;
+    labelY += dy;
+    if (forLabelStraddle) straddleAnchorX += dx;
+  }
+
+  if (forLabelStraddle && straddleLineStrokeX != null && Number.isFinite(straddleLineStrokeX)) {
+    const lineBuf = Math.max(
+      SPINE_BADGE_CLEAR_FROM_LINE,
+      typeof LABEL_TO_LINE_BUFFER_PX === "number" ? LABEL_TO_LINE_BUFFER_PX : 15,
+    );
+    const lineX = straddleLineStrokeX;
+    const estAfter = estimateSwimlaneVertStraddleLabelRect({
+      straddleAnchorX,
+      labelY,
+      straddleExtraX,
+      effectiveVerticalStraddleWest,
+      straddleLineStrokeX,
+      forceBadgeCenterOffsetFromLineEast,
+      labelLines: displayRelLines,
+      codesList,
+      hopIndex,
+      showHopNumbers,
+    });
+    if (!effectiveVerticalStraddleWest && estAfter.left < lineX + lineBuf) {
+      const fix = lineX + lineBuf - estAfter.left;
+      straddleAnchorX += fix;
+      labelLineX += fix;
+    } else if (effectiveVerticalStraddleWest && estAfter.right > lineX - lineBuf) {
+      const fix = estAfter.right - (lineX - lineBuf);
+      straddleAnchorX -= fix;
+      labelLineX -= fix;
+    }
+  }
+
+  /** Registry de-overlap can apply large dy after swimlane clamps; keep labels tied to the hop geometry. */
+  if (swimlaneLabelObstacles && swimlaneLabelObstacles.length) {
+    if (forLabelStraddle && lenL > 1e-6) {
+      labelY = clampVertStraddleLabelYToSegment(
+        labelY,
+        yLoL,
+        yHiL,
+        displayRelLines,
+        codesList,
+        hopIndex,
+        showHopNumbers,
+      );
+    } else if (!forLabelStraddle && Math.abs(y1 - y2) < 0.5) {
+      const yLine = (y1 + y2) / 2;
+      const sh = horizontalRelLabelStackHalfH(displayRelLines, hopIndex, showHopNumbers, codesList);
+      const targetY = yLine - sh - 2;
+      const band = 40;
+      labelY = clamp(labelY, targetY - band, targetY + band);
+      const minCenterY = yLine - EL_H / 2 + 2 + sh;
+      if (labelY < minCenterY) labelY = minCenterY;
+    }
+  }
+
+  if (
+    overrideRelLabelPosition != null &&
+    Number.isFinite(overrideRelLabelPosition.x) &&
+    Number.isFinite(overrideRelLabelPosition.y)
+  ) {
+    labelLineX = overrideRelLabelPosition.x;
+    labelY = overrideRelLabelPosition.y;
+  }
+
   const badgeDisplayNumber = displayHopIndex != null ? displayHopIndex : hopIndex;
-  const { labelG } = makeRelLabel(labelLineX, labelY, labelLines, {
-    hopIndex,
-    badgeDisplayNumber,
-    showBadges,
-    hasChoices: codesList.length > 1,
-    verticalStraddle: useVertStraddle,
-    straddleAnchorX: useVertStraddle ? straddleAnchorX : null,
-    straddleExtraX: useVertStraddle ? straddleExtraX : 0,
-    verticalStraddleWest: useVertStraddle ? effectiveVerticalStraddleWest : false,
-    straddleLineStrokeX: useVertStraddle ? straddleLineStrokeX : null,
-    forceBadgeCenterOffsetFromLineEast,
-  });
+  /** With relationship labels hidden (no hop/flip/names-only mode), skip canvas labels (flip is suppressed via flipEligible). */
+  const { labelG, flipIconWorld: flipIconWorldFromLabel } = showCanvasLabels
+    ? makeRelLabel(labelLineX, labelY, displayRelLines, {
+        hopIndex,
+        badgeDisplayNumber,
+        showHopNumbers,
+        showFlipIcons: showFlipControls,
+        hasChoices: codesList.length > 1,
+        verticalStraddle: forLabelStraddle,
+        straddleAnchorX: forLabelStraddle ? straddleAnchorX : null,
+        straddleExtraX: forLabelStraddle ? straddleExtraX : 0,
+        verticalStraddleWest: forLabelStraddle ? effectiveVerticalStraddleWest : false,
+        straddleLineStrokeX: forLabelStraddle ? straddleLineStrokeX : null,
+        forceBadgeCenterOffsetFromLineEast,
+      })
+    : { labelG: svgEl("g", { class: "rel-label rel-label--empty" }), flipIconWorld: null };
 
   /** Vertical layouts rely on shared Y alignment between connector and label stack; tethers are omitted. */
   const showStraddleLeader = false;
@@ -2848,9 +3154,9 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
 
   const wireClick = (g) => {
     g.addEventListener("click", (e) => {
+      if (e.target instanceof Element && e.target.closest(".path-edge-control")) return;
       e.preventDefault(); e.stopPropagation();
       if (typeof window.clearHopHighlights === "function") window.clearHopHighlights();
-      if (codesList.length > 1 && typeof window.cycleEdgeChoice === "function") window.cycleEdgeChoice(hopIndex);
       if (typeof window.highlightHop === "function") window.highlightHop(hopIndex);
       // After optional full re-render (multi-rel hops), scroll the explanation panel on the next frame.
       requestAnimationFrame(() => {
@@ -2859,21 +3165,214 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     });
   };
 
+  const resolveControlAnchor = () => {
+    let iconX;
+    let iconY;
+    if (
+      flipIconWorldFromLabel &&
+      Number.isFinite(flipIconWorldFromLabel.x) &&
+      Number.isFinite(flipIconWorldFromLabel.y)
+    ) {
+      iconX = flipIconWorldFromLabel.x;
+      iconY = flipIconWorldFromLabel.y;
+    } else {
+      /** Fallback when labels omit a badge but flip is still eligible (rare). */
+      const horizontalInline = !forLabelStraddle && Math.abs(y1 - y2) < 0.5;
+      if (horizontalInline) {
+        const linesH = displayRelLines ?? [];
+        const fs = 8.5;
+        const approxTextW =
+          linesH.length === 0 ? 0 : Math.min(170, Math.max(48, linesH.join(" ").length * (fs * 0.55)));
+        const hasRelChoices = codesList.length > 1;
+        const badgeR = hasRelChoices ? 9 : 7;
+        const showHop = hopIndex != null && showHopNumbers;
+        const textStart = showHop ? 2 * badgeR + VERT_BADGE_NAME_GAP : 0;
+        const totalW = textStart + approxTextW;
+        const stackOriginX = labelLineX - totalW / 2;
+        const FLIP_R_FB = 10;
+        const UNDER_GAP = 4;
+        if (showHop) {
+          iconX = stackOriginX + badgeR;
+          iconY = labelY + badgeR + FLIP_R_FB + UNDER_GAP;
+        } else {
+          iconX = labelLineX;
+          iconY = labelY;
+        }
+      } else {
+        iconX = labelLineX + 16;
+        iconY = labelY - 14;
+      }
+    }
+    return { iconX, iconY };
+  };
+
+  const makeFlipControl = () => {
+    if (!showInlineEdgeActionButtons) return null;
+    if (!flipEligible) return null;
+    const { iconX, iconY } = resolveControlAnchor();
+    const btn = svgEl("g", {
+      class: "path-edge-flip path-edge-control",
+      transform: `translate(${iconX}, ${iconY})`,
+      "data-source": String(semanticFrom || ""),
+      "data-target": String(semanticTo || ""),
+      "aria-label": "Flip edge direction",
+      role: "button",
+      style: "cursor:pointer;pointer-events:all;opacity:0.92;transition:opacity 120ms ease;",
+    });
+    btn.appendChild(svgEl("title", {}, "Flip direction for this hop (re-find path)"));
+    btn.appendChild(svgEl("circle", {
+      cx: "0",
+      cy: "0",
+      r: "10",
+      fill: "#f1f5f9",
+      stroke: "#475569",
+      "stroke-width": "1.35",
+    }));
+    btn.appendChild(svgEl("text", {
+      x: "0",
+      y: "1",
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+      "font-size": "12",
+      "font-weight": "800",
+      fill: "#0f172a",
+      "pointer-events": "none",
+    }, "⇄"));
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const src = String(semanticFrom || "").trim();
+      const dst = String(semanticTo || "").trim();
+      if (src && dst && typeof window.applyEdgeConstraintFlip === "function") {
+        window.applyEdgeConstraintFlip(src, dst);
+      }
+    });
+    return btn;
+  };
+
+  const makeLockControls = () => {
+    if (!showInlineEdgeActionButtons) return { lockBadge: null, unpinBtn: null, relTag: null };
+    if (!lockEligible) return { lockBadge: null, unpinBtn: null, relTag: null };
+    const { iconX, iconY } = resolveControlAnchor();
+    const relCode = String(UPPER || "").toUpperCase();
+    const relName = RELATIONSHIPS?.[relCode]?.name || relCode || "Relationship";
+    const controlX = iconX + (flipEligible ? 24 : 0);
+    const relTag = svgEl("g", {
+      class: "path-edge-lock-label path-edge-control",
+      transform: `translate(${controlX + 12}, ${iconY - 13})`,
+      style: "pointer-events:none;opacity:0.95;",
+    });
+    relTag.appendChild(svgEl("title", {}, `Locked relationship: ${relName}`));
+    relTag.appendChild(svgEl("rect", {
+      x: "-3",
+      y: "-7",
+      rx: "4",
+      ry: "4",
+      width: String(Math.max(28, relName.length * 5.4 + 8)),
+      height: "14",
+      fill: "#eff6ff",
+      stroke: "#93c5fd",
+      "stroke-width": "1",
+    }));
+    relTag.appendChild(svgEl("text", {
+      x: "1",
+      y: "0",
+      "dominant-baseline": "middle",
+      "font-size": "9",
+      "font-weight": "700",
+      fill: "#1e3a8a",
+      "pointer-events": "none",
+    }, relName));
+    const lockBadge = svgEl("g", {
+      class: "path-edge-lock path-edge-control",
+      transform: `translate(${controlX}, ${iconY})`,
+      style: "pointer-events:none;opacity:0.96;",
+    });
+    lockBadge.appendChild(svgEl("title", {}, `Locked direction (${relName})`));
+    lockBadge.appendChild(svgEl("circle", {
+      cx: "0",
+      cy: "0",
+      r: "9",
+      fill: "#eff6ff",
+      stroke: "#1d4ed8",
+      "stroke-width": "1.25",
+    }));
+    lockBadge.appendChild(svgEl("path", {
+      d: "M -2.4 -1.4 V -2.7 A 2.4 2.4 0 0 1 0 -5.1 A 2.4 2.4 0 0 1 2.4 -2.7 V -1.4 M -3.5 -1.4 H 3.5 V 3.9 H -3.5 Z",
+      fill: "none",
+      stroke: "#1e3a8a",
+      "stroke-width": "1.1",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      "pointer-events": "none",
+    }));
+
+    const unpinBtn = svgEl("g", {
+      class: "path-edge-unpin path-edge-control",
+      transform: `translate(${controlX + 22}, ${iconY})`,
+      role: "button",
+      style: "cursor:pointer;pointer-events:all;opacity:0.96;transition:opacity 120ms ease;",
+      "aria-label": "Unpin locked direction",
+    });
+    unpinBtn.appendChild(svgEl("title", {}, `Unpin locked direction (${forcedEnds.from} → ${forcedEnds.to})`));
+    unpinBtn.appendChild(svgEl("circle", {
+      cx: "0",
+      cy: "0",
+      r: "8.5",
+      fill: "#fff7ed",
+      stroke: "#9a3412",
+      "stroke-width": "1.25",
+    }));
+    unpinBtn.appendChild(svgEl("path", {
+      d: "M -2.8 -2.8 L 2.8 2.8 M 2.8 -2.8 L -2.8 2.8",
+      stroke: "#9a3412",
+      "stroke-width": "1.35",
+      "stroke-linecap": "round",
+      "pointer-events": "none",
+    }));
+    unpinBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof window.removeEdgeConstraintPair === "function") {
+        window.removeEdgeConstraintPair(forcedEnds.from, forcedEnds.to, { reason: "edge-unpin-diagram" });
+      }
+    });
+    return { lockBadge, unpinBtn, relTag };
+  };
+
   if (interactiveOnly) {
     const g = svgEl("g", {
-      class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}`,
+      class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}${
+        isAssocBridge ? " archimate-arrow--association-bridge" : ""
+      }`,
       style: "cursor: pointer;",
     });
     if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
     g.appendChild(svgEl("path", { d: d, stroke: "transparent", "stroke-width": "15", fill: "none", class: "archimate-arrow-hit" }));
     if (leaderEl) g.appendChild(leaderEl);
     g.appendChild(labelG);
+    const flipBtn = makeFlipControl();
+    const { lockBadge, unpinBtn, relTag } = makeLockControls();
+    if (flipBtn) {
+      g.appendChild(flipBtn);
+      g.addEventListener("mouseenter", () => { flipBtn.style.opacity = "1"; });
+      g.addEventListener("mouseleave", () => { flipBtn.style.opacity = "0.92"; });
+    }
+    if (relTag) g.appendChild(relTag);
+    if (lockBadge) g.appendChild(lockBadge);
+    if (unpinBtn) {
+      g.appendChild(unpinBtn);
+      g.addEventListener("mouseenter", () => { unpinBtn.style.opacity = "1"; });
+      g.addEventListener("mouseleave", () => { unpinBtn.style.opacity = "0.92"; });
+    }
     wireClick(g);
     return g;
   }
 
   const g = svgEl("g", {
-    class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}`,
+    class: `archimate-arrow clickable-arrow${choiceUndecided ? " provisional" : ""}${
+      isAssocBridge ? " archimate-arrow--association-bridge" : ""
+    }`,
     style: "cursor: pointer;",
   });
   if (hopIndex != null) g.setAttribute("data-hop", String(hopIndex));
@@ -2881,6 +3380,20 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   g.appendChild(mkStrokePath());
   if (leaderEl) g.appendChild(leaderEl);
   g.appendChild(labelG);
+  const flipBtn = makeFlipControl();
+  const { lockBadge, unpinBtn, relTag } = makeLockControls();
+  if (flipBtn) {
+    g.appendChild(flipBtn);
+    g.addEventListener("mouseenter", () => { flipBtn.style.opacity = "1"; });
+    g.addEventListener("mouseleave", () => { flipBtn.style.opacity = "0.92"; });
+  }
+  if (relTag) g.appendChild(relTag);
+  if (lockBadge) g.appendChild(lockBadge);
+  if (unpinBtn) {
+    g.appendChild(unpinBtn);
+    g.addEventListener("mouseenter", () => { unpinBtn.style.opacity = "1"; });
+    g.addEventListener("mouseleave", () => { unpinBtn.style.opacity = "0.92"; });
+  }
   wireClick(g);
 
   return g;
@@ -2897,20 +3410,6 @@ function ensureMarkers(svg) {
   }
 
   const color = "#333";
-
-  // #region agent log
-  __agentLog(
-    "ui/renderer.js:ensureMarkers",
-    "ensureMarkers init",
-    {
-      hasDefs: !!svg.querySelector("defs"),
-      markerTargetClearance: ARROW_MARKER_TARGET_CLEARANCE,
-      defaultStrokeWidth: 1.6,
-    },
-    "pre-fix",
-    "D"
-  );
-  // #endregion
 
   const mkOpen = (id) => {
     const m = svgEl("marker", {
@@ -2975,7 +3474,8 @@ function ensureMarkers(svg) {
       viewBox: "0 0 8 8",
       markerWidth: "8",
       markerHeight: "8",
-      refX: "0",
+      /** Tip at (8,4): anchor on aggregate face; body extends back along the connector (same as arrow markers). */
+      refX: "8",
       refY: "4",
       orient: "auto",
       markerUnits: "strokeWidth",
@@ -2989,7 +3489,7 @@ function ensureMarkers(svg) {
       viewBox: "0 0 8 8",
       markerWidth: "8",
       markerHeight: "8",
-      refX: "0",
+      refX: "8",
       refY: "4",
       orient: "auto",
       markerUnits: "strokeWidth",
@@ -3100,45 +3600,23 @@ function ensureMarkers(svg) {
 // (moved to ui/rendererLayout.js)
 
 /** `sortedIndices[visualIdx]` is the original path index of the node at that visual row. */
-function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFlatSteps, sortedIndices, illustrationPathKey = "0") {
+function renderVerticalCompactDiagram(
+  svg,
+  steps,
+  positions,
+  showHopNumbers,
+  showFlipControls,
+  showLockControls,
+  pathFlatSteps,
+  sortedIndices,
+  illustrationPathKey = "0",
+  renderContext = {}
+) {
+  const relationshipLabelsOnly = !!renderContext.relationshipLabelsOnly;
   const origToVisual = new Map();
   sortedIndices.forEach((origIdx, visualIdx) => origToVisual.set(origIdx, visualIdx));
-  const outerArcByHop = computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices);
-  const badgeOffsetByHop = new Map();
-  const BADGE_STAIR_STEP_PX = 15;
-  const BADGE_STAIR_MAX_Y_GAP = Math.max(24, Math.ceil(EL_H * 0.65));
-  const verticalHopRows = [];
-  for (let hop = 1; hop < pathFlatSteps.length; hop++) {
-    const step = pathFlatSteps[hop];
-    if (!step.codes) continue;
-    const vFrom = origToVisual.get(hop - 1);
-    const vTo = origToVisual.get(hop);
-    if (vFrom == null || vTo == null || vFrom === vTo) continue;
-    const a = positions[vFrom];
-    const b = positions[vTo];
-    verticalHopRows.push({
-      hop,
-      rawY: (a.cy + b.cy) / 2,
-      fromBand: a.bandId,
-      toBand: b.bandId,
-    });
-  }
-  verticalHopRows.sort((p, q) => p.rawY - q.rawY);
-  let prevBadgeSeq = null;
-  for (const row of verticalHopRows) {
-    const sameBandSeq = row.fromBand === row.toBand;
-    if (
-      prevBadgeSeq &&
-      sameBandSeq &&
-      prevBadgeSeq.sameBandSeq &&
-      Math.abs(row.rawY - prevBadgeSeq.rawY) <= BADGE_STAIR_MAX_Y_GAP
-    ) {
-      badgeOffsetByHop.set(row.hop, prevBadgeSeq.offset + BADGE_STAIR_STEP_PX);
-    } else {
-      badgeOffsetByHop.set(row.hop, 0);
-    }
-    prevBadgeSeq = { rawY: row.rawY, sameBandSeq, offset: badgeOffsetByHop.get(row.hop) || 0 };
-  }
+  const badgeOffsetByHop = computeVerticalBadgeStairOffsetsByHop(pathFlatSteps, positions, sortedIndices);
+  const outerArcByHop = computeVerticalCompactOuterArcByHop(steps, positions, pathFlatSteps, sortedIndices, badgeOffsetByHop);
   const verticalLabelNudgesByHop = computeVerticalLabelNudges(
     pathFlatSteps,
     steps,
@@ -3202,6 +3680,17 @@ function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFla
     }
   }
 
+  const verticalEdgeLabelRegistry = createEdgeLabelSpaceRegistry();
+  for (let pi = 0; pi < positions.length; pi++) {
+    const bb = layoutElementBBox(positions[pi]);
+    verticalEdgeLabelRegistry.addObstacle({
+      left: bb.left,
+      right: bb.right,
+      top: bb.top,
+      bottom: bb.bottom,
+    });
+  }
+
   const appendHopArrows = (strokeOnly, interactiveOnly) => {
     for (let hop = 1; hop < pathFlatSteps.length; hop++) {
       const step = pathFlatSteps[hop];
@@ -3219,7 +3708,10 @@ function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFla
       svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
         hopIndex: hop,
         displayHopIndex: hop,
-        showBadges,
+        showHopNumbers,
+        showFlipControls,
+        showLockControls,
+        relationshipLabelsOnly,
         strokeOnly: !!strokeOnly,
         interactiveOnly: !!interactiveOnly,
         crossLaneEdge: crossLane,
@@ -3236,6 +3728,12 @@ function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFla
         outerArcTrackX: null,
         matrixDirectCodes: step.matrixDirectCodes,
         matrixDerivedCodes: step.matrixDerivedCodes,
+        labelSpaceRegistry: !strokeOnly && interactiveOnly ? verticalEdgeLabelRegistry : null,
+        isAssociationBridge: !!step.isAssociation,
+        semanticFrom: prevEl,
+        semanticTo: curEl,
+        waypointElementSet: renderContext.waypointElementSet ?? null,
+        edgeConstraints: renderContext.edgeConstraints ?? null,
       }));
     }
   };
@@ -3250,14 +3748,16 @@ function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFla
       if (!prevEl || !curEl) return false;
       return verticalStraddleWestForCompactHop(prevEl, curEl, origIdx);
     })();
-    svg.appendChild(drawElement(steps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
+    const elG = drawElement(steps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
       measureSvg: svg,
       alignVertical: true,
       illustrationSeed,
       hideCompositeIllustrations: shouldHideCompositeIllustrations(),
       // Place the upper composite sub on the opposite side of the incoming hop label/bypass.
       diagUpperOnWest: !incomingPreferWest,
-    }));
+    });
+    elG.setAttribute("data-layout-bbox", `${positions[i].x},${positions[i].y},${EL_W},${EL_H}`);
+    svg.appendChild(elG);
   }
   appendHopArrows(true, false);
   // Match horizontal swimlanes: draw aggregation illustration (subs + dashed connectors) above relationship strokes
@@ -3269,26 +3769,46 @@ function renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFla
 }
 
 /** Compact horizontal left-to-right layout only (vertical uses renderSwimlane with showLaneBands: false). */
-function renderCompact(svg, flatSteps, { showBadges = true, illustrationPathKey = "0" } = {}) {
-  const hasPattern = flatSteps.some(s => COMPOSITE_PATTERNS[s.element]);
-  const totalW = flatSteps.length * EL_W + (flatSteps.length - 1) * EL_GAP + 100;
-  const totalH = hasPattern ? 320 : 150;
+function renderCompact(svg, flatSteps, {
+  showHopNumbers = true,
+  showFlipControls = true,
+  showLockControls = true,
+  relationshipLabelsOnly = false,
+  illustrationPathKey = "0",
+  waypointElementSet = null,
+  edgeConstraints = null,
+} = {}) {
+  const plan = typeof computeCompactPlan === "function"
+    ? computeCompactPlan(flatSteps, {
+        elementWidth: EL_W,
+        elementHeight: EL_H,
+        elementGap: EL_GAP,
+        hasCompositePattern: (name) => !!COMPOSITE_PATTERNS[name],
+      })
+    : null;
+  const totalW = plan?.totalW ?? (flatSteps.length * EL_W + (flatSteps.length - 1) * EL_GAP + 100);
+  const totalH = plan?.totalH ?? (flatSteps.some((s) => COMPOSITE_PATTERNS[s.element]) ? 320 : 150);
   svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
   svg.setAttribute("width", "100%"); svg.setAttribute("height", String(totalH));
-  let x = 50; const y = totalH / 2 - EL_H / 2;
-  const positions = [];
-  for (let i = 0; i < flatSteps.length; i++) {
-    const step = flatSteps[i];
-    positions.push({ x, y, cy: y + EL_H / 2, cx: x + EL_W / 2 });
-    x += EL_W + EL_GAP;
-  }
+  const positions = plan?.positions || (() => {
+    let x = 50;
+    const y = totalH / 2 - EL_H / 2;
+    const out = [];
+    for (let i = 0; i < flatSteps.length; i++) {
+      out.push({ x, y, cy: y + EL_H / 2, cx: x + EL_W / 2 });
+      x += EL_W + EL_GAP;
+    }
+    return out;
+  })();
   for (let i = 0; i < flatSteps.length; i++) {
     const illustrationSeed = `${illustrationPathKey}:${i}:${flatSteps[i].element}`;
-    svg.appendChild(drawElement(flatSteps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
+    const elGroup = drawElement(flatSteps[i].element, positions[i].x, positions[i].y, EL_W, EL_H, {
       measureSvg: svg,
       illustrationSeed,
       hideCompositeIllustrations: shouldHideCompositeIllustrations(),
-    }));
+    });
+    elGroup.setAttribute("data-layout-bbox", `${positions[i].x},${positions[i].y},${EL_W},${EL_H}`);
+    svg.appendChild(elGroup);
   }
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
@@ -3297,10 +3817,18 @@ function renderCompact(svg, flatSteps, { showBadges = true, illustrationPathKey 
     const cur = positions[i];
     svg.appendChild(drawArrow(prev.x + EL_W, prev.cy, cur.x, cur.y + EL_H / 2, step.codes, step.isDirect, svg, {
       hopIndex: i,
-      showBadges,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
       strokeOnly: true,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      isAssociationBridge: !!step.isAssociation,
+      semanticFrom: flatSteps[i - 1].element,
+      semanticTo: flatSteps[i].element,
+      waypointElementSet,
+      edgeConstraints,
     }));
   }
   for (let i = 1; i < flatSteps.length; i++) {
@@ -3310,10 +3838,18 @@ function renderCompact(svg, flatSteps, { showBadges = true, illustrationPathKey 
     const cur = positions[i];
     svg.appendChild(drawArrow(prev.x + EL_W, prev.cy, cur.x, cur.y + EL_H / 2, step.codes, step.isDirect, svg, {
       hopIndex: i,
-      showBadges,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
       interactiveOnly: true,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      isAssociationBridge: !!step.isAssociation,
+      semanticFrom: flatSteps[i - 1].element,
+      semanticTo: flatSteps[i].element,
+      waypointElementSet,
+      edgeConstraints,
     }));
   }
 }
@@ -3340,12 +3876,17 @@ function renderCompact(svg, flatSteps, { showBadges = true, illustrationPathKey 
 // (moved to ui/rendererCore.js)
 
 function renderSwimlane(svg, flatSteps, {
-  showBadges = true,
+  showHopNumbers = true,
+  showFlipControls = true,
+  showLockControls = true,
+  relationshipLabelsOnly = false,
   alignVertical = false,
   showLaneBands = true,
   /** Horizontal lanes only: spread = curved cross-lane hops + EL_GAP; compact = L-shaped 90° hops + tighter columns. */
   horizontalLaneLayout = "spread",
   illustrationPathKey = "0",
+  waypointElementSet = null,
+  edgeConstraints = null,
 } = {}) {
   /**
    * Vertical: one code path for Compact+Vertical and Swimlanes+Vertical (showLaneBands false vs true).
@@ -3386,7 +3927,7 @@ function renderSwimlane(svg, flatSteps, {
             width: w,
             height: h,
             fill: band.color,
-            stroke: band.borderColor,
+            stroke: "none",
             opacity: "0.5",
           }));
           bgG.appendChild(drawSwimlaneColumnLabel(svg, {
@@ -3423,7 +3964,7 @@ function renderSwimlane(svg, flatSteps, {
             width: swimlaneW,
             height: h,
             fill: band.color,
-            stroke: band.borderColor,
+            stroke: "none",
             opacity: "0.5",
           }));
           bgG.appendChild(drawSwimlaneLabel(svg, {
@@ -3443,7 +3984,18 @@ function renderSwimlane(svg, flatSteps, {
       svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
     }
 
-    renderVerticalCompactDiagram(svg, steps, positions, showBadges, pathFlatSteps, sortedIndices, illustrationPathKey);
+    renderVerticalCompactDiagram(
+      svg,
+      steps,
+      positions,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      pathFlatSteps,
+      sortedIndices,
+      illustrationPathKey,
+      { waypointElementSet, edgeConstraints, relationshipLabelsOnly }
+    );
     return;
   }
 
@@ -3480,11 +4032,22 @@ function renderSwimlane(svg, flatSteps, {
   }
 
   const isCompactHorizontal = horizontalLaneLayout === "compact";
+  let compactColGapMin = SWIMLANE_COMPACT_COL_GAP;
+  if (isCompactHorizontal) {
+    let maxW = 0;
+    for (let hi = 1; hi < flatSteps.length; hi++) {
+      const step = flatSteps[hi];
+      if (!step?.codes) continue;
+      maxW = Math.max(maxW, estimateSwimlaneHopLabelWidthPx(step, hi));
+    }
+    const gapPad = 28;
+    compactColGapMin = Math.max(SWIMLANE_COMPACT_COL_GAP, maxW + gapPad);
+  }
   // Spread swimlanes: composite subs sit on a row below the main box and can extend EL_W+gapX to either side.
   // Column step EL_W+colGap must clear the neighbor's illustrated sub (2*EL_W+gapX from this main's left edge),
   // otherwise subs collide with the next column's main box (same-layer horizontal overlap).
   const colGap = isCompactHorizontal
-    ? SWIMLANE_COMPACT_COL_GAP
+    ? compactColGapMin
     : swimlaneCompositeSubsBelowDiagonal
       ? Math.max(
           EL_GAP,
@@ -3619,7 +4182,7 @@ function renderSwimlane(svg, flatSteps, {
   if (showLaneBands) {
     usedLayers.forEach((layer) => {
       const m = laneMetrics[layer.id];
-      svg.appendChild(svgEl("rect", { x: 0, y: m.y, width: "100%", height: m.h, fill: layer.color, stroke: layer.borderColor, opacity: "0.5" }));
+      svg.appendChild(svgEl("rect", { x: 0, y: m.y, width: "100%", height: m.h, fill: layer.color, stroke: "none", opacity: "0.5" }));
       svg.appendChild(drawSwimlaneLabel(svg, { layer, laneY: m.y, actualH: m.h }));
     });
   }
@@ -3676,54 +4239,6 @@ function renderSwimlane(svg, flatSteps, {
     }
   }
 
-  const compactLabelNudgesByHop = new Map();
-  if (isCompactHorizontal) {
-    const placed = [];
-    /** X-only: vertical nudges detached labels from the stroke (y1,y2) while the path did not move. */
-    const candidateOffsets = [
-      { x: 0, y: 0 },
-      { x: 14, y: 0 },
-      { x: 28, y: 0 },
-      { x: 42, y: 0 },
-      { x: 56, y: 0 },
-      { x: 70, y: 0 },
-      { x: -14, y: 0 },
-      { x: -28, y: 0 },
-    ];
-    const collides = (x, y) =>
-      placed.some((p) => Math.abs(x - p.x) < 95 && Math.abs(y - p.y) < 22);
-
-    const hops = [];
-    for (let i = 1; i < flatSteps.length; i++) {
-      const step = flatSteps[i];
-      if (!step?.codes) continue;
-      const a = positions[i - 1];
-      const b = positions[i];
-      const fromL = getSwimlaneLayer(flatSteps[i - 1].element, i - 1, flatSteps);
-      const toL = getSwimlaneLayer(flatSteps[i].element, i, flatSteps);
-      const alignedY = fromL === toL ? laneHorizY.get(fromL) : undefined;
-      const { x1, y1, x2, y2 } = horizontalSwimlaneHopPorts(a, b, true, flatSteps[i - 1].element, flatSteps[i].element, alignedY);
-      hops.push({
-        hop: i,
-        baseX: (x1 + x2) / 2,
-        baseY: (y1 + y2) / 2,
-      });
-    }
-
-    hops.sort((u, v) => (u.baseY - v.baseY) || (u.baseX - v.baseX) || (u.hop - v.hop));
-    for (const h of hops) {
-      let chosen = candidateOffsets[candidateOffsets.length - 1];
-      for (const c of candidateOffsets) {
-        if (!collides(h.baseX + c.x, h.baseY + c.y)) {
-          chosen = c;
-          break;
-        }
-      }
-      compactLabelNudgesByHop.set(h.hop, chosen);
-      placed.push({ x: h.baseX + chosen.x, y: h.baseY + chosen.y });
-    }
-  }
-
   const swimlaneLabelObstacles = buildSwimlaneLabelObstacles(
     positions,
     flatSteps,
@@ -3738,7 +4253,7 @@ function renderSwimlane(svg, flatSteps, {
       if (i < flatSteps.length - 1) ex.add(flatSteps[i + 1].element);
       return ex;
     })();
-    svg.appendChild(drawElement(flatSteps[i].element, pos.x, pos.y, EL_W, EL_H, {
+    const elG = drawElement(flatSteps[i].element, pos.x, pos.y, EL_W, EL_H, {
       measureSvg: svg,
       illustrationSeed,
       hideCompositeIllustrations: shouldHideCompositeIllustrations(),
@@ -3746,8 +4261,15 @@ function renderSwimlane(svg, flatSteps, {
       swimlaneCompositeSubsBelowDiagonal: swimlaneCompositeSubsBelowDiagonal && !shouldHideCompositeIllustrations(),
       swimlaneCompositePlacement: swimlaneCompositePlacementByIndex.get(i) ?? null,
       swimlaneExcludeAdjacentIllustrationSubs,
-    }));
+    });
+    elG.setAttribute("data-layout-bbox", `${pos.x},${pos.y},${EL_W},${EL_H}`);
+    svg.appendChild(elG);
   });
+
+  const swimlaneEdgeLabelRegistry = createEdgeLabelSpaceRegistry();
+  for (const o of swimlaneLabelObstacles) {
+    swimlaneEdgeLabelRegistry.addObstacle(o);
+  }
 
   for (let i = 1; i < flatSteps.length; i++) {
     const step = flatSteps[i];
@@ -3764,10 +4286,13 @@ function renderSwimlane(svg, flatSteps, {
     const swimlaneOrthoBusMaxX = layoutElementBBox(b).right;
     svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
       hopIndex: i,
-      showBadges,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
       strokeOnly: true,
-      labelNudgeX: compactLabelNudgesByHop.get(i)?.x || 0,
-      labelNudgeY: compactLabelNudgesByHop.get(i)?.y || 0,
+      labelNudgeX: 0,
+      labelNudgeY: 0,
       disableStraddleLeader: isCompactHorizontal,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
@@ -3775,6 +4300,11 @@ function renderSwimlane(svg, flatSteps, {
       swimlaneOrthoBusMaxX,
       swimlaneLabelObstacles,
       ...hopArrowOpts(crossLane),
+      isAssociationBridge: !!step.isAssociation,
+      semanticFrom: flatSteps[i - 1].element,
+      semanticTo: flatSteps[i].element,
+      waypointElementSet,
+      edgeConstraints,
     }));
   }
 
@@ -3799,17 +4329,26 @@ function renderSwimlane(svg, flatSteps, {
     const swimlaneOrthoBusMaxX2 = layoutElementBBox(b).right;
     svg.appendChild(drawArrow(x1, y1, x2, y2, step.codes, step.isDirect, svg, {
       hopIndex: i,
-      showBadges,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
       interactiveOnly: true,
-      labelNudgeX: compactLabelNudgesByHop.get(i)?.x || 0,
-      labelNudgeY: compactLabelNudgesByHop.get(i)?.y || 0,
+      labelNudgeX: 0,
+      labelNudgeY: 0,
       disableStraddleLeader: isCompactHorizontal,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
       swimlaneOrthogonalBusX: swimlaneBusXByHop.get(i) ?? null,
       swimlaneOrthoBusMaxX: swimlaneOrthoBusMaxX2,
       swimlaneLabelObstacles,
+      labelSpaceRegistry: swimlaneEdgeLabelRegistry,
       ...hopArrowOpts(crossLane),
+      isAssociationBridge: !!step.isAssociation,
+      semanticFrom: flatSteps[i - 1].element,
+      semanticTo: flatSteps[i].element,
+      waypointElementSet,
+      edgeConstraints,
     }));
   }
 }
@@ -3867,36 +4406,546 @@ function drawSwimlaneColumnLabel(svg, { layer, laneX, laneY, laneW, clipIdSuffix
 function renderPath(container, segments, {
   mode = "compact",
   segmentPathIndex = 0,
-  showBadges = true,
+  showHopNumbers = true,
+  showFlipControls = true,
+  showLockControls = true,
+  relationshipLabelsOnly = false,
   /** @deprecated use pathFlow */
   alignVertical = false,
   /** horizontal | vertical | compact — compact = layer-aligned tight orthogonal layout */
   pathFlow = "horizontal",
+  viewpointName = "All elements",
+  waypointNames = [],
+  waypointElementSet = null,
+  edgeConstraints = null,
 } = {}) {
   container.innerHTML = "";
   if (!segments || segments.length === 0) return;
   const flatSteps = flattenSegments(segments, segmentPathIndex);
   if (!flatSteps.length) return;
   const svg = svgEl("svg", { xmlns: SVG_NS });
+  const titleId = `architrek-diagram-title-${Date.now()}`;
+  const descId = `architrek-diagram-desc-${Date.now()}`;
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-labelledby", `${titleId} ${descId}`);
+  const titleText = `ArchiTrek path diagram (${viewpointName || "All elements"})`;
+  const waypointsText = Array.isArray(waypointNames) && waypointNames.length
+    ? waypointNames.join(" to ")
+    : "No waypoint chain";
+  svg.appendChild(svgEl("title", { id: titleId }, titleText));
+  svg.appendChild(svgEl("desc", { id: descId }, `Path view ${segmentPathIndex + 1}. Waypoints: ${waypointsText}.`));
   container.appendChild(svg);
   const illustrationPathKey = String(segmentPathIndex);
   const flow = alignVertical ? "vertical" : pathFlow;
   const useCompactLanes = flow === "compact";
   const useVertical = flow === "vertical";
   if (useVertical) {
-    renderSwimlane(svg, flatSteps, { showBadges, alignVertical: true, showLaneBands: mode === "swimlane", illustrationPathKey });
+    renderSwimlane(svg, flatSteps, {
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
+      alignVertical: true,
+      showLaneBands: mode === "swimlane",
+      illustrationPathKey,
+      waypointElementSet,
+      edgeConstraints,
+    });
   } else if (mode === "swimlane" || useCompactLanes) {
     renderSwimlane(svg, flatSteps, {
-      showBadges,
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
       alignVertical: false,
       showLaneBands: mode === "swimlane",
       horizontalLaneLayout: useCompactLanes ? "compact" : "spread",
       illustrationPathKey,
+      waypointElementSet,
+      edgeConstraints,
     });
   } else {
-    renderCompact(svg, flatSteps, { showBadges, illustrationPathKey });
+    renderCompact(svg, flatSteps, {
+      showHopNumbers,
+      showFlipControls,
+      showLockControls,
+      relationshipLabelsOnly,
+      illustrationPathKey,
+      waypointElementSet,
+      edgeConstraints,
+    });
   }
 }
+
+/**
+ * Whether to draw swimlane scaffolding for a study graph (Layered viewpoint or multi-layer graphs).
+ * @param {{ viewpointKey?: string, viewpoint?: string, nodes?: string[] }} payload
+ */
+function shouldShowStudySwimlanes(payload) {
+  const vp = payload?.viewpointKey ?? payload?.viewpoint ?? "";
+  if (String(vp).toLowerCase() === "layered") return true;
+  const layers = new Set();
+  for (const n of Array.isArray(payload?.nodes) ? payload.nodes : []) {
+    layers.add(getLayer(n));
+  }
+  return layers.size >= 3;
+}
+
+/** Deterministic ±jitter for ghost (non-lane) layout. */
+function studyGhostJitterY(name, maxPx) {
+  const h = hashStringFNV1a(`study-jitter:${name}`);
+  return (h % (maxPx * 2 + 1)) - maxPx;
+}
+
+/** Horizontal X for node index j (0 = on canvas center), growing ±step, ±2step, … */
+function studyCenterGravityX(j, minStep, totalW) {
+  const center = (totalW - EL_W) / 2;
+  if (j <= 0) return Math.round(center);
+  if (j % 2 === 1) return Math.round(center + ((j + 1) / 2) * minStep);
+  return Math.round(center - (j / 2) * minStep);
+}
+
+/**
+ * Sort node names within a layer by mean X of neighbors in adjacent layers (uses current positions).
+ */
+function studyOrderNodesInLayer(names, layerIdx, laneBuckets, layerToIndex, edgesIn, positions) {
+  const scored = names.map((name) => {
+    let sum = 0;
+    let count = 0;
+    for (const edge of edgesIn) {
+      if (!edge) continue;
+      let other = null;
+      if (edge.from === name) other = edge.to;
+      else if (edge.to === name) other = edge.from;
+      if (!other || other === name) continue;
+      const oLayer = getLayer(other);
+      const oIdx = layerToIndex.get(oLayer);
+      if (oIdx === undefined || Math.abs(oIdx - layerIdx) !== 1) continue;
+      const p = positions.get(other);
+      if (p && Number.isFinite(p.x)) {
+        sum += p.x + EL_W / 2;
+        count += 1;
+      }
+    }
+    const key = count > 0 ? sum / count : Number.POSITIVE_INFINITY;
+    return { name, key };
+  });
+  scored.sort((a, b) => (a.key !== b.key ? a.key - b.key : a.name.localeCompare(b.name)));
+  return scored.map((s) => s.name);
+}
+
+function renderStudyGraph(container, studyGraph, {
+  viewpointName = "All elements",
+  domainContext = "abstract",
+  viewpointKey = "",
+} = {}) {
+  container.innerHTML = "";
+  const nodesIn = Array.isArray(studyGraph?.nodes) ? studyGraph.nodes : [];
+  const edgesIn = Array.isArray(studyGraph?.edges) ? studyGraph.edges : [];
+  if (!nodesIn.length) return;
+
+  const svg = svgEl("svg", { xmlns: SVG_NS });
+  const titleId = `architrek-study-title-${Date.now()}`;
+  const descId = `architrek-study-desc-${Date.now()}`;
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-labelledby", `${titleId} ${descId}`);
+  svg.appendChild(svgEl("title", { id: titleId }, `ArchiTrek study diagram (${viewpointName || "All elements"})`));
+  svg.appendChild(
+    svgEl(
+      "desc",
+      { id: descId },
+      `Procedural study graph with ${nodesIn.length} elements and ${edgesIn.length} relationships in theme ${domainContext || "abstract"}.`
+    )
+  );
+  container.appendChild(svg);
+
+  /** Canonical ArchiMate stack: Motivation → Strategy → Business → Application → Technology → Composite → Implementation */
+  const layerOrderList = Array.isArray(LAYERS) ? LAYERS.map((l) => String(l.id || "")) : [];
+  const layerRank = new Map(layerOrderList.map((id, i) => [id, i]));
+
+  const byLayer = new Map();
+  for (const name of nodesIn) {
+    const layer = getLayer(name);
+    if (!byLayer.has(layer)) byLayer.set(layer, []);
+    byLayer.get(layer).push(name);
+  }
+
+  const laneBuckets = [];
+  for (const [layer, names] of byLayer.entries()) {
+    const rank = layerRank.has(layer) ? layerRank.get(layer) : 1000 + laneBuckets.length;
+    laneBuckets.push({ layer, rank, names: [...names] });
+  }
+  laneBuckets.sort((a, b) => a.rank - b.rank || a.layer.localeCompare(b.layer));
+
+  const layerToIndex = new Map(laneBuckets.map((b, i) => [b.layer, i]));
+  const showLanes = shouldShowStudySwimlanes({ viewpointKey, nodes: nodesIn });
+
+  const LAYER_VERTICAL_GAP = 150;
+  const MIN_H_STEP = EL_W + 60;
+  /** Relationship label: px above target node top (unique X per node → no horizontal overlap). */
+  const STUDY_LABEL_ABOVE_TARGET = 30;
+  const STUDY_TRACK_STEP_PX = 20;
+  const GHOST_JITTER = 30;
+  const laneLabelGutter = showLanes ? 96 : 0;
+  const laneStartY = 56;
+  const horizontalPadding = 120 + laneLabelGutter;
+  const baseWidth = 880;
+  let totalW = baseWidth;
+
+  for (const bucket of laneBuckets) {
+    const n = bucket.names.length;
+    if (n <= 1) continue;
+    const need = horizontalPadding * 2 + (n - 1) * MIN_H_STEP + EL_W;
+    totalW = Math.max(totalW, need);
+  }
+
+  const rowStride = EL_H + LAYER_VERTICAL_GAP;
+  const totalH = Math.max(
+    380,
+    laneStartY + laneBuckets.length * EL_H + Math.max(0, laneBuckets.length - 1) * LAYER_VERTICAL_GAP + 72
+  );
+  svg.setAttribute("viewBox", `0 0 ${totalW} ${totalH}`);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
+
+  const zebraG = svgEl("g", {
+    class: "study-swimlane-zebra",
+    "aria-hidden": "true",
+  });
+  for (let zi = 0; zi < laneBuckets.length; zi++) {
+    const yTop = laneStartY + zi * rowStride;
+    const fill =
+      zi % 2 === 0 ? "rgba(241, 245, 249, 0.97)" : "rgba(255, 255, 255, 0.5)";
+    zebraG.appendChild(
+      svgEl("rect", {
+        x: "0",
+        y: String(yTop),
+        width: String(totalW),
+        height: String(rowStride),
+        fill,
+        stroke: "none",
+        "pointer-events": "none",
+      })
+    );
+  }
+  svg.appendChild(zebraG);
+
+  const positions = new Map();
+
+  for (let pass = 0; pass < 3; pass++) {
+    for (let laneIdx = 0; laneIdx < laneBuckets.length; laneIdx++) {
+      const bucket = laneBuckets[laneIdx];
+      const ordered =
+        pass === 0
+          ? [...bucket.names].sort((a, b) => a.localeCompare(b))
+          : studyOrderNodesInLayer(bucket.names, laneIdx, laneBuckets, layerToIndex, edgesIn, positions);
+      bucket.names = ordered;
+      const yBase = laneStartY + laneIdx * rowStride;
+      const count = ordered.length;
+      if (count === 1) {
+        const name = ordered[0];
+        const jy = showLanes ? 0 : studyGhostJitterY(name, GHOST_JITTER);
+        positions.set(name, {
+          x: Math.round((totalW - EL_W) / 2),
+          y: yBase + jy,
+          lane: bucket.layer,
+          laneIdx,
+        });
+      } else {
+        ordered.forEach((name, colIdx) => {
+          const jy = showLanes ? 0 : studyGhostJitterY(name, GHOST_JITTER);
+          const x = studyCenterGravityX(colIdx, MIN_H_STEP, totalW);
+          positions.set(name, {
+            x,
+            y: yBase + jy,
+            lane: bucket.layer,
+            laneIdx,
+          });
+        });
+      }
+    }
+  }
+
+  const layerLabel = (id) => {
+    const L = Array.isArray(LAYERS) ? LAYERS.find((l) => l.id === id) : null;
+    return L?.label || id;
+  };
+
+  if (showLanes) {
+    for (let i = 0; i < laneBuckets.length; i++) {
+      const yRow = laneStartY + i * rowStride;
+      const labelY = yRow + EL_H / 2 + 4;
+      svg.appendChild(
+        svgEl(
+          "text",
+          {
+            x: "10",
+            y: String(labelY),
+            "font-size": "11",
+            "font-weight": "600",
+            fill: "rgba(100,116,139,0.92)",
+          },
+          layerLabel(laneBuckets[i].layer)
+        )
+      );
+      if (i < laneBuckets.length - 1) {
+        const gapMidY = yRow + EL_H + LAYER_VERTICAL_GAP / 2;
+        svg.appendChild(
+          svgEl("line", {
+            x1: String(laneLabelGutter + 4),
+            y1: String(gapMidY),
+            x2: String(totalW - 12),
+            y2: String(gapMidY),
+            stroke: "rgba(148,163,184,0.45)",
+            "stroke-width": "1",
+            "stroke-dasharray": "5 6",
+          })
+        );
+      }
+    }
+  }
+
+  for (let i = 0; i < edgesIn.length; i++) {
+    const edge = edgesIn[i];
+    if (!edge) continue;
+    const fromPos = positions.get(edge.from);
+    const toPos = positions.get(edge.to);
+    if (!fromPos || !toPos) continue;
+    const codes = Array.isArray(edge.codes) && edge.codes.length
+      ? edge.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+      : ["O"];
+    const sameLayer = fromPos.lane === toPos.lane;
+    const trackOffset = i * STUDY_TRACK_STEP_PX;
+
+    let startX;
+    let startY;
+    let endX;
+    let endY;
+    let pathType = "linear";
+    let manhattanMidY = null;
+    const targetPos = toPos;
+    const labelCenterX = targetPos.x + EL_W / 2;
+    const labelAnchorY = targetPos.y - STUDY_LABEL_ABOVE_TARGET;
+    let labelOverride = { x: labelCenterX, y: labelAnchorY };
+
+    if (sameLayer) {
+      const yBottomMax = Math.max(fromPos.y + EL_H, toPos.y + EL_H);
+      const baseMidY = yBottomMax + LAYER_VERTICAL_GAP / 2;
+      startX = fromPos.x + EL_W / 2;
+      endX = toPos.x + EL_W / 2;
+      startY = fromPos.y + EL_H;
+      endY = toPos.y + EL_H;
+      const horizontalSegmentY = baseMidY + trackOffset;
+      const band = LAYER_VERTICAL_GAP * 0.48;
+      manhattanMidY = Math.max(baseMidY - band, Math.min(baseMidY + band, horizontalSegmentY));
+      pathType = "manhattan";
+    } else {
+      const fromIsLower = fromPos.laneIdx > toPos.laneIdx;
+      startX = fromPos.x + EL_W / 2;
+      endX = toPos.x + EL_W / 2;
+      if (fromIsLower) {
+        startY = fromPos.y;
+        endY = toPos.y + EL_H;
+      } else {
+        startY = fromPos.y + EL_H;
+        endY = toPos.y;
+      }
+      const sourceLayerY = laneStartY + fromPos.laneIdx * rowStride;
+      const targetLayerY = laneStartY + toPos.laneIdx * rowStride;
+      const midY = (sourceLayerY + targetLayerY) / 2;
+      const horizontalSegmentY = midY + trackOffset;
+      const ySpanLo = Math.min(startY, endY) + 10;
+      const ySpanHi = Math.max(startY, endY) - 10;
+      manhattanMidY = Math.max(ySpanLo, Math.min(ySpanHi, horizontalSegmentY));
+      pathType = "manhattan";
+    }
+
+    const g = drawArrow(
+      startX,
+      startY,
+      endX,
+      endY,
+      codes,
+      edge.isDirect !== false,
+      svg,
+      {
+        hopIndex: i + 1,
+        showHopNumbers: false,
+        showFlipControls: false,
+        showLockControls: false,
+        relationshipLabelsOnly: true,
+        pathType,
+        manhattanMidY,
+        matrixDirectCodes: edge.matrixDirectCodes || null,
+        matrixDerivedCodes: edge.matrixDerivedCodes || null,
+        semanticFrom: edge.from,
+        semanticTo: edge.to,
+        edgeConstraints: null,
+        isAssociationBridge: !!edge.isAssociation,
+        overrideRelLabelPosition: labelOverride,
+      }
+    );
+    svg.appendChild(g);
+  }
+
+  for (const name of nodesIn) {
+    const pos = positions.get(name);
+    if (!pos) continue;
+    svg.appendChild(drawElement(name, pos.x, pos.y, EL_W, EL_H, {
+      measureSvg: svg,
+      alignVertical: false,
+      illustrationSeed: `study:${name}`,
+      hideCompositeIllustrations: false,
+    }));
+  }
+}
+window.renderStudyGraph = renderStudyGraph;
+window.shouldShowStudySwimlanes = shouldShowStudySwimlanes;
+
+function renderWithAnimation(diagramEl, newSegments, renderOptions = {}) {
+  const { onAfterAnimation, ...pathOptions } = renderOptions || {};
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (reducedMotion) {
+    renderPath(diagramEl, newSegments, pathOptions);
+    if (typeof onAfterAnimation === "function") onAfterAnimation();
+    return;
+  }
+
+  const oldPositions = new Map();
+  const priorNodes = diagramEl.querySelectorAll("[data-node-id]");
+  for (const node of priorNodes) {
+    const id = node.getAttribute("data-node-id");
+    if (!id || oldPositions.has(id)) continue;
+    const rect = node.getBoundingClientRect();
+    oldPositions.set(id, { x: rect.left, y: rect.top });
+  }
+
+  /** Viewport center per hop index — drives FLIP for edge direction changes (labels + stroke move together). */
+  const oldArrowCenterByHop = new Map();
+  for (const g of diagramEl.querySelectorAll(".clickable-arrow[data-hop]")) {
+    const h = g.getAttribute("data-hop");
+    if (!h || oldArrowCenterByHop.has(h)) continue;
+    const rect = g.getBoundingClientRect();
+    oldArrowCenterByHop.set(h, {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+  }
+
+  if (!oldPositions.size && !oldArrowCenterByHop.size) {
+    renderPath(diagramEl, newSegments, pathOptions);
+    if (typeof onAfterAnimation === "function") onAfterAnimation();
+    return;
+  }
+
+  renderPath(diagramEl, newSegments, pathOptions);
+
+  const nextNodes = Array.from(diagramEl.querySelectorAll("[data-node-id]"));
+  const newNodeEls = [];
+  for (const node of nextNodes) {
+    const id = node.getAttribute("data-node-id");
+    if (!id) continue;
+    const oldPos = oldPositions.get(id);
+    if (oldPos) {
+      const rect = node.getBoundingClientRect();
+      const deltaX = oldPos.x - rect.left;
+      const deltaY = oldPos.y - rect.top;
+      node.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+    } else {
+      node.style.opacity = "0";
+      newNodeEls.push(node);
+    }
+  }
+
+  const nextArrows = Array.from(diagramEl.querySelectorAll(".clickable-arrow[data-hop]"));
+  const newArrowEls = [];
+  /** @type {Set<Element>} */
+  const arrowsToSlide = new Set();
+  /** If the hop cluster barely moved on screen, keep the new layout as-is (no slide — reads as “same place”). */
+  const HOP_ARROW_DEAD_PX = 12;
+  let maxArrowAnimMs = 0;
+  for (const g of nextArrows) {
+    const hop = g.getAttribute("data-hop");
+    if (!hop) continue;
+    const oldC = oldArrowCenterByHop.get(hop);
+    if (oldC) {
+      const rect = g.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = oldC.x - cx;
+      const dy = oldC.y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= HOP_ARROW_DEAD_PX) {
+        continue;
+      }
+      const durationMs = Math.round(Math.min(480, Math.max(220, 160 + dist * 2.6)));
+      maxArrowAnimMs = Math.max(maxArrowAnimMs, durationMs);
+      g.style.setProperty("--hop-slide-ms", `${durationMs}ms`);
+      g.style.transform = `translate(${dx}px, ${dy}px)`;
+      arrowsToSlide.add(g);
+    } else {
+      g.style.opacity = "0";
+      newArrowEls.push(g);
+    }
+  }
+
+  const edgeEls = [];
+  for (const edge of diagramEl.querySelectorAll("path.graph-edge")) {
+    const hopG = edge.closest(".clickable-arrow[data-hop]");
+    const hop = hopG?.getAttribute?.("data-hop");
+    if (hop != null && oldArrowCenterByHop.has(hop)) {
+      continue;
+    }
+    edge.style.opacity = "0";
+    edgeEls.push(edge);
+  }
+
+  void diagramEl.getBoundingClientRect();
+
+  for (const node of nextNodes) {
+    node.classList.add("is-animating");
+    node.style.transform = "";
+  }
+  for (const node of newNodeEls) {
+    node.style.opacity = "1";
+  }
+
+  for (const g of arrowsToSlide) {
+    g.classList.add("is-animating");
+    g.style.transform = "";
+  }
+  for (const g of newArrowEls) {
+    g.classList.add("is-animating");
+    g.style.opacity = "1";
+  }
+
+  for (const edge of edgeEls) {
+    edge.style.opacity = "1";
+  }
+
+  window.setTimeout(() => {
+    for (const node of nextNodes) {
+      node.classList.remove("is-animating");
+      node.style.transform = "";
+      node.style.opacity = "";
+    }
+    for (const g of nextArrows) {
+      g.classList.remove("is-animating");
+      g.style.removeProperty("--hop-slide-ms");
+      g.style.transform = "";
+      g.style.opacity = "";
+    }
+    for (const edge of edgeEls) {
+      edge.style.opacity = "";
+    }
+    if (typeof onAfterAnimation === "function") onAfterAnimation();
+  }, Math.max(400, maxArrowAnimMs + 70));
+}
+window.renderWithAnimation = renderWithAnimation;
 
 function clearDiagram(container) {
   container.innerHTML = "";
@@ -3905,7 +4954,14 @@ function clearDiagram(container) {
 
 function getAspect(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName] ? ELEMENTS[elementName].aspect : "Composite"; }
 
-function getLayer(elementName) { return typeof ELEMENTS !== 'undefined' && ELEMENTS[elementName] ? ELEMENTS[elementName].layer : "Unknown"; }
+function getLayer(elementName) {
+  if (typeof getElementLayer === "function") return getElementLayer(elementName);
+  if (typeof ELEMENTS !== "undefined" && ELEMENTS[elementName]) {
+    const L = ELEMENTS[elementName].layer;
+    return L === "Physical" ? "Technology" : L;
+  }
+  return "Unknown";
+}
 
 /**
  * Human-readable segment title from waypoint ArchiMate layers (ELEMENTS registry).
@@ -4078,20 +5134,20 @@ function snippetMarkerDefsHtml(UPPER, isDirect, suffix) {
   } else if (style.endMarker === "triangle-open") {
     parts.push(
       `<marker id="${idEnd}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
-        `<polygon points="0 0, 8 4, 0 8" fill="currentColor"/>` +
+        `<polygon points="0 0, 8 4, 0 8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"/>` +
       `</marker>`
     );
   }
 
   if (style.startMarker === "diamond-filled") {
     parts.push(
-      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="0" refY="4" orient="auto">` +
+      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
         `<polygon points="0 4, 4 0, 8 4, 4 8" fill="currentColor"/>` +
       `</marker>`
     );
   } else if (style.startMarker === "diamond-open") {
     parts.push(
-      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="0" refY="4" orient="auto">` +
+      `<marker id="${idStart}" markerWidth="8" markerHeight="8" markerUnits="strokeWidth" refX="8" refY="4" orient="auto">` +
         `<polygon points="0 4, 4 0, 8 4, 4 8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"/>` +
       `</marker>`
     );
@@ -4117,29 +5173,56 @@ function getRelationVisualSnippet(code, isDirect, hopIndexForIds, opts = {}) {
   const defs = snippetMarkerDefsHtml(UPPER, isDirect, suffix);
   const endMarker = style.endMarker !== "none" ? `url(#end-${UPPER}-${d}-snippet-${suffix})` : "";
   const startMarker = style.startMarker !== "none" ? `url(#start-${UPPER}-snippet-${suffix})` : "";
-  const w = compact ? 52 : 80;
-  const h = compact ? 20 : 30;
   const margin = compact ? "0 4px" : "0 15px";
   const cls =
     "explain-edge-connector-svg" +
     (compact ? " explain-edge-connector-svg--compact" : "");
+  /** ArchiMate §5.3 notation: solid/dashed line, filled arrowhead, relationship name centered below (same for Triggering and Flow). */
+  const dynamicNotationBelow =
+    (UPPER === "T" || UPPER === "F") &&
+    style.endMarker === "arrow-filled" &&
+    style.startMarker === "none";
+  if (dynamicNotationBelow) {
+    const relName =
+      typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS[UPPER]?.name
+        ? RELATIONSHIPS[UPPER].name
+        : UPPER;
+    const label = typeof escPathDiag === "function" ? escPathDiag(relName) : String(relName ?? "");
+    const lineY = 12;
+    const vb = 'viewBox="0 0 80 34" preserveAspectRatio="xMidYMid meet"';
+    const w = compact ? 52 : 80;
+    const h = compact ? 28 : 36;
+    return (
+      `<svg class="${cls} explain-edge-connector-svg--dynamic" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">` +
+      `${defs}` +
+      `<line x1="5" y1="${lineY}" x2="65" y2="${lineY}" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" />` +
+      `<text x="35" y="28" text-anchor="middle" font-size="10" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="500" fill="currentColor">${label}</text>` +
+      `</svg>`
+    );
+  }
+  const w = compact ? 52 : 80;
+  const h = compact ? 20 : 30;
   const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
   return `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">${defs}<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" /></svg>`;
 }
 
-/** Neutral dotted connector for hops where no relationship has been chosen yet. */
+/** Neutral connector for hops where no relationship has been chosen yet. */
 function getUndecidedRelationSnippet(opts = {}) {
   const compact = !!opts.compact;
+  /** In hop summary, a dashed line reads like a prefix on the second chip; use a solid neutral stroke instead. */
+  const solidInSummary = !!opts.solidInSummary;
   const w = compact ? 52 : 80;
   const h = compact ? 20 : 30;
   const margin = compact ? "0 4px" : "0 15px";
   const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
   const cls =
     "explain-edge-connector-svg explain-edge-connector-svg--undecided" +
-    (compact ? " explain-edge-connector-svg--compact" : "");
+    (compact ? " explain-edge-connector-svg--compact" : "") +
+    (solidInSummary ? " explain-edge-connector-svg--undecided-solid" : "");
+  const dash = solidInSummary ? "none" : "3 5";
   return (
     `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: #8b99af; flex-shrink:0;" aria-hidden="true">` +
-    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="3 5" stroke-linecap="round" /></svg>`
+    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="${dash}" stroke-linecap="round" /></svg>`
   );
 }
 
@@ -4176,12 +5259,32 @@ function resolvePrimaryCodeForTierUi(step, semanticHop, opts) {
   return fallback;
 }
 
+/** Viewpoint relationship whitelist for Association pedagogy (matches pathfinder options). */
+function getAssociationViewpointOpts() {
+  const out = { allowedRelationshipCodes: null };
+  try {
+    if (typeof getViewpointRelationshipAllowance !== "function") return out;
+    const key = window.state?.viewpoint != null ? String(window.state.viewpoint) : "";
+    if (!key || typeof VIEWPOINTS === "undefined" || !VIEWPOINTS[key]) return out;
+    const vp = VIEWPOINTS[key];
+    if (vp.allElements) return out;
+    const allowed = getViewpointRelationshipAllowance(key);
+    out.allowedRelationshipCodes = allowed instanceof Set ? allowed : null;
+  } catch (_) {}
+  return out;
+}
+
+function mergeSemanticTierOpts(opts) {
+  return { ...getAssociationViewpointOpts(), ...opts };
+}
+
 function classifyHopSemanticTierUi(step, semanticHop, opts) {
+  const merged = mergeSemanticTierOpts(opts);
   if (typeof classifyHopSemanticTier === "function") {
-    return classifyHopSemanticTier(step, semanticHop, opts);
+    return classifyHopSemanticTier(step, semanticHop, merged);
   }
   const hasViolation = !!(semanticHop?.violation && semanticHop.violation !== "None");
-  const primaryUpper = resolvePrimaryCodeForTierUi(step, semanticHop, opts);
+  const primaryUpper = resolvePrimaryCodeForTierUi(step, semanticHop, merged);
   const isAssociationHop = step?.isAssociation === true || primaryUpper === "O";
 
   if (hasViolation) {
@@ -4192,6 +5295,19 @@ function classifyHopSemanticTierUi(step, semanticHop, opts) {
     };
   }
   if (isAssociationHop) {
+    if (typeof isAssociationHopPedagogySanctioned === "function" && isAssociationHopPedagogySanctioned(step, semanticHop, merged)) {
+      const reason =
+        typeof associationPedagogySanctionReason === "function"
+          ? associationPedagogySanctionReason(step, semanticHop, merged)
+          : "Association (§5.2.4) is permitted in this modeling context.";
+      return {
+        strength: "Valid",
+        title: "Association (§5.2.4) — permitted in this context.",
+        reason,
+        badgeMapping: "Permitted",
+        skipRouteChainDowngrade: true,
+      };
+    }
     return {
       strength: "Informal",
       title: "Generic Association (§5.2.4).",
@@ -4205,6 +5321,10 @@ function classifyHopSemanticTierUi(step, semanticHop, opts) {
       reason: semanticHop?.ruleLabel || "§5.7 derivation rules",
     };
   }
+  if (typeof viewpointPaletteCapsDirectStrengthTier === "function") {
+    const cap = viewpointPaletteCapsDirectStrengthTier(semanticHop, step, merged);
+    if (cap) return cap;
+  }
   return {
     strength: "Strong",
     title: "Direct or Structural connection.",
@@ -4216,10 +5336,17 @@ function classifyHopSemanticTierUi(step, semanticHop, opts) {
  * Mapping-type suffix for the consolidated badge (pairs with Strong / Valid / Informal).
  */
 function semanticBadgeMappingParenthetical(tier, hopStep, semanticHop, rigorPreset, resolvedPrimaryCode) {
+  if (tier.badgeMapping) return tier.badgeMapping;
   if (tier.strength === "Strong") return "Direct";
-  if (tier.strength === "Valid") return "Derived";
+  if (tier.cappedByRouteAssociation) return "Chain";
   const code = String(resolvedPrimaryCode || "").toUpperCase();
-  if (hopStep?.isAssociation || semanticHop?.rule === "Association" || code === "O") {
+  const associationLike =
+    hopStep?.isAssociation || semanticHop?.rule === "Association" || code === "O";
+  if (tier.strength === "Valid") {
+    if (associationLike) return "Permitted";
+    return "Derived";
+  }
+  if (associationLike) {
     return "Generic";
   }
   const p = normalizeExplainRigorPreset(rigorPreset);
@@ -4227,12 +5354,33 @@ function semanticBadgeMappingParenthetical(tier, hopStep, semanticHop, rigorPres
   return "Caution";
 }
 
-function semanticStrengthBadgeHtml(step, semanticHop, rigorPreset = "academic", resolvedPrimaryCode) {
-  const tierOpts =
+function semanticStrengthBadgeHtml(
+  step,
+  semanticHop,
+  rigorPreset = "academic",
+  resolvedPrimaryCode,
+  badgeOpts = null
+) {
+  const tierOpts = mergeSemanticTierOpts(
     resolvedPrimaryCode != null && String(resolvedPrimaryCode).trim() !== ""
       ? { resolvedPrimaryCode }
-      : undefined;
-  const tier = classifyHopSemanticTierUi(step, semanticHop, tierOpts);
+      : undefined
+  );
+  let tier = classifyHopSemanticTierUi(step, semanticHop, tierOpts);
+  if (
+    badgeOpts?.routeContainsAssociationBridge &&
+    (tier.strength === "Strong" || tier.strength === "Valid") &&
+    !tier.skipRouteChainDowngrade
+  ) {
+    tier = {
+      ...tier,
+      strength: "Informal",
+      title: "Route includes an Association bridge (§5.2.4).",
+      reason:
+        "At least one hop on this path uses a generic Association bridge, so the whole chain is capped at Informal strength.",
+      cappedByRouteAssociation: true,
+    };
+  }
   const slug = String(tier.strength || "").toLowerCase();
   const mapping = semanticBadgeMappingParenthetical(
     tier,
@@ -4254,7 +5402,11 @@ function semanticStrengthBadgeHtml(step, semanticHop, rigorPreset = "academic", 
     tier.strength === "Informal" && mapping === "Generic"
       ? " semantic-strength-badge--generic-association"
       : "";
-  return `<span class="semantic-strength-badge semantic-strength-badge--${slug}${discoveryEmphasis}${genericAssoc} explain-badge-tip" data-explain-tip="semantic-strength" data-semantic-strength="${escPathDiag(tier.strength)}" data-semantic-mapping="${escPathDiag(mapping)}" data-semantic-rule="${escPathDiag(rule)}" tabindex="0" role="note" aria-label="${escPathDiag(summary)}">${escPathDiag(label)}</span>`;
+  const chainCapped =
+    tier.strength === "Informal" && mapping === "Chain" && tier.cappedByRouteAssociation
+      ? " semantic-strength-badge--route-chain-capped"
+      : "";
+  return `<span class="semantic-strength-badge semantic-strength-badge--${slug}${discoveryEmphasis}${genericAssoc}${chainCapped} explain-badge-tip" data-explain-tip="semantic-strength" data-semantic-strength="${escPathDiag(tier.strength)}" data-semantic-mapping="${escPathDiag(mapping)}" data-semantic-rule="${escPathDiag(rule)}" tabindex="0" role="note" aria-label="${escPathDiag(summary)}">${escPathDiag(label)}</span>`;
 }
 
 function mentorInsightText(semanticHop, activeCode, rigorPreset, step) {
@@ -4267,6 +5419,13 @@ function mentorInsightText(semanticHop, activeCode, rigorPreset, step) {
   }
   const p = normalizeExplainRigorPreset(rigorPreset);
   const code = String(activeCode || "").toUpperCase();
+  const tierOpts = mergeSemanticTierOpts({ resolvedPrimaryCode: code });
+  if (
+    typeof isAssociationHopPedagogySanctioned === "function" &&
+    isAssociationHopPedagogySanctioned(step, semanticHop, tierOpts)
+  ) {
+    return "";
+  }
   if (p === "discovery" && (step?.isAssociation || code === "O")) {
     return "Mentor Note: This hop uses a generic Association bridge. It can be useful for exploration, but it is semantically weaker than a specific Appendix B or §5.7 relationship.";
   }
@@ -4407,12 +5566,41 @@ function explainEdge(
     !isActiveCodeDirectInMatrix(hopTier, activeCodeUpper);
   const semanticLogicSentence = (() => {
     if (semanticHop?.rule === "Derived" || choiceIsMatrixDerived) {
-      return derivationInfo?.studentText || "This is a Derived relationship allowed by §5.7 derivation rules.";
+      return derivationInfo?.studentText || "This is an Inferred relationship allowed by §5.7 derivation rules.";
     }
     if (semanticHop?.rule === "Association" || activeCodeUpper === "O" || hopStep?.isAssociation) {
+      const pedagogyOpts = mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper });
+      if (
+        typeof isAssociationHopPedagogySanctioned === "function" &&
+        isAssociationHopPedagogySanctioned(hopStep, semanticHop, pedagogyOpts)
+      ) {
+        const fromEl = semanticHop?.from ?? "";
+        const toEl = hopStep?.element ?? semanticHop?.to ?? "";
+        const vk = typeof window !== "undefined" && window.state?.viewpoint != null ? String(window.state.viewpoint) : "";
+        if (
+          typeof associationPedagogySanctionedForViewpointPalette === "function" &&
+          associationPedagogySanctionedForViewpointPalette(vk, fromEl, toEl)
+        ) {
+          return "This hop uses Association (§5.2.4). It is still a generic metamodel link, but the Information Structure viewpoint includes both elements, so the tool treats it as permitted for this scope—not as an informal modeling mistake.";
+        }
+        if (fromEl === "Value" || fromEl === "Meaning" || toEl === "Value" || toEl === "Meaning") {
+          return "This hop uses Association (§5.2.4). Generic links to or from Value or Meaning are normal in motivation modeling, so this is not flagged as an informal fallback.";
+        }
+        return "This hop uses Association (§5.2.4). Your viewpoint explicitly allows Association among its permitted relationship codes, so this is not treated as an informal shortcut.";
+      }
       return "This uses a generic Association bridge under §5.2.4, which is semantically informal.";
     }
-    return "This is a Direct relationship listed in Appendix B.";
+    if (typeof viewpointPaletteCapsDirectStrengthTier === "function") {
+      const cap = viewpointPaletteCapsDirectStrengthTier(
+        semanticHop,
+        hopStep,
+        mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper })
+      );
+      if (cap) {
+        return "This is a direct Appendix B relationship. For the Information Structure viewpoint, both elements are in the palette, so the strength label reflects in-viewpoint fit—not maximal cross-layer rigor.";
+      }
+    }
+    return "This is an Explicit relationship listed in Appendix B.";
   })();
   const violationSentence =
     semanticHop?.violation && semanticHop.violation !== "None"
@@ -4428,14 +5616,14 @@ function explainEdge(
   const derivationStudentText =
     derivationInfo?.studentText
     || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
-      ? "This hop is accepted as a derived relation per §5.7."
-      : "This hop is direct, so derivation chain math is not required.");
+      ? "This hop is accepted as an inferred relation per §5.7."
+      : "This hop is explicit (Appendix B), so derivation chain math is not required.");
   const derivationLogicSection = `<details class="explain-derivation-logic">
       <summary>Derivation Logic</summary>
       <div class="explain-derivation-logic-body">
         <div><strong>Rule math:</strong> ${escPathDiag(derivationFormula)}</div>
         <div style="margin-top:6px">${escPathDiag(derivationStudentText)}</div>
-        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · direct: [${escPathDiag(directCodesText)}] · derived: [${escPathDiag(derivedCodesText)}]</div>
+        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · explicit: [${escPathDiag(directCodesText)}] · inferred: [${escPathDiag(derivedCodesText)}]</div>
       </div>
     </details>`;
 
@@ -4467,7 +5655,9 @@ function explainEdge(
         <div class="edge-rel">
           <strong>${primaryRelName}</strong>
           <span class="edge-codes edge-codes--primary" title="Appendix B / matrix relationship code">[${activeCode}]</span>
-          ${semanticStrengthBadgeHtml(hopTier, semanticHop, rigorPreset, activeCode)}
+          ${semanticStrengthBadgeHtml(hopTier, semanticHop, rigorPreset, activeCode, {
+            routeContainsAssociationBridge: !!narrativeOpts?.routeHasAssociationBridge,
+          })}
           <cite>${rel?.section ?? ""}</cite>
         </div>
       </div>
@@ -4513,6 +5703,29 @@ function flattenSegments(segments, pathIndex = 0) {
     flatSteps.push(...(s === 0 ? path : path.slice(1)));
   }
   return flatSteps;
+}
+
+/**
+ * Reorder steps for the route overview strip so adjacent pills match {@code FORCED_DIRECTION}
+ * (same rule as {@link drawArrow} {@code reverseLayout}).
+ */
+function displayStepsForExplanationStrip(flatSteps, edgeConstraints) {
+  const n = flatSteps.length;
+  if (n < 2 || !Array.isArray(edgeConstraints)) return flatSteps.slice();
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = 1; i < n; i++) {
+    const prev = flatSteps[i - 1];
+    const curr = flatSteps[i];
+    const forcedReverse =
+      hasDirectedEdgeConstraint(edgeConstraints, curr.element, prev.element, "FORCED_DIRECTION") &&
+      !hasDirectedEdgeConstraint(edgeConstraints, prev.element, curr.element, "FORCED_DIRECTION");
+    if (forcedReverse) {
+      const t = order[i - 1];
+      order[i - 1] = order[i];
+      order[i] = t;
+    }
+  }
+  return order.map((j) => flatSteps[j]);
 }
 /**
  * Extracts the user-defined waypoints (From, To, and any Mid-points).
@@ -4603,7 +5816,7 @@ function layerBadgeClassForExplain(layerLabel) {
       return "path-badge--layer-business";
     case "Application-Heavy":
       return "path-badge--layer-application";
-    case "Tech/Physical-Heavy":
+    case "Technology-Heavy":
       return "path-badge--layer-tech";
     default:
       return "path-badge--layer-fullstack";
@@ -4626,7 +5839,7 @@ function layerSlugForStepPill(layerName) {
     case "Business": return "business";
     case "Application": return "application";
     case "Technology": return "technology";
-    case "Physical": return "physical";
+    case "Physical": return "technology";
     case "Implementation & Migration": return "implementation";
     case "Composite": return "composite";
     default: return "unknown";
@@ -4638,6 +5851,12 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
     if (!segments || segments.length === 0) return { routeColumn: "", detailColumn: "" };
     const flatSteps = flattenSegments(segments, selectedPathIndex);
     if (flatSteps.length === 0) return { routeColumn: "", detailColumn: "" };
+
+    const edgeConstraintsExplain = Array.isArray(window.state?.edgeConstraints)
+      ? window.state.edgeConstraints
+      : [];
+
+    const routeHasAssociationBridge = flatSteps.slice(1).some((s) => s?.isAssociation);
 
     const waypoints    = extractWaypoints(segments);
     const midpoints    = waypoints.slice(1, -1);
@@ -4675,8 +5894,8 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
     // One meta line: hop count + dominant pattern + direct/derived — layer journey is visible in the strip and detailed per step below.
     let metaLine = `<strong>${hopCount}</strong> hop${hopCount !== 1 ? "s" : ""} · ${pattern}`;
     metaLine += derivedCount > 0
-      ? ` · <span class="tag tag-derived">${derivedCount} derived (§5.7)</span>`
-      : ` · <span class="tag tag-direct">All direct (Appendix B)</span>`;
+      ? ` · <span class="tag tag-derived">${derivedCount} inferred (§5.7)</span>`
+      : ` · <span class="tag tag-direct">All explicit (Appendix B)</span>`;
     const educationalContrast = (() => {
       if (hopCount < 2 || derivedCount > 0) return "";
       if (typeof mergeMatrixRowForPair !== "function") return "";
@@ -4697,21 +5916,21 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
           : hopCount;
       const derW = wcfg?.derived ?? 5;
       if (!(totalWeight < derW)) return "";
-      return `Found a <strong>${hopCount}-hop Direct</strong> path (Total Weight: <strong>${totalWeight}</strong>). Preferred over a <strong>1-hop Derived</strong> shortcut (Weight: <strong>${derW}</strong>).`;
+      return `Found a <strong>${hopCount}-hop explicit</strong> path (Total Weight: <strong>${totalWeight}</strong>). Preferred over a <strong>1-hop inferred</strong> shortcut (Weight: <strong>${derW}</strong>).`;
     })();
 
-    const stepElementHtml = (elementName, flatStepIndex, { preferCanonicalChip = false } = {}) => {
+    const stepElementHtml = (elementName, flatStepIndex, { preferCanonicalChip = false, swimlaneSteps = flatSteps } = {}) => {
       const safeName = String(elementName ?? "");
       const scenario = getScenarioDisplayName(safeName);
       const displayName = scenario.display;
       const chipLabel = preferCanonicalChip ? safeName : displayName;
-      const resolvedLayer = getSwimlaneLayer(safeName, flatStepIndex, flatSteps);
+      const resolvedLayer = getSwimlaneLayer(safeName, flatStepIndex, swimlaneSteps);
       const layerSlug = layerSlugForStepPill(resolvedLayer);
 
       let iconSvg = "";
       try {
-        if (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function") {
-          iconSvg = `<span class="step-el-icon" aria-hidden="true">${window.getElementMiniSvg(safeName, 18)}</span>`;
+        if (typeof window !== "undefined" && typeof window.getElementGlyphSvg === "function") {
+          iconSvg = `<span class="step-el-icon step-el-icon--glyph" aria-hidden="true">${window.getElementGlyphSvg(safeName, 20)}</span>`;
         }
       } catch (_) {
         /* ignore */
@@ -4743,9 +5962,13 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
         </span>`;
     };
 
-    /** Hop summary row: same interactive chips + tooltips as the path strip; stacked subline when the chip uses a scenario name. */
-    const hopSummaryEndpointHtml = (elementName, flatStepIndex, useThematicChipLabel) => {
+    /** Hop summary row: same interactive chips + tooltips as the path strip; stacked subline when the chip uses a scenario name.
+     *  When `plainCanonicalEndpoint`, render the ArchiMate name only (matches segment header destination — no second stacked chip). */
+    const hopSummaryEndpointHtml = (elementName, flatStepIndex, useThematicChipLabel, plainCanonicalEndpoint = false) => {
       const safeName = String(elementName ?? "");
+      if (plainCanonicalEndpoint) {
+        return `<span class="explain-hop-summary-endpoint explain-hop-summary-endpoint--plain panel-segment-route-end-name" aria-label="${escPathDiag(`ArchiMate element: ${safeName}`)}">${escPathDiag(safeName)}</span>`;
+      }
       const scenario = getScenarioDisplayName(safeName);
       const displayName = scenario.display;
       const chipLabel = useThematicChipLabel ? displayName : safeName;
@@ -4754,8 +5977,8 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
 
       let iconSvg = "";
       try {
-        if (typeof window !== "undefined" && typeof window.getElementMiniSvg === "function") {
-          iconSvg = `<span class="step-el-icon" aria-hidden="true">${window.getElementMiniSvg(safeName, 18)}</span>`;
+        if (typeof window !== "undefined" && typeof window.getElementGlyphSvg === "function") {
+          iconSvg = `<span class="step-el-icon step-el-icon--glyph" aria-hidden="true">${window.getElementGlyphSvg(safeName, 20)}</span>`;
         }
       } catch (_) {
         /* ignore */
@@ -4768,7 +5991,7 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const scenarioTipRow = scenario.isThematic
         ? `<span class="step-el-tip-row step-el-tip-row--scenario"><span class="step-el-tip-muted">Scenario label</span> <span class="step-el-tip-strong">${escPathDiag(displayName)}</span></span>`
         : "";
-      const subline = explainAbstractSublineFromScenario(scenario);
+      const subline = explainHopSummaryAbstractSubline(scenario);
 
       return `<span class="step-el-tip-wrap explain-hop-summary-endpoint">
         <button type="button" class="step-el path-node-chip path-node-chip--stacked step-el--crumb el-info-trigger step-el--layer-${layerSlug}" data-element="${encodeURIComponent(safeName)}"${ariaExtra}>
@@ -4790,8 +6013,9 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       </span>`;
     };
 
-    const strip = flatSteps
-      .map((s, idx) => stepElementHtml(s.element, idx))
+    const stripSteps = displayStepsForExplanationStrip(flatSteps, edgeConstraintsExplain);
+    const strip = stripSteps
+      .map((s, idx) => stepElementHtml(s.element, idx, { swimlaneSteps: stripSteps }))
       .join(`<span class="explain-strip-arrow path-node-arrow" aria-hidden="true">→</span>`);
 
     const hasLayerTransitions = transitions.length > 0;
@@ -4883,30 +6107,54 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
     for (const si of segmentInfos) {
       segmentHeadingByFirstHop.set(si.firstHop, si);
     }
+    /** Segment band + phase heading for every waypoint leg (one band per segment, including a single A→B leg). */
+    const showSegmentPhaseChrome = Array.isArray(segments) && segments.length >= 1;
 
-    detailParts.push(`<div class="explain-steps-section"><h4 class="panel-section-heading">Step-by-step justification</h4>`);
+    const hasSelectedViewpoint =
+      typeof window !== "undefined" &&
+      window.state?.viewpoint != null &&
+      String(window.state.viewpoint).trim() !== "";
+    const associationRouteMentorHtml = routeHasAssociationBridge && !hasSelectedViewpoint
+      ? `<blockquote class="explain-association-route-warning" role="note">
+      ⚠️ <strong>Association Bridge Used:</strong> No explicit structural path exists here. Because your Semantic Rigor is set to allow fallbacks, we bridged the gap using a generic Association (§5.2.4). To find a stronger structural path, try enabling <strong>+ Inferred</strong> (Search Depth).
+    </blockquote>`
+      : "";
+
+    detailParts.push(
+      `<div class="explain-steps-section"><h4 class="panel-section-heading">Step-by-step justification</h4>${associationRouteMentorHtml}`
+    );
 
     let segmentBandOpen = false;
 
     for (let i = 1; i < flatSteps.length; i++) {
       const prev = flatSteps[i - 1];
       const curr = flatSteps[i];
+      /** Matches diagram / store: FORCED_DIRECTION opposite to traversal prev→curr (see drawArrow reverseLayout). */
+      const forcedReverse =
+        hasDirectedEdgeConstraint(edgeConstraintsExplain, curr.element, prev.element, "FORCED_DIRECTION") &&
+        !hasDirectedEdgeConstraint(edgeConstraintsExplain, prev.element, curr.element, "FORCED_DIRECTION");
+      const narrFrom = forcedReverse ? curr.element : prev.element;
+      const narrTo = forcedReverse ? prev.element : curr.element;
+      const narrIdxFrom = forcedReverse ? i : i - 1;
+      const narrIdxTo = forcedReverse ? i - 1 : i;
+      const hopStepForExplain = forcedReverse
+        ? pathStepWithCanonicalMatrixRow({ ...curr }, narrFrom, narrTo)
+        : curr;
 
       const segHead = segmentHeadingByFirstHop.get(i);
-      if (segHead) {
+      if (segHead && showSegmentPhaseChrome) {
         if (segmentBandOpen) {
           detailParts.push(`</div></div>`);
         }
         segmentBandOpen = true;
         const fromSegScenario = getScenarioDisplayName(segHead.from);
-        const toSegScenario = getScenarioDisplayName(segHead.to);
         const sf = fromSegScenario.display;
-        const st = toSegScenario.display;
         const segOrd = segHead.segmentIndex + 1;
         const defsForSeg = typeof ELEMENTS !== "undefined" ? ELEMENTS : {};
         const semanticTitle = escPathDiag(
           getSegmentSemanticLabel(segHead, segHead.segmentIndex, defsForSeg)
         );
+        const segmentEndCanonical = escPathDiag(segHead.to);
         detailParts.push(
           `<div class="explain-segment-band" role="group" aria-label="Segment ${segOrd}: hops on this part of the route">
             <div class="panel-segment-header">
@@ -4914,15 +6162,12 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
                 <h4 class="panel-section-heading panel-section-heading--segment panel-segment-semantic-title">${semanticTitle}</h4>
               </div>
               <div class="panel-segment-route" aria-label="Segment endpoints">
-                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked">
+                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked" aria-label="Segment start waypoint: ${escPathDiag(sf)}">
                   <span class="path-node-chip-primary">${escPathDiag(sf)}</span>
                   ${explainAbstractSublineFromScenario(fromSegScenario)}
                 </span>
                 <span class="panel-segment-route-arrow path-node-arrow" aria-hidden="true">→</span>
-                <span class="panel-segment-route-chunk path-node-chip path-node-chip--stacked">
-                  <span class="path-node-chip-primary">${escPathDiag(st)}</span>
-                  ${explainAbstractSublineFromScenario(toSegScenario)}
-                </span>
+                <span class="panel-segment-route-end-name" aria-label="Segment end waypoint: ${segmentEndCanonical}">${segmentEndCanonical}</span>
               </div>
             </div>
             <p class="explain-segment-hops-lead">Hops</p>
@@ -4932,17 +6177,27 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
 
       const isJunction = midpoints.includes(curr.element);
       const waypointBadge = isJunction
-        ? `<span class="tag tag-waypoint explain-badge-tip" data-explain-tip="waypoint" tabindex="0" role="note">Waypoint</span>`
+        ? `<span class="tag tag-waypoint explain-badge-tip" data-explain-tip="waypoint" tabindex="0" role="note" aria-label="Waypoint marker at step ${i}">Waypoint</span>`
         : "";
-      const weakAssoc =
-        !!curr.isAssociation && curr.element !== "Value" && curr.element !== "Meaning";
-      const weakBadge = weakAssoc
-        ? `<span class="tag tag-weak-link explain-badge-tip" data-explain-tip="association" tabindex="0" role="note">Generic link</span>`
-        : "";
-
       const safeCodes = curr.codes || [];
       const hasChoices = safeCodes.length > 1;
       const activeCode = resolvedRelationshipCodeForHop(curr, i);
+      const hopMetaForPedagogy = curr.semanticHop
+        ? { ...curr.semanticHop, from: narrFrom, to: narrTo }
+        : { from: narrFrom, to: narrTo };
+      const weakAssoc =
+        !!curr.isAssociation &&
+        !(
+          typeof isAssociationHopPedagogySanctioned === "function" &&
+          isAssociationHopPedagogySanctioned(
+            curr,
+            hopMetaForPedagogy,
+            mergeSemanticTierOpts({ resolvedPrimaryCode: String(activeCode || "O").toUpperCase() })
+          )
+        );
+      const weakBadge = weakAssoc
+        ? `<span class="tag tag-weak-link explain-badge-tip" data-explain-tip="association" tabindex="0" role="note">Generic link</span>`
+        : "";
       const isProvisional = hasChoices && !edgeChoiceCommittedForHop(i, safeCodes);
 
       const illustrationPathKey = String(selectedPathIndex);
@@ -4962,23 +6217,31 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       const relHeaderName = isProvisional
         ? "Relationship Pending"
         : RELATIONSHIPS[String(activeCode || "O").toUpperCase()]?.name ?? String(activeCode);
-      const prevScenario = getScenarioDisplayName(prev.element);
-      const currScenario = getScenarioDisplayName(curr.element);
-      const prevDisp = prevScenario.display;
-      const currDisp = currScenario.display;
+      const narrFromScenario = getScenarioDisplayName(narrFrom);
+      const narrToScenario = getScenarioDisplayName(narrTo);
+      const narrFromDisp = narrFromScenario.display;
+      const narrToDisp = narrToScenario.display;
       const domainKey = activeDomainContextKey();
       const showThematicRoute =
-        domainKey !== "abstract" && (prevDisp !== prev.element || currDisp !== curr.element);
+        domainKey !== "abstract" && (narrFromDisp !== narrFrom || narrToDisp !== narrTo);
       const actionRequiredTag = isProvisional
         ? `<span class="tag tag-action-required">Action Required</span>`
+        : "";
+      const forcedDirBadge = forcedReverse
+        ? `<span class="tag tag-forced-direction explain-badge-tip" data-explain-tip="forced-direction" tabindex="0" role="note" aria-label="Waypoint constraint: read this hop in the shown direction">Forced direction</span>`
         : "";
       const summaryCodeHtml = isProvisional
         ? ""
         : ` <span class="edge-codes edge-codes--primary explain-hop-summary-code" title="Matrix relationship code">[${escPathDiag(String(activeCode || "O").toUpperCase())}]</span>`;
       const headerSnippet = isProvisional
-        ? getUndecidedRelationSnippet({ compact: true })
-        : getRelationVisualSnippet(activeCode, isActiveCodeDirectInMatrix(curr, activeCode), i, { compact: true });
-      const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(prev.element, i - 1, showThematicRoute)}<span class="explain-hop-summary-connector explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}</span>${hopSummaryEndpointHtml(curr.element, i, showThematicRoute)}</span>`;
+        ? getUndecidedRelationSnippet({ compact: true, solidInSummary: true })
+        : getRelationVisualSnippet(
+            activeCode,
+            isActiveCodeDirectInMatrix(hopStepForExplain, activeCode),
+            i,
+            { compact: true }
+          );
+      const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(narrFrom, narrIdxFrom, showThematicRoute)}<span class="explain-hop-summary-connector explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}</span>${hopSummaryEndpointHtml(narrTo, narrIdxTo, showThematicRoute)}</span>`;
 
       detailParts.push(`<div class="explain-edge-block explain-hop-shell">
         <details class="explain-hop-justification">
@@ -4988,30 +6251,30 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
               <span class="explain-hop-summary-body">
                 <div class="explain-hop-summary-top">
                   <h3 class="explain-hop-summary-rel">${escPathDiag(relHeaderName)}${summaryCodeHtml}</h3>
-                  <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}</div>
+                  <div class="explain-hop-summary-badges">${actionRequiredTag}${waypointBadge}${weakBadge}${forcedDirBadge}</div>
                 </div>
                 ${routeCaptionHtml}
               </span>
             </span>
           </summary>
           <div class="explain-hop-expanded">
-            <div data-hop="${i}" data-from="${prev.element}" data-to="${curr.element}">
+            <div data-hop="${i}" data-from="${narrFrom}" data-to="${narrTo}">
               ${explainEdge(
-                prev.element,
-                curr.element,
+                narrFrom,
+                narrTo,
                 activeCode,
-                isActiveCodeDirectInMatrix(curr, activeCode),
+                isActiveCodeDirectInMatrix(hopStepForExplain, activeCode),
                 hasChoices,
                 isProvisional,
                 hasChoices ? i : undefined,
                 hasChoices ? safeCodes : undefined,
                 architectNotesHtml,
-                curr.matrixDirectCodes,
-                curr.matrixDerivedCodes,
+                hopStepForExplain.matrixDirectCodes,
+                hopStepForExplain.matrixDerivedCodes,
                 curr.semanticHop || null,
-                curr,
+                hopStepForExplain,
                 rigorPreset,
-                { routeStartEl: fromEl, routeEndEl: toEl }
+                { routeStartEl: fromEl, routeEndEl: toEl, routeHasAssociationBridge }
               )}
             </div>
           </div>
@@ -5063,15 +6326,6 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
   }
 }
 
-function escPathDiag(s) {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function renderViewpointBlockedPanel({ viewpointName = "current", viewpointKey = null } = {}) {
   const vp = escPathDiag(viewpointName || "current");
   const hint =
@@ -5105,7 +6359,7 @@ function renderViewpointBlockedPanel({ viewpointName = "current", viewpointKey =
  * Educational empty state for the diagram when UCS finds no path under current constraints.
  * @param {string} sourceName
  * @param {string} targetName
- * @param {{ includeDerived?: boolean, allowAssociationFallback?: boolean, selectionMode?: string, pickedCount?: number, waypointChainLabel?: string, failingSegmentOrdinal?: number, segmentTotal?: number, viewpointStrict?: boolean, viewpointName?: string, viewpointFromInGraph?: boolean, viewpointToInGraph?: boolean }} [opts]
+ * @param {{ includeDerived?: boolean, allowAssociationFallback?: boolean, selectionMode?: string, pickedCount?: number, waypointChainLabel?: string, failingSegmentOrdinal?: number, segmentTotal?: number, viewpointStrict?: boolean, viewpointName?: string, viewpointFromInGraph?: boolean, viewpointToInGraph?: boolean, academicDirectBlocked?: boolean }} [opts]
  */
 function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
   const e = escPathDiag;
@@ -5138,6 +6392,10 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
       ? `<p class="path-dead-end__context">Your connect set includes several elements; this message uses the <strong>first</strong> and <strong>last</strong> points in the list as endpoints for the narrative.</p>`
       : "";
 
+  const academicBlock = opts.academicDirectBlocked
+    ? `<div class="path-dead-end__academic-block" role="alert"><strong>🛑 Path Blocked.</strong> There is no direct structural relationship between these elements, and your &quot;Academic&quot; Rigor setting forbids Association fallbacks. Try switching Search Depth to <strong>+ Inferred</strong> for §5.7 links, or lower your Rigor to &quot;Pragmatic&quot; to allow Association bridges.</div>`
+    : "";
+
   const compassSvg = `<svg class="path-dead-end__svg" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
     <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="1.75" opacity="0.5"/>
     <circle cx="32" cy="32" r="4" fill="currentColor" opacity="0.35"/>
@@ -5152,25 +6410,25 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
 
   const bothOn = includeDerived && allowAssoc;
   const exhaustedNote = bothOn
-    ? `<p class="path-dead-end__exhausted">Derived relations and Association fallback are already enabled. If there is still no route, use <strong>Options</strong> to raise hop limits or search effort, widen the viewpoint, or change endpoints.</p>`
+    ? `<p class="path-dead-end__exhausted">Inferred relations (§5.7) and Association fallback are already enabled. If there is still no route, use <strong>Options</strong> to raise hop limits or search effort, widen the viewpoint, or change endpoints.</p>`
     : "";
 
   const derivedHint =
-    "Derived relations collapse multiple technical layers into a single line, operating at a higher level of abstraction for business stakeholders.";
+    "Inferred (§5.7) relations collapse multiple technical layers into a single line, operating at a higher level of abstraction for business stakeholders.";
   const assocHint =
     "Associations are the weakest form of relationship, useful for early-stage planning or capturing undocumented “tribal knowledge”.";
   const rationaleText =
-    "Direct (Appendix B) relationships form the “ground truth” of your architecture. Prefer them when you need rigor and verifiability; derived links can be helpful to simplify the story, but they intentionally abstract away detail.";
+    "Explicit (Appendix B uppercase) relationships form the “ground truth” of your architecture. Prefer them when you need rigor and verifiability; inferred links can be helpful to simplify the story, but they intentionally abstract away detail.";
 
   const titleText = includeDerived
     ? "No Architectural Path Found"
     : "No Strict Architectural Path Found";
   const whySummaryText = includeDerived
-    ? "Why prefer direct (ground-truth) routing?"
+    ? "Why prefer explicit (ground-truth) routing?"
     : "Why prefer strict (ground-truth) routing?";
   const bodyText = includeDerived
     ? `Under your current rules, there is no verifiable path between <strong>${srcE}</strong> and <strong>${tgtE}</strong>.`
-    : `Under strict ArchiMate rules, there is no verifiable, direct structural or behavioral link between <strong>${srcE}</strong> and <strong>${tgtE}</strong>.`;
+    : `Under strict ArchiMate rules, there is no verifiable explicit structural or behavioral link between <strong>${srcE}</strong> and <strong>${tgtE}</strong>.`;
 
   const orderedCtx =
     opts.selectionMode === "ordered" && opts.waypointChainLabel
@@ -5181,6 +6439,7 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
     <div class="path-dead-end__icon-wrap">${compassSvg}</div>
     <h2 class="path-dead-end__title">${e(titleText)}</h2>
     <div class="path-dead-end__lesson">
+      ${academicBlock}
       ${viewpointNote}
       <p class="path-dead-end__body">${bodyText}</p>
       ${orderedCtx}
@@ -5190,8 +6449,8 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
         <p class="path-dead-end__disclosure-body">${e(rationaleText)}</p>
       </details>
     </div>
-    <p class="path-dead-end__scale" role="note">Nothing here is pre-selected. If you widen the search, <strong>derived relations</strong> stay closer to the spec (specific relationship types, including §5.7). <strong>Association</strong> is the most permissive: generic §5.2.4 links when no specific chain wins.</p>
-    <p class="path-dead-end__temp-note">The buttons below run <strong>one relaxed Find Path</strong>. Your saved <strong>Options</strong> (<strong>Direct vs +Derived</strong>; <strong>Semantic rigor</strong> and Association fallback) are <strong>not</strong> changed—open Options only if you want that permanently.</p>
+    <p class="path-dead-end__scale" role="note">Nothing here is pre-selected. If you widen the search, <strong>inferred (§5.7) relations</strong> stay closer to the spec (specific relationship types). <strong>Association</strong> is the most permissive: generic §5.2.4 links when no specific chain wins.</p>
+    <p class="path-dead-end__temp-note">The buttons below run <strong>one relaxed Find Path</strong>. Your saved <strong>Options</strong> (<strong>Explicit vs +Inferred</strong>; <strong>Semantic rigor</strong> and Association fallback) are <strong>not</strong> changed—open Options only if you want that permanently.</p>
     <div class="path-dead-end__actions path-dead-end__actions--buttons" role="group" aria-label="Widen path search">
       <div class="path-dead-end__action-block">
         <div class="path-dead-end__tier">
@@ -5199,7 +6458,7 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
           <span class="path-dead-end__tier-text">Still normative—Appendix B types plus §5.7 derivation</span>
         </div>
         <div class="path-dead-end__btn-row">
-          <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled)window.tryRelaxPathDerived()">🔍 Search with Derived Relations</button>
+          <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled)window.tryRelaxPathDerived()">🔍 Search with + Inferred (§5.7)</button>
           ${includeDerived ? `<span class="path-dead-end__pill" aria-hidden="true">On</span>` : ""}
         </div>
         <details class="path-dead-end__disclosure path-dead-end__disclosure--cta">
@@ -5250,7 +6509,7 @@ function renderPathRelaxationActionSteps(hints) {
       <div class="path-failure-suggestions__step-body">
         <strong>1. Indirect (derived) relationships</strong>
         <span class="path-failure-suggestions__step-desc">Include §5.7 derived links from Appendix B (shown in lowercase in the tables). This is still “specific” relationships, not generic Association.</span>
-        <button type="button" class="path-relax-btn" onclick="tryRelaxPathDerived()">Enable + Derived and search again</button>
+        <button type="button" class="path-relax-btn" onclick="tryRelaxPathDerived()">Enable + Inferred and search again</button>
       </div>
     </li>`);
   }
@@ -5303,8 +6562,8 @@ function renderPathSearchDiagnostics(payload, hints) {
       ? "Connect set (unordered points — tool picks a chain)"
       : "Ordered (your Start → Via → End order)";
   const relLine = payload.includeDerived
-    ? "+ Derived — graph includes Appendix B direct (uppercase) and §5.7 derived (lowercase) edges."
-    : "Direct only — graph includes only explicit Appendix B uppercase relationships.";
+    ? "+ Inferred — graph includes Appendix B explicit (uppercase) and §5.7 inferred (lowercase) edges."
+    : "Explicit only — graph includes only explicit Appendix B uppercase relationships.";
   const assocLine = payload.allowAssociationFallback
     ? "Fallback ON — penalized §5.2.4 Association hops are allowed when they win on total weight; they are flagged in the explanation."
     : `Fallback OFF — cheapest routes that rely only on penalized Association (weight ${payload.pathWeightAssociation} per hop, except into Value/Meaning) are rejected.`;
@@ -5331,7 +6590,7 @@ function renderPathSearchDiagnostics(payload, hints) {
   );
   parts.push(`<div class="algorithm-debug-panel${panelOpen ? " show" : ""}">`);
   parts.push(
-    `<div class="path-search-report__line"><strong>Algorithm</strong> Weighted uniform-cost search (UCS) ranks valid syntactic chains on the directed adjacency graph built from Appendix B${payload.includeDerived ? ", §5.7 derived edges," : ""} and universal §5.2.4 Association arcs (hop costs: direct=<strong>${payload.pathWeightDirect}</strong>, derived=<strong>${payload.pathWeightDerived}</strong>, association=<strong>${payload.pathWeightAssociation}</strong>, layer-skip=<strong>${payload.pathWeightLayerSkip}</strong>).</div>`
+    `<div class="path-search-report__line"><strong>Algorithm</strong> Weighted uniform-cost search (UCS) ranks valid syntactic chains on the directed adjacency graph built from Appendix B${payload.includeDerived ? ", §5.7 inferred edges," : ""} and universal §5.2.4 Association arcs (hop costs: explicit=<strong>${payload.pathWeightDirect}</strong>, inferred=<strong>${payload.pathWeightDerived}</strong>, association=<strong>${payload.pathWeightAssociation}</strong>, layer-skip=<strong>${payload.pathWeightLayerSkip}</strong>).</div>`
   );
   parts.push(`<div class="path-search-report__line"><strong>Path mode</strong> ${e(modeLabel)}</div>`);
   parts.push(`<div class="path-search-report__line"><strong>Relationships</strong> ${relLine}</div>`);
@@ -5342,7 +6601,7 @@ function renderPathSearchDiagnostics(payload, hints) {
   parts.push(`<div class="path-search-report__line"><strong>Viewpoint</strong> ${e(payload.viewpointShortLabel)}</div>`);
   parts.push(`<div class="path-search-report__line"><strong>Query</strong> ${e(payload.waypointChainDescription)}</div>`);
   parts.push(
-    `<span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses your option weights: <strong>${payload.pathWeightDirect}</strong> per direct Appendix B hop, <strong>${payload.pathWeightDerived}</strong> per derived hop, <strong>${payload.pathWeightAssociation}</strong> per Association hop, <strong>${payload.pathWeightLayerSkip}</strong> per layer-skipping hop.</span>`
+    `<span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses your option weights: <strong>${payload.pathWeightDirect}</strong> per explicit Appendix B hop, <strong>${payload.pathWeightDerived}</strong> per inferred hop, <strong>${payload.pathWeightAssociation}</strong> per Association hop, <strong>${payload.pathWeightLayerSkip}</strong> per layer-skipping hop.</span>`
   );
   parts.push(`</div>`);
   parts.push(`</div>`);
@@ -5358,7 +6617,7 @@ function renderPathSearchDiagnostics(payload, hints) {
   }
 
   const already = [];
-  if (payload.includeDerived) already.push("+ Derived");
+  if (payload.includeDerived) already.push("+ Inferred");
   if (payload.allowAssociationFallback) already.push("Association fallback");
   if (already.length) {
     parts.push(`<p class="path-search-next__already"><strong>Already enabled:</strong> ${already.join(" · ")}.</p>`);
@@ -5375,7 +6634,7 @@ function renderPathSearchDiagnostics(payload, hints) {
     parts.push(renderPathRelaxationActionSteps(hints));
   } else {
     parts.push(
-      `<p class="path-search-next__probe"><strong>Automatic check:</strong> With current hop limits and effort, enabling only + Derived or Association fallback did not reveal a route — try the general levers below or change endpoints.</p>`
+      `<p class="path-search-next__probe"><strong>Automatic check:</strong> With current hop limits and effort, enabling only + Inferred or Association fallback did not reveal a route — try the general levers below or change endpoints.</p>`
     );
   }
 
@@ -5383,7 +6642,7 @@ function renderPathSearchDiagnostics(payload, hints) {
   parts.push(`<ul class="path-search-next__generic">`);
   if (!payload.includeDerived) {
     parts.push(
-      `<li>Turn on <strong>+ Derived</strong> for §5.7 indirect links${probeHelped ? " (see button above if the tool detected this would help)." : "."}</li>`
+      `<li>Turn on <strong>+ Inferred</strong> for §5.7 indirect links${probeHelped ? " (see button above if the tool detected this would help)." : "."}</li>`
     );
   }
   if (!payload.allowAssociationFallback) {
@@ -5442,6 +6701,7 @@ function explainNoPath(fromEl, toEl, reason = "unknown", opts = {}) {
     waypointChain = null,
     totalSegments = null,
     selectionMode = "set",
+    academicDirectBlocked = false,
   } = opts;
 
   const fromAspect = getAspect(fromEl);
@@ -5453,9 +6713,14 @@ function explainNoPath(fromEl, toEl, reason = "unknown", opts = {}) {
 
   const parts = [];
 
+  const academicExplainBlock = academicDirectBlocked
+    ? `<div class="path-dead-end__academic-block explain-no-path__academic" role="alert"><strong>🛑 Path Blocked.</strong> There is no direct structural relationship between these elements, and your &quot;Academic&quot; Rigor setting forbids Association fallbacks. Try switching Search Depth to <strong>+ Inferred</strong> for §5.7 links, or lower your Rigor to &quot;Pragmatic&quot; to allow Association bridges.</div>`
+    : "";
+
   parts.push(`
     <div class="explain-no-path">
       <h3>No valid path found</h3>
+      ${academicExplainBlock}
       <p><strong>${escPathDiag(fromEl)}</strong> → <strong>${escPathDiag(toEl)}</strong></p>
     </div>`);
 
@@ -5523,7 +6788,7 @@ function explainNoPath(fromEl, toEl, reason = "unknown", opts = {}) {
         Try:
         <ul>
           <li>Adding a waypoint to break the path into two segments</li>
-          <li>Setting <strong>Direct vs +Derived</strong> to <strong>+ Derived</strong> (§5.7 edges in the graph)</li>
+          <li>Setting <strong>Explicit vs +Inferred</strong> to <strong>+ Inferred</strong> (§5.7 edges in the graph)</li>
           <li>Using a looser <strong>Semantic rigor</strong> preset (e.g. Discovery) or enabling Association in <strong>Advanced options → Advanced Logic Overrides</strong> (§5.2.4 — flagged as a weak link in results)</li>
           <li>Disabling the viewpoint filter</li>
         </ul>

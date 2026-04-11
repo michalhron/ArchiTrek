@@ -19,6 +19,9 @@
 // Used for: layer tile selector, swimlane rendering, viewpoint filtering.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Appendix B still lists these in matrix.js; the app omits them from registry, UI, and pathfinding. */
+const EXCLUDED_APP_ELEMENTS = new Set(["Grouping"]);
+
 /**
  * metamodelRole — position of each element in the ArchiMate core metamodel diagram
  * (Figure 4 in §4.2 of the spec, uploaded as IMG_1081).
@@ -75,54 +78,53 @@ const ELEMENTS = {
   "Product":                { layer: "Business", aspect: "Composite",         color: "#fffbe6", metamodelRole: "composite" },
 
   // ── Application ────────────────────────────────────────────────────────────
-  "Application Component":     { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "internal-active" },
-  "Application Collaboration": { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "internal-active" },
-  "Application Interface":     { layer: "Application", aspect: "Active Structure",  color: "#e8f4e8", metamodelRole: "external-active" },
-  "Application Function":      { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
-  "Application Process":       { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
-  "Application Interaction":   { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "internal-behavior" },
-  "Application Event":         { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "event" },
-  "Application Service":       { layer: "Application", aspect: "Behavior",          color: "#e8f4e8", metamodelRole: "external-behavior" },
-  "Data Object":               { layer: "Application", aspect: "Passive Structure", color: "#e8f4e8", metamodelRole: "passive" },
+  "Application Component":     { layer: "Application", aspect: "Active Structure",  color: "#BFFFFF", metamodelRole: "internal-active" },
+  "Application Collaboration": { layer: "Application", aspect: "Active Structure",  color: "#BFFFFF", metamodelRole: "internal-active" },
+  "Application Interface":     { layer: "Application", aspect: "Active Structure",  color: "#BFFFFF", metamodelRole: "external-active" },
+  "Application Function":      { layer: "Application", aspect: "Behavior",          color: "#BFFFFF", metamodelRole: "internal-behavior" },
+  "Application Process":       { layer: "Application", aspect: "Behavior",          color: "#BFFFFF", metamodelRole: "internal-behavior" },
+  "Application Interaction":   { layer: "Application", aspect: "Behavior",          color: "#BFFFFF", metamodelRole: "internal-behavior" },
+  "Application Event":         { layer: "Application", aspect: "Behavior",          color: "#BFFFFF", metamodelRole: "event" },
+  "Application Service":       { layer: "Application", aspect: "Behavior",          color: "#BFFFFF", metamodelRole: "external-behavior" },
+  "Data Object":               { layer: "Application", aspect: "Passive Structure", color: "#BFFFFF", metamodelRole: "passive" },
 
   // ── Technology ─────────────────────────────────────────────────────────────
-  "Node":                      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "Device":                    { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "System Software":           { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "Technology Collaboration":  { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "Technology Interface":      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "external-active" },
-  "Path":                      { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "Communication Network":     { layer: "Technology", aspect: "Active Structure",  color: "#e6f0fa", metamodelRole: "internal-active" },
-  "Technology Function":       { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
-  "Technology Process":        { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
-  "Technology Interaction":    { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "internal-behavior" },
-  "Technology Event":          { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "event" },
-  "Technology Service":        { layer: "Technology", aspect: "Behavior",          color: "#e6f0fa", metamodelRole: "external-behavior" },
-  "Technology Object":         { layer: "Technology", aspect: "Passive Structure", color: "#e6f0fa", metamodelRole: "passive" },
-  "Artifact":                  { layer: "Technology", aspect: "Passive Structure", color: "#e6f0fa", metamodelRole: "passive" },
-
-  // ── Physical ───────────────────────────────────────────────────────────────
-  "Equipment":           { layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
-  "Facility":            { layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
-  "Distribution Network":{ layer: "Physical", aspect: "Active Structure",  color: "#f0ece0", metamodelRole: "internal-active" },
-  "Material":            { layer: "Physical", aspect: "Passive Structure", color: "#f0ece0", metamodelRole: "passive" },
+  "Node":                      { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Device":                    { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "System Software":           { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Technology Collaboration":  { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Technology Interface":      { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "external-active" },
+  "Path":                      { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Communication Network":     { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Technology Function":       { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "internal-behavior" },
+  "Technology Process":        { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "internal-behavior" },
+  "Technology Interaction":    { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "internal-behavior" },
+  "Technology Event":          { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "event" },
+  "Technology Service":        { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "external-behavior" },
+  "Technology Object":         { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
+  "Artifact":                  { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
+  // Equipment, Facility, … (ArchiMate §10.4) — same Technology layer as IT infrastructure in this app.
+  "Equipment":           { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Facility":            { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Distribution Network":{ layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
+  "Material":            { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
 
   // ── Composite ──────────────────────────────────────────────────────────────
   "Location":             { layer: "Composite",      aspect: "Composite", color: "#e0e8f0", metamodelRole: "composite" },
-  "Grouping":             { layer: "Composite",      aspect: "Composite", color: "#f0f0f0", metamodelRole: "composite" },
+  // "Grouping":          { layer: "Composite",      aspect: "Composite", color: "#f0f0f0", metamodelRole: "composite" },
 
   // ── Implementation & Migration ─────────────────────────────────────────────
-  "Work Package":         { layer: "Implementation", aspect: "Behavior",          color: "#f0e6e6", metamodelRole: "implementation" },
-  "Deliverable":          { layer: "Implementation", aspect: "Passive Structure",  color: "#f0e6e6", metamodelRole: "implementation" },
-  "Implementation Event": { layer: "Implementation", aspect: "Behavior",          color: "#f0e6e6", metamodelRole: "implementation" },
-  "Plateau":              { layer: "Implementation", aspect: "Composite",          color: "#f0e6e6", metamodelRole: "implementation" },
-  "Gap":                  { layer: "Implementation", aspect: "Composite",          color: "#f0e6e6", metamodelRole: "implementation" },
+  "Work Package":         { layer: "Implementation", aspect: "Behavior",          color: "#FCE4E4", metamodelRole: "implementation" },
+  "Deliverable":          { layer: "Implementation", aspect: "Passive Structure",  color: "#FCE4E4", metamodelRole: "implementation" },
+  "Implementation Event": { layer: "Implementation", aspect: "Behavior",          color: "#FCE4E4", metamodelRole: "implementation" },
+  "Plateau":              { layer: "Implementation", aspect: "Composite",          color: "#FCE4E4", metamodelRole: "implementation" },
+  "Gap":                  { layer: "Implementation", aspect: "Composite",          color: "#FCE4E4", metamodelRole: "implementation" },
 
 };
 
 /**
  * Canonical ArchiMate layer stack order (top → bottom in vertical diagrams): Motivation, Strategy,
- * Business, Application, Technology, Physical, … Lane tints and horizontal swimlane rows use this.
+ * Business, Application, Technology, … Lane tints and horizontal swimlane rows use this.
  * Vertical path diagrams stack nodes in extracted path order (first step at bottom, last at top;
  * see ui/renderer.js orderCompactVerticalSteps).
  */
@@ -130,11 +132,10 @@ const LAYERS = [
   { id: "Motivation",     label: "Motivation",                 color: "#dcdcff", borderColor: "#6b6bb8" },
   { id: "Strategy",       label: "Strategy",                   color: "#e8d4b8", borderColor: "#c07820" },
   { id: "Business",       label: "Business",                   color: "#f5e87a", borderColor: "#c0a000" },
-  { id: "Application",    label: "Application",                color: "#a8d4a8", borderColor: "#208020" },
-  { id: "Technology",     label: "Technology",                 color: "#a0c4e8", borderColor: "#1060b0" },
-  { id: "Physical",       label: "Physical",                   color: "#d4c8a0", borderColor: "#806020" },
+  { id: "Application",    label: "Application",                color: "#BFFFFF", borderColor: "#1a1a1a" },
+  { id: "Technology",     label: "Technology",                 color: "#c1ffb1", borderColor: "#1a6b28" },
   { id: "Composite",      label: "Composite",                  color: "#d0dce8", borderColor: "#406080" },
-  { id: "Implementation", label: "Implementation & Migration", color: "#e8b8b8", borderColor: "#a02020" },
+  { id: "Implementation", label: "Implementation & Migration", color: "#FCE4E4", borderColor: "#a02020" },
 ];
 
 /**
@@ -142,7 +143,9 @@ const LAYERS = [
  * Falls back to "Unknown" if the element isn't registered.
  */
 function getElementLayer(elementName) {
-  return ELEMENTS[elementName]?.layer ?? "Unknown";
+  const raw = ELEMENTS[elementName]?.layer ?? "Unknown";
+  if (raw === "Physical") return "Technology";
+  return raw;
 }
 
 /**
@@ -271,7 +274,7 @@ function buildGraph({ allowedElements = null, includeDerived = false, includeAss
   };
 
   // Register ALL known elements as nodes, even those with no matrix edges
-  // (e.g. Location, Grouping — reachable via §5.2.4 Association when bridges are on)
+  // (e.g. Location — reachable via §5.2.4 Association when bridges are on)
   for (const name of Object.keys(ELEMENTS)) {
     if (!allowedElements || allowedElements.has(name)) {
       ensureNode(name);
@@ -281,6 +284,8 @@ function buildGraph({ allowedElements = null, includeDerived = false, includeAss
   for (const entry of MATRIX) {
     // Appendix B: one directed arc per record — tail `from` → head `to` only.
     const { from, to, direct, derived } = entry;
+
+    if (EXCLUDED_APP_ELEMENTS.has(from) || EXCLUDED_APP_ELEMENTS.has(to)) continue;
 
     // Viewpoint filter: skip if either endpoint is outside allowed set
     if (allowedElements && (!allowedElements.has(from) || !allowedElements.has(to))) {
@@ -386,6 +391,7 @@ function rankMatrixNeighborRows(el, mode) {
       if (row.to !== el) continue;
       partner = row.from;
     }
+    if (EXCLUDED_APP_ELEMENTS.has(partner)) continue;
     const direct = row.direct || [];
     const derived = row.derived || [];
     if (direct.length === 0) continue;
@@ -430,6 +436,7 @@ function getMatrixConnectivitySummary(elementName) {
 
   for (const row of MATRIX) {
     const { from, to, direct = [], derived = [] } = row;
+    if (EXCLUDED_APP_ELEMENTS.has(from) || EXCLUDED_APP_ELEMENTS.has(to)) continue;
     const hasD = direct.length > 0;
     const hasDer = derived.length > 0;
 

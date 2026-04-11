@@ -3710,28 +3710,68 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   position: relative;
 }
 
-/* Sidebar: [ controls | resize | results ] */
+/* Sidebar: fixed slide-in column; inner .selector-panel-slide animates (same pattern as top layout) */
 .app-layout.layout-sidebar {
-  grid-template-columns: minmax(0, var(--panel-width)) 6px minmax(0, 1fr);
-  grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .app-layout.layout-sidebar .selector-panel-wrap {
   grid-column: 1;
   grid-row: 1;
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
+  width: var(--panel-width);
+  max-width: min(var(--panel-width), 92vw);
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  z-index: 102;
 }
 
-.app-layout.layout-sidebar .panel-resize-handle--vertical {
-  grid-column: 2;
-  grid-row: 1;
-  /* Above .results-panel (z-index 6) so the gutter always receives drags */
-  z-index: 10;
+.app-layout.layout-sidebar .selector-panel-slide {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 6px 0 28px rgba(0, 0, 0, 0.12);
+  transform: translateX(0);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.25s ease;
+}
+
+.app-layout.layout-sidebar.panel-collapsed .selector-panel-wrap {
+  pointer-events: none;
+}
+
+.app-layout.layout-sidebar.panel-collapsed .selector-panel-slide {
+  transform: translateX(-100%);
+  box-shadow: none;
+}
+
+.app-layout.layout-sidebar #panel-resize-v {
+  position: fixed;
+  top: var(--header-height);
+  left: var(--panel-width);
+  bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
+  height: auto;
+  width: 6px;
+  margin: 0;
+  transform: translateX(-50%);
+  /* No longer a grid track; keep above results chrome for drags */
+  z-index: 103;
+}
+
+.app-layout.layout-sidebar.panel-collapsed #panel-resize-v {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 /* Hide only the top-bar chrome handle; keep #results-split-resize (same class) visible */
@@ -3740,7 +3780,7 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 }
 
 .app-layout.layout-sidebar .results-panel {
-  grid-column: 3;
+  grid-column: 1;
   grid-row: 1;
   /* Above .panel-resize-handle (z-index 5) so path tooltips/overlays aren’t covered */
   position: relative;
@@ -3764,6 +3804,24 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   flex-direction: column;
   min-height: 0;
   max-height: min(88vh, calc(100dvh - var(--header-height) - var(--app-footer-h) - env(safe-area-inset-bottom, 0px) - 8px));
+  /*
+   * Clip the inner slide: transform animates from above, but the panel’s border box still
+   * intersects the header band mid-transition; without overflow:hidden the surface (z-index 102)
+   * paints over .app-header (100) and covers the logo. Scrolling lives on .selector-panel-slide.
+   */
+  overflow: hidden;
+  /*
+   * Above .app-header (z-index 100). Header viewpoint/theme shells use ::after hit-bridges
+   * (pointer-events: auto) that extend below the bar; at 96 those stole clicks on the drawer’s
+   * Options / Interface options column (right strip in top layout).
+   */
+  z-index: 102;
+}
+
+.app-layout.layout-top .selector-panel-slide {
+  flex: 1;
+  min-height: 0;
+  max-height: min(88vh, calc(100dvh - var(--header-height) - var(--app-footer-h) - env(safe-area-inset-bottom, 0px) - 8px));
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -3773,15 +3831,13 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   border-radius: 0 0 14px 14px;
   transform: translateY(0);
   transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.25s ease;
-  /*
-   * Above .app-header (z-index 100). Header viewpoint/theme shells use ::after hit-bridges
-   * (pointer-events: auto) that extend below the bar; at 96 those stole clicks on the drawer’s
-   * Options / Interface options column (right strip in top layout).
-   */
-  z-index: 102;
 }
 
 .app-layout.layout-top.panel-collapsed .selector-panel-wrap {
+  pointer-events: none;
+}
+
+.app-layout.layout-top.panel-collapsed .selector-panel-slide {
   /*
    * Drawer is position:fixed with top: var(--header-height). translateY(-100% - 8px) only moves the
    * box up by its height + 8px, so the bottom edge lands at (header-height - 8px) — a large band
@@ -3789,7 +3845,6 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
    * Subtract header height again so the collapsed strip clears the menu bar entirely.
    */
   transform: translateY(calc(-100% - var(--header-height) - 8px));
-  pointer-events: none;
   box-shadow: none;
 }
 
@@ -3805,17 +3860,6 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 .app-layout.layout-top .results-panel {
   grid-column: 1;
   grid-row: 3;
-}
-
-/* Collapsed: hide control strip + its resize row */
-.app-layout.panel-collapsed.layout-sidebar {
-  grid-template-columns: 0 0 minmax(0, 1fr);
-}
-
-.app-layout.panel-collapsed.layout-sidebar .selector-panel-wrap,
-.app-layout.panel-collapsed.layout-sidebar .panel-resize-handle--vertical {
-  visibility: hidden;
-  pointer-events: none;
 }
 
 .app-layout.panel-collapsed.layout-top {
@@ -3903,6 +3947,14 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   line-height: 1;
   /* Above .app-header (100): header can grow past --header-height; otherwise it steals clicks on this tab. */
   z-index: 105;
+}
+
+/* Extra flex shell so top layout can clip the slide animation without clipping scroll (see .layout-top rules). */
+.selector-panel-slide {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .selector-panel-wrap .selector-panel {
@@ -8103,8 +8155,12 @@ cite {
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .app-layout.layout-sidebar:not(.panel-collapsed) {
-    grid-template-columns: minmax(0, min(var(--panel-width), 260px)) 6px minmax(0, 1fr);
+  .app-layout.layout-sidebar:not(.panel-collapsed) .selector-panel-wrap {
+    width: min(var(--panel-width), 260px);
+    max-width: min(var(--panel-width), 260px, 92vw);
+  }
+  .app-layout.layout-sidebar:not(.panel-collapsed) #panel-resize-v {
+    left: min(var(--panel-width), 260px);
   }
 }
 
@@ -8159,8 +8215,23 @@ cite {
   .app-layout.layout-sidebar .selector-panel-wrap {
     grid-column: 1 !important;
     grid-row: 1 !important;
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    z-index: auto !important;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+  .app-layout.layout-sidebar .selector-panel-slide {
+    transform: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+    border-right: none;
+    overflow-y: visible !important;
   }
   .app-layout.layout-sidebar .panel-resize-handle--vertical {
     display: none !important;

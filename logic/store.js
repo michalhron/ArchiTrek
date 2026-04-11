@@ -527,7 +527,7 @@
           break;
         case "SET_USER_CHOICE": {
           const data = action.payload && typeof action.payload === "object" ? action.payload : {};
-          const idx = data.hopIndex;
+          const idx = Number(data.hopIndex);
           if (!Number.isFinite(idx)) break;
           const uc = { ...(prev.userChoices || {}) };
           uc[idx] = data.code;

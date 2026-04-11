@@ -155,10 +155,16 @@
         : VERT_BADGE_NAME_GAP;
     const lines = labelLines ?? [];
     const nLines = lines.length === 0 ? 0 : Math.max(1, lines.length);
-    const approxTextW =
+    const approxInk =
       nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
+    /** Match makeRelLabel REL_NAME_STROKE_PAD when SVG measurement is unavailable. */
+    const layoutTextW = nLines === 0 ? 0 : Math.min(170, approxInk + 7);
     const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
-    const approxW = textStartXEast + approxTextW;
+    const approxW = effectiveVerticalStraddleWest
+      ? showHop
+        ? 2 * badgeR + textGap + layoutTextW
+        : layoutTextW
+      : textStartXEast + layoutTextW;
     const textHalfH =
       nLines === 0 ? 0 : Math.max(relLineH * 0.56, (nLines * relLineH) / 2);
     const stackHalfH = Math.max((showHop ? badgeR : 0) + 2, textHalfH);
@@ -167,7 +173,7 @@
     let circleCx = showHop ? badgeR : 0;
     if (effectiveVerticalStraddleWest) {
       stackX = straddleAnchorX - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
-      circleCx = approxTextW + textGap + badgeR;
+      circleCx = layoutTextW + textGap + badgeR;
     } else {
       stackX = straddleAnchorX + straddleExtraX + BADGE_LINE_CLEARANCE;
       circleCx = badgeR;

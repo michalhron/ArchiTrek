@@ -246,19 +246,14 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
         : U;
       maxLen = Math.max(maxLen, name.length);
     }
-    // Heuristic text width (clamped like `makeRelLabel`).
-    const approxTextW = Math.min(170, Math.max(48, maxLen * perChar));
-
     const hasChoices = step.codes.length > 1;
     const badgeR = hasChoices ? 11 : 9;
     const textGap = Math.max(VERT_BADGE_NAME_GAP, SPINE_TEXT_GAP_AFTER_BADGE);
-    /** Match makeRelLabel: flip control between hop badge and relation name on vertical straddle. */
+    /** Match makeRelLabel: flip corridor only on east straddle; west fits flip in the text↔badge gap. */
     const _flipR = 10;
     const _flipGap = 8;
     const flipCorridor = 2 * _flipGap + 2 * _flipR;
-    const textStartXEast = 2 * badgeR + flipCorridor + textGap;
-    const approxW = textStartXEast + approxTextW;
-    const halfW = approxW / 2;
+    const layoutTextW = Math.min(170, Math.max(48, maxLen * perChar + 7));
 
     const sameColumnVertical = Math.abs(a.x - b.x) < 0.5 && Math.abs(a.cy - b.cy) > 1e-6;
     const straddleExtraX = sameColumnVertical ? VERT_STRADDLE_PAST_MAIN : 0;
@@ -267,14 +262,23 @@ function verticalCompactRelationshipLabelBoundsPx(pathFlatSteps, steps, position
     const anchorX = hopPortFrontCenterX(a.x, fromEl, EL_W);
 
     let centerX;
+    let halfW;
     if (outer && Number.isFinite(outer.tx)) {
       const tx = outer.tx;
       const eastBus = tx > a.x + EL_W + 2;
+      const approxWEast = 2 * badgeR + flipCorridor + textGap + layoutTextW;
+      const approxWWest = 2 * badgeR + textGap + layoutTextW;
+      const approxWOuter = eastBus ? approxWEast : approxWWest;
+      halfW = approxWOuter / 2;
       centerX = eastBus
         ? tx + BADGE_LINE_CLEARANCE + halfW
         : tx - BADGE_LINE_CLEARANCE - halfW;
     } else {
       const preferWest = verticalStraddleWestForCompactHop(fromEl, toEl, hop);
+      const approxW = preferWest
+        ? 2 * badgeR + textGap + layoutTextW
+        : 2 * badgeR + flipCorridor + textGap + layoutTextW;
+      halfW = approxW / 2;
       centerX = preferWest
         ? anchorX - straddleExtraX - BADGE_LINE_CLEARANCE - halfW
         : anchorX + straddleExtraX + BADGE_LINE_CLEARANCE + halfW;

@@ -504,6 +504,8 @@ function makeRelLabel(mx, my, labelLines, {
   forceBadgeCenterOffsetFromLineEast = null,
   /** Solid rect behind badge+text (off by default; text uses stroked halo for contrast on lines). */
   labelSolidBackground = false,
+  /** When set (main diagram SVG), relation-name width is measured so west-straddle labels clear the flip control. */
+  measureSvg = null,
 } = {}) {
   const labelG = svgEl("g", { class: "rel-label" });
   const bgFill = "var(--surface, #ffffff)";
@@ -535,9 +537,42 @@ function makeRelLabel(mx, my, labelLines, {
     const badgeNum = badgeDisplayNumber != null ? badgeDisplayNumber : hopIndex;
     const approxTextW =
       nLines === 0 ? 0 : Math.min(170, Math.max(48, lines.join(" ").length * (fontSize * 0.55)));
-    /** Full width of badge + gap + text (east: circle left → text right; west: text left → circle right). */
+    /** Ink width + halo: {@link codeLabel} uses stroke-width 4; getComputedTextLength ignores stroke. */
+    const REL_NAME_STROKE_PAD = 7;
+    let layoutTextW = approxTextW;
+    if (nLines > 0 && measureSvg && typeof measureSvg.appendChild === "function") {
+      try {
+        const probe = svgEl("text", {
+          x: "-8000",
+          y: "-8000",
+          "font-size": String(fontSize),
+          "font-family": "DM Sans, system-ui, sans-serif",
+          fill: "#000",
+          visibility: "hidden",
+        });
+        measureSvg.appendChild(probe);
+        let maxInk = 0;
+        for (const ln of lines) {
+          probe.textContent = ln;
+          const len =
+            typeof probe.getComputedTextLength === "function" ? probe.getComputedTextLength() : 0;
+          if (Number.isFinite(len)) maxInk = Math.max(maxInk, len);
+        }
+        probe.remove();
+        if (maxInk > 0) {
+          layoutTextW = Math.min(170, Math.max(approxTextW, maxInk + REL_NAME_STROKE_PAD));
+        }
+      } catch (_) {
+        layoutTextW = approxTextW;
+      }
+    }
+    /** East: extra horizontal span for flip between badge and name. West: flip fits in text↔badge gap — do not add twice. */
     const textStartXEast = showHop ? 2 * badgeR + flipCorridor + textGap : 0;
-    const approxW = textStartXEast + approxTextW;
+    const approxW = verticalStraddleWest
+      ? showHop
+        ? 2 * badgeR + textGap + layoutTextW
+        : layoutTextW
+      : textStartXEast + layoutTextW;
 
     let stackX;
     let textAnchor;
@@ -547,8 +582,11 @@ function makeRelLabel(mx, my, labelLines, {
       // West: stroke is to the right; badge hugs the line; relation name flows left (text-anchor end).
       stackX = anchor - straddleExtraX - BADGE_LINE_CLEARANCE - approxW;
       textAnchor = "end";
-      textBlockX = showHop ? Math.max(0, approxTextW - flipCorridor) : approxTextW;
-      circleCx = approxTextW + textGap + badgeR;
+      // Text’s trailing edge sits left of the hop badge by (flipCorridor + textGap); flip is centered in that strip.
+      textBlockX = showHop
+        ? Math.max(0, layoutTextW + textGap - flipCorridor)
+        : layoutTextW;
+      circleCx = layoutTextW + textGap + badgeR;
     } else {
       // East / spine: default placement clears the stroke by BADGE_LINE_CLEARANCE.
       stackX = anchor + straddleExtraX + BADGE_LINE_CLEARANCE;
@@ -682,9 +720,9 @@ function makeRelLabel(mx, my, labelLines, {
     let flipIconWorld = null;
     if (showHop) {
       if (verticalStraddleWest) {
-        // [text][flip][badge]: flip sits in reserved strip immediately left of the badge.
+        // [text][flip][badge]: anchor flip from the reserved text trailing edge (measured width).
         flipIconWorld = {
-          x: stackX + circleCx - badgeR - FLIP_GAP - FLIP_ICON_R,
+          x: stackX + textBlockX + FLIP_GAP + FLIP_ICON_R,
           y: my,
         };
       } else {
@@ -3127,6 +3165,7 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
         verticalStraddleWest: forLabelStraddle ? effectiveVerticalStraddleWest : false,
         straddleLineStrokeX: forLabelStraddle ? straddleLineStrokeX : null,
         forceBadgeCenterOffsetFromLineEast,
+        measureSvg: svg,
       })
     : { labelG: svgEl("g", { class: "rel-label rel-label--empty" }), flipIconWorld: null };
 

@@ -265,8 +265,9 @@ window.applyEdgeConstraintFlip = function applyEdgeConstraintFlip(source, target
     const msg = String(next?.edgeConstraintWarning || "").trim();
     if (msg) {
       state.edgeConstraintWarning = msg;
-      window.dispatch({ type: "RENDER_RESULTS" });
     }
+    // No re-find: still redraw so warnings / diagram / explanation stay in sync (e.g. flip blocked after a bad choice).
+    window.dispatch({ type: "RENDER_RESULTS" });
     return false;
   }
   /** Same as cycling a hop’s relationship: keep explanation accordions / scroll after the re-find. */
@@ -1833,8 +1834,8 @@ function hasReviewablePathResults() {
 }
 
 /**
- * Collapsed control chrome hides #selector-panel-wrap and uses pointer-events: none for both
- * layout-top (drawer) and layout-sidebar (hidden strip). Open the panel when there is nothing to
+ * Collapsed control chrome hides path controls (top: slide-up drawer; sidebar: slide-left strip)
+ * with pointer-events: none on the shell. Open the panel when there is nothing to
  * review yet so waypoints / quick examples / Add element stay reachable without hunting for
  * header "Edit path".
  */
@@ -2866,7 +2867,7 @@ function applyLayoutChrome() {
 
   const panelWrap = document.getElementById("selector-panel-wrap");
   if (panelWrap) {
-    if (mode === "top") {
+    if (mode === "top" || mode === "sidebar") {
       panelWrap.setAttribute("aria-hidden", collapsed ? "true" : "false");
     } else {
       panelWrap.removeAttribute("aria-hidden");
@@ -2874,6 +2875,11 @@ function applyLayoutChrome() {
     /* Keep panel slide controlled by CSS (.panel-collapsed), not leftover inline styles. */
     panelWrap.style.removeProperty("transform");
     panelWrap.style.removeProperty("pointer-events");
+    const slide = panelWrap.querySelector(".selector-panel-slide");
+    if (slide) {
+      slide.style.removeProperty("transform");
+      slide.style.removeProperty("pointer-events");
+    }
   }
 
   applySidebarControlsCollapse();
@@ -10410,11 +10416,10 @@ function initEdgeContextMenu() {
       row.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        if (window.store) {
+        const flipped =
+          typeof window.applyEdgeConstraintFlip === "function" && window.applyEdgeConstraintFlip(from, to);
+        if (flipped && window.store) {
           window.store.dispatch("SET_USER_CHOICE", { hopIndex, code });
-        }
-        if (typeof window.applyEdgeConstraintFlip === "function") {
-          window.applyEdgeConstraintFlip(from, to);
         }
         closeMenu();
       });
@@ -10614,11 +10619,13 @@ window.onCompositeSubsToggle = function onCompositeSubsToggle() {
 
 
 window.setEdgeChoice = function(hopIndex, code) {
-  console.log(`[DECISION] Hop ${hopIndex} set to ${code}`);
+  const hop = Number(hopIndex);
+  if (!Number.isFinite(hop)) return;
+  console.log(`[DECISION] Hop ${hop} set to ${code}`);
   if (window.store) {
-    window.store.dispatch("SET_USER_CHOICE", { hopIndex, code });
+    window.store.dispatch("SET_USER_CHOICE", { hopIndex: hop, code });
   } else {
-    window.state.userChoices[hopIndex] = code;
+    window.state.userChoices[hop] = code;
   }
   state._preserveExplainUiOnNextRender = true;
   // Re-run render to update the diagram and explanation; accordions stay open via capture/restore.

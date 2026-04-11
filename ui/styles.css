@@ -3710,68 +3710,67 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   position: relative;
 }
 
-/* Sidebar: fixed slide-in column; inner .selector-panel-slide animates (same pattern as top layout) */
+/*
+ * Sidebar: flex row so the path column has a real width in layout — the diagram is pushed right.
+ * Collapse animates width (and the resize gutter) with the same easing as the top drawer.
+ */
 .app-layout.layout-sidebar {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .app-layout.layout-sidebar .selector-panel-wrap {
-  grid-column: 1;
-  grid-row: 1;
-  position: fixed;
-  top: var(--header-height);
-  left: 0;
-  bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
+  flex: 0 0 auto;
   width: var(--panel-width);
   max-width: min(var(--panel-width), 92vw);
-  display: flex;
-  flex-direction: column;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  z-index: 102;
+  border-right: 1px solid var(--border);
+  box-sizing: border-box;
+  transition: width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    max-width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 0.22s ease;
+}
+
+.app-layout.layout-sidebar.panel-collapsed .selector-panel-wrap {
+  width: 0;
+  max-width: 0;
+  border-right-color: transparent;
+  pointer-events: none;
 }
 
 .app-layout.layout-sidebar .selector-panel-slide {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: 6px 0 28px rgba(0, 0, 0, 0.12);
-  transform: translateX(0);
-  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.25s ease;
-}
-
-.app-layout.layout-sidebar.panel-collapsed .selector-panel-wrap {
-  pointer-events: none;
-}
-
-.app-layout.layout-sidebar.panel-collapsed .selector-panel-slide {
-  transform: translateX(-100%);
-  box-shadow: none;
 }
 
 .app-layout.layout-sidebar #panel-resize-v {
-  position: fixed;
-  top: var(--header-height);
-  left: var(--panel-width);
-  bottom: calc(var(--app-footer-h) + env(safe-area-inset-bottom, 0px));
-  height: auto;
+  flex: 0 0 6px;
   width: 6px;
+  min-width: 0;
+  align-self: stretch;
+  position: relative;
   margin: 0;
-  transform: translateX(-50%);
-  /* No longer a grid track; keep above results chrome for drags */
-  z-index: 103;
+  overflow: hidden;
+  transition: flex-basis 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.2s ease;
 }
 
 .app-layout.layout-sidebar.panel-collapsed #panel-resize-v {
+  flex-basis: 0;
+  width: 0;
   opacity: 0;
   pointer-events: none;
-  visibility: hidden;
 }
 
 /* Hide only the top-bar chrome handle; keep #results-split-resize (same class) visible */
@@ -3780,8 +3779,9 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 }
 
 .app-layout.layout-sidebar .results-panel {
-  grid-column: 1;
-  grid-row: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   /* Above .panel-resize-handle (z-index 5) so path tooltips/overlays aren’t covered */
   position: relative;
   z-index: 6;
@@ -8159,9 +8159,6 @@ cite {
     width: min(var(--panel-width), 260px);
     max-width: min(var(--panel-width), 260px, 92vw);
   }
-  .app-layout.layout-sidebar:not(.panel-collapsed) #panel-resize-v {
-    left: min(var(--panel-width), 260px);
-  }
 }
 
 @media (max-width: 700px) {
@@ -8206,6 +8203,7 @@ cite {
     }
   }
   .app-layout.layout-sidebar {
+    display: grid !important;
     grid-template-columns: 1fr !important;
     grid-template-rows: auto 1fr !important;
     height: auto;
@@ -8215,6 +8213,7 @@ cite {
   .app-layout.layout-sidebar .selector-panel-wrap {
     grid-column: 1 !important;
     grid-row: 1 !important;
+    flex: unset !important;
     position: relative !important;
     top: auto !important;
     left: auto !important;
@@ -8225,13 +8224,14 @@ cite {
     z-index: auto !important;
     border-right: none;
     border-bottom: 1px solid var(--border);
+    transition: none !important;
   }
   .app-layout.layout-sidebar .selector-panel-slide {
-    transform: none !important;
-    transition: none !important;
-    box-shadow: none !important;
-    border-right: none;
     overflow-y: visible !important;
+  }
+  .app-layout.layout-sidebar #panel-resize-v {
+    flex: unset !important;
+    transition: none !important;
   }
   .app-layout.layout-sidebar .panel-resize-handle--vertical {
     display: none !important;

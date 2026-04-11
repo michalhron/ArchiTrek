@@ -6,6 +6,8 @@ window.state = {
   mode:           'compact',
   /** When true, pathfinding also includes §5.7 derived (lowercase) relationships for simplified routing options. */
   includeDerived: true,
+  /** When true, Simplified vs Ground-Truth labeling uses a lower score threshold (40 vs 60). */
+  lenientSimplification: false,
   selectionMode:  'set',
   viewpoint:      null,
   allowedElements: null,
@@ -525,6 +527,7 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
     penaltyGrowthFactor: clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor),
     /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
+    lenientSimplification: !!state.lenientSimplification,
     allowAssociationFallback: !!state.allowAssociationFallback,
     restrictCoreToCore: !!state.restrictCoreToCore,
     enforceGrammar: !!state.enforceGrammar,
@@ -814,7 +817,7 @@ function syncDerivedToggleFromState() {
 }
 
 /**
- * Restore Direct/Derived + Association Options after a one-shot relaxed findPath (overlay / widen-search CTAs).
+ * Restore Direct/Derived + Association Options after a one-shot relaxed findPath (overlay CTAs).
  */
 function applyRelaxOneShotRestore() {
   const snap = state._relaxOneShotRestore;
@@ -1545,6 +1548,7 @@ function gatherSessionSnapshot() {
     perspectiveClassMode: normalizePerspectiveClassMode(plain.perspectiveClassMode),
     perspectiveDominantSharePct: clampPerspectiveDominantSharePct(plain.perspectiveDominantSharePct),
     allowAssociationFallback: !!plain.allowAssociationFallback,
+    lenientSimplification: !!plain.lenientSimplification,
   };
 }
 
@@ -1692,6 +1696,9 @@ function restoreSessionSnapshot() {
     }
     if (typeof data.allowAssociationFallback === "boolean") {
       state.allowAssociationFallback = data.allowAssociationFallback;
+    }
+    if (typeof data.lenientSimplification === "boolean") {
+      state.lenientSimplification = data.lenientSimplification;
     }
     if (state.searchRigorPreset !== "custom" && SEARCH_RIGOR_PRESETS[state.searchRigorPreset]) {
       applySearchRigorPresetToState(state.searchRigorPreset);
@@ -6971,6 +6978,13 @@ window.setDerived = function(include) {
   schedulePersistSession();
 };
 
+window.setLenientSimplification = function (lenient) {
+  state.lenientSimplification = !!lenient;
+  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
+  updatePathOptionsTriggerSummary();
+  schedulePersistSession();
+};
+
 /**
  * Connect-set mode finds a directed chain but leaves waypoint slots in pick order.
  * Ordered mode uses slot order as Start → Via → End; after switching, align slots with
@@ -7540,9 +7554,39 @@ function layerBadgeClassForLabel(layerLabel) {
 }
 
 function precisionBadgeClassForLabel(precisionLabel) {
-  return precisionLabel === "Executive Summary"
-    ? "path-badge--precision-executive"
-    : "path-badge--precision-ground";
+  switch (precisionLabel) {
+    case "Simplified":
+      return "path-badge--precision-executive";
+    case "Ground-Truth":
+      return "path-badge--precision-ground";
+    case "Executive Summary":
+      return "path-badge--precision-executive";
+    case "Abstracted Topology":
+      return "path-badge--precision-abstracted";
+    case "Informal Bridge":
+      return "path-badge--precision-informal";
+    default:
+      return "path-badge--precision-ground";
+  }
+}
+
+function precisionBadgeShortLabel(precisionLabel) {
+  switch (precisionLabel) {
+    case "Simplified":
+      return "Simplified";
+    case "Ground-Truth":
+      return "Ground-Truth";
+    case "Executive Summary":
+      return "Simplified";
+    case "Abstracted Topology":
+      return "Abstracted";
+    case "Informal Bridge":
+      return "Informal";
+    case "Engineering Ground-Truth":
+      return "Ground-Truth";
+    default:
+      return "Ground-Truth";
+  }
 }
 
 function escapeHtmlAttr(s) {
@@ -7553,10 +7597,10 @@ function escapeHtmlAttr(s) {
 }
 
 function precisionTooltip(precisionLabel) {
-  if (precisionLabel === "Executive Summary") {
-    return "This path uses ArchiMate Derivation rules (Cost=5) to hide technical complexity for a business audience.";
+  if (precisionLabel === "Simplified") {
+    return "Assigned to paths that score highly on our simplification index, heavily weighting the amount of technical compression (70%) alongside the presence of high-level business semantics (30%).";
   }
-  return "This path follows only explicit ArchiMate relationships (Cost=1) to provide the most granular engineering view.";
+  return "Assigned to explicit paths and minor abstractions that score below the simplification threshold, retaining enough structural detail to serve as a rigorous engineering view.";
 }
 
 function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
@@ -7592,38 +7636,6 @@ function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
   return [];
 }
 
-function widenSearchForVariation() {
-  let changed = false;
-
-  const curPaths = clampSearchMaxPaths(state.searchMaxPaths);
-  if (curPaths < 10) {
-    state.searchMaxPaths = clampSearchMaxPaths(curPaths + 2);
-    changed = true;
-  } else {
-    const effort = normalizeSearchEffort(state.searchEffort);
-    if (effort === "fast") {
-      state.searchEffort = "balanced";
-      changed = true;
-    } else if (effort === "balanced") {
-      state.searchEffort = "thorough";
-      changed = true;
-    } else {
-      const curDepth = clampSearchDepth(state.searchMaxDepth);
-      if (curDepth < 12) {
-        state.searchMaxDepth = clampSearchDepth(curDepth + 1);
-        changed = true;
-      }
-    }
-  }
-
-  if (!changed) return false;
-  applySearchOptionsToUI();
-  updatePathOptionsTriggerSummary();
-  schedulePersistSession();
-  if (state.segments) window.dispatch({ type: "FIND_PATH", reason: "variation-coach-widen-search" });
-  return true;
-}
-
 function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, activePathIdx, recCtx = {}) {
   if (!Array.isArray(items) || items.length < 3) return null;
 
@@ -7653,36 +7665,82 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
   const pShare = pTop.count / items.length;
   const lShare = lTop.count / items.length;
 
-  if (pShare >= 0.8 && pTop.key === "Engineering Ground-Truth") {
+  if (pShare >= 0.8 && pTop.key === "Ground-Truth") {
     const canEnableSimplified = !state.includeDerived;
-    const canWiden = clampSearchMaxPaths(state.searchMaxPaths) < 10
-      || normalizeSearchEffort(state.searchEffort) !== "thorough"
-      || clampSearchDepth(state.searchMaxDepth) < 12;
+    const canRelaxRules = !state.lenientSimplification;
     const actions = [];
+    const pickedEls = (state.waypoints || []).map((wp) => wp?.element).filter(Boolean);
+    const uniqOrdered = Array.from(new Set(pickedEls));
+    const startEl = uniqOrdered[0] || null;
+    const targetEl = uniqOrdered.length > 1 ? uniqOrdered[uniqOrdered.length - 1] : startEl;
+    const excludeElements = new Set(pickedEls);
+    const coachGraph = recCtx.graph || state.graph;
+    const suggestedElements =
+      typeof findNearbyExecutiveElements === "function" && startEl
+        ? findNearbyExecutiveElements(startEl, targetEl, coachGraph, {
+            maxResults: 2,
+            excludeElements,
+            skipAssociation: true,
+          })
+        : [];
+
+    if (suggestedElements.length > 0) {
+      const elementNames = suggestedElements
+        .map((e) => `[${e.type}: ${e.name}]`)
+        .join(" or ");
+      const coachTextGroundTruth = `Most routes here are technical Ground-Truths. To generate a Simplified view, try routing through a related business concept like ${elementNames}.`;
+      for (const el of suggestedElements) {
+        const name = String(el?.id || el?.name || "").trim();
+        if (!name) continue;
+        actions.push({
+          label: `Route via '${name}'`,
+          onClick: () =>
+            withVisibleEditingControls(() =>
+              addPerspectiveSuggestedElement(name, {
+                expandedScope:
+                  isElementOutsideStrictViewpoint(name, recCtx) && !!recCtx.usingFullMetamodel,
+              })
+            ),
+        });
+      }
+      if (canEnableSimplified) {
+        actions.push({
+          label: "Enable Simplified (+Inferred)",
+          onClick: () => setDerived(true),
+        });
+      }
+      if (canRelaxRules && state.includeDerived) {
+        actions.push({
+          label: "Relax Abstraction Rules",
+          onClick: () => setLenientSimplification(true),
+        });
+      }
+      return { text: coachTextGroundTruth, actions };
+    }
+
+    let coachText =
+      "Most routes here are strict Ground-Truths. To see a high-level summary, try routing through a business or strategy concept.";
+    actions.push({
+      label: "Add Business Waypoint",
+      onClick: () => withVisibleEditingControls(() => addPerspectiveExplorationWaypoint()),
+    });
     if (canEnableSimplified) {
       actions.push({
         label: "Enable Simplified (+Inferred)",
         onClick: () => setDerived(true),
       });
     }
-    if (canWiden) {
+    if (canRelaxRules && state.includeDerived) {
       actions.push({
-        label: "Widen search",
-        onClick: () => widenSearchForVariation(),
+        label: "Relax Abstraction Rules",
+        onClick: () => setLenientSimplification(true),
       });
     }
-    if (!actions.length) return null;
-    return {
-      text: "Most routes here are Ground-Truth. Consider trying Simplified variants for a higher-level explanation.",
-      actions,
-    };
+    return { text: coachText, actions };
   }
 
-  if (pShare >= 0.8 && pTop.key === "Executive Summary") {
+  if (pShare >= 0.8 && pTop.key === "Simplified") {
     const canGroundTruth = state.includeDerived;
-    const canWiden = clampSearchMaxPaths(state.searchMaxPaths) < 10
-      || normalizeSearchEffort(state.searchEffort) !== "thorough"
-      || clampSearchDepth(state.searchMaxDepth) < 12;
     const actions = [];
     if (canGroundTruth) {
       actions.push({
@@ -7690,15 +7748,9 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
         onClick: () => setDerived(false),
       });
     }
-    if (canWiden) {
-      actions.push({
-        label: "Widen search",
-        onClick: () => widenSearchForVariation(),
-      });
-    }
     if (!actions.length) return null;
     return {
-      text: "Most routes here are Simplified. Consider Ground-Truth variants for full relationship detail.",
+      text: "Most routes here use inferred relationships. Consider Ground-Truth variants for full relationship detail.",
       actions,
     };
   }
@@ -7818,20 +7870,20 @@ function buildPathLabelsModalHtml() {
     <div class="path-labels-section path-labels-section--precision">
       <div class="path-labels-section-head">
         <span class="path-labels-section-kicker">Path precision</span>
-        <h4 class="path-labels-h">Simplified vs ground-truth</h4>
+        <h4 class="path-labels-h">Path precision badges</h4>
       </div>
       <div class="path-labels-precision-grid">
         <div class="path-labels-precision-card path-labels-precision-card--simplified">
           <div class="path-labels-precision-card__head">
             <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-simplified">Simplified</span>
           </div>
-          <p class="path-labels-precision-card__text">${te(precisionTooltip("Executive Summary"))}</p>
+          <p class="path-labels-precision-card__text">${te(precisionTooltip("Simplified"))}</p>
         </div>
         <div class="path-labels-precision-card path-labels-precision-card--ground">
           <div class="path-labels-precision-card__head">
             <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-ground">Ground-Truth</span>
           </div>
-          <p class="path-labels-precision-card__text">${te(precisionTooltip("Engineering Ground-Truth"))}</p>
+          <p class="path-labels-precision-card__text">${te(precisionTooltip("Ground-Truth"))}</p>
         </div>
       </div>
     </div>
@@ -8106,6 +8158,7 @@ function scorePerspectiveAction(sectionId, { removeIndex = null, addElement = nu
     String(addElement ?? ""),
     (state.waypoints || []).map((wp) => wp?.element || "").join("|"),
     String(state.includeDerived),
+    String(!!state.lenientSimplification),
     String(state.allowAssociationFallback),
     String(state.searchMaxDepth),
     String(state.searchMaxPaths),
@@ -8603,7 +8656,7 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
           </span>
           <span class="path-perspective-item-badges">
             <span class="path-badge ${layerBadgeClassForLabel(meta.layerLabel)}" title="${escapeHtmlAttr(layerTooltip(meta.layerLabel))}">${meta.layerLabel}</span>
-            <span class="path-badge ${precisionBadgeClassForLabel(meta.precisionLabel)}" title="${escapeHtmlAttr(precisionTooltip(meta.precisionLabel))}">${meta.precisionLabel === "Executive Summary" ? "Simplified" : "Ground-Truth"}</span>
+            <span class="path-badge ${precisionBadgeClassForLabel(meta.precisionLabel)}" title="${escapeHtmlAttr(precisionTooltip(meta.precisionLabel))}">${precisionBadgeShortLabel(meta.precisionLabel)}</span>
           </span>
         `;
         body.appendChild(row);

@@ -3270,6 +3270,18 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   font-size: 13px;
 }
 
+.help-labels-precision-summary {
+  margin: 0 0 10px;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.help-labels-precision-summary:last-of-type {
+  margin-bottom: 14px;
+}
+
 .help-modal-title {
   margin: 0;
   font-family: 'DM Serif Display', Georgia, serif;
@@ -6275,13 +6287,21 @@ input[type="number"].search-weight-input.viewpoint-select {
   background: #e9f6ec;
   border-color: rgba(26, 122, 58, 0.35);
 }
+.path-labels-pill--precision-abstracted{
+  background: #e8eefc;
+  border-color: rgba(55, 80, 150, 0.35);
+}
+.path-labels-pill--precision-informal{
+  background: #f3e8ff;
+  border-color: rgba(110, 50, 150, 0.32);
+}
 .path-labels-precision-grid{
   display: grid;
   gap: 10px;
 }
 @media (min-width: 480px) {
   .path-labels-precision-grid{
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .path-labels-precision-card{
@@ -6298,6 +6318,14 @@ input[type="number"].search-weight-input.viewpoint-select {
 .path-labels-precision-card--ground{
   border-color: rgba(80, 160, 100, 0.35);
   background: linear-gradient(165deg, #f9fdfb 0%, #eef8f1 100%);
+}
+.path-labels-precision-card--abstracted{
+  border-color: rgba(70, 95, 180, 0.38);
+  background: linear-gradient(165deg, #fafbff 0%, #eef2fc 100%);
+}
+.path-labels-precision-card--informal{
+  border-color: rgba(130, 70, 170, 0.35);
+  background: linear-gradient(165deg, #fdfbff 0%, #f6eefc 100%);
 }
 .path-labels-precision-card__head{
   margin-bottom: 8px;
@@ -7780,7 +7808,9 @@ svg .composite-illustration-more {
 .path-badge--layer-tech,
 .path-badge--layer-fullstack,
 .path-badge--precision-ground,
-.path-badge--precision-executive {
+.path-badge--precision-executive,
+.path-badge--precision-abstracted,
+.path-badge--precision-informal {
   background: #f1f5f9;
 }
 
@@ -7818,6 +7848,18 @@ svg .composite-illustration-more {
   background: #fff7ed;
   border-color: #fed7aa;
   color: #9a3412;
+}
+
+.path-badge--precision-abstracted {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #312e81;
+}
+
+.path-badge--precision-informal {
+  background: #faf5ff;
+  border-color: #e9d5ff;
+  color: #6b21a8;
 }
 
 /* ── Explanation Panel ────────────────────────────────────────────────────── */

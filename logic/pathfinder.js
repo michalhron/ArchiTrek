@@ -18,8 +18,9 @@
  *   path.ucsRoutingCost — when present on UCS results, internal routing total (exponential cognitive-load depth penalty on relationship hops only); sortPathsByMetric prefers this over base total.
  *   pathCostBreakdown(path, weights?) → per–cost-type weighted subtotals (direct / derived / association / layer-skip / violation); uses base hop weights only
  *   normalizePathWeights(options) → { direct, derived, association, violation, layerSkip }
- *   clusterPaths(segments, options?) → perspective/label metadata for UI grouping
+ *   clusterPaths(segments, options?) → perspective/label metadata (precision: Simplified vs Ground-Truth + precisionScore 0–100, precisionFactors)
  *   findBestChainForSet(graph, points, options) → { orderedPoints, segments, totalScore, isFallback }
+ *   findNearbyExecutiveElements(startElement, targetElement, graph, options?) → [{ id, name, type, distance }]
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1603,9 +1604,90 @@ function suggestAlternativeViewpoints(targetBucket, currentKey, opts = {}) {
   return out.slice(0, max);
 }
 
-function classifyPrecisionLabel(flatSteps) {
-  const hasDerived = flatSteps.some((s, i) => i > 0 && s?.isDirect === false && !s?.isAssociation);
-  return hasDerived ? "Executive Summary" : "Engineering Ground-Truth";
+/**
+ * Resolve ArchiMate element type name for a path step (registry keys are canonical type names).
+ * @param {PathStep} s
+ * @returns {string}
+ */
+function archimateElementTypeForPrecisionStep(s) {
+  const elems = typeof ELEMENTS !== "undefined" ? ELEMENTS : globalThis.ELEMENTS;
+  if (typeof s?.targetType === "string" && s.targetType.trim()) return s.targetType.trim();
+  if (s?.targetId && elems && elems[s.targetId]) {
+    const meta = elems[s.targetId];
+    return typeof meta?.type === "string" && meta.type.trim() ? meta.type.trim() : String(s.targetId);
+  }
+  const el = typeof s?.element === "string" ? s.element.trim() : "";
+  if (el && elems && elems[el]) {
+    const meta = elems[el];
+    return typeof meta?.type === "string" && meta.type.trim() ? meta.type.trim() : el;
+  }
+  return el;
+}
+
+/** ArchiMate element names on the path that indicate Motivation / Strategy “executive” semantics for precision scoring. */
+const EXECUTIVE_ELEMENT_TYPES = [
+  "Stakeholder", "Driver", "Assessment", "Goal", "Outcome", "Value", "Meaning",
+  "Requirement", "Constraint", "Principle", "Resource", "Capability", "Course of Action",
+];
+
+/**
+ * Continuous simplification index (0–100) from semantic weight (30), compression (70), and Association penalty (−50 gate).
+ * UI still maps the returned `label` only (Simplified vs Ground-Truth).
+ * @param {PathStep[]} flatSteps
+ * @param {number} [routingCost=0] — UCS routing total for this alternative (stitched across segments when multi-waypoint)
+ * @param {boolean} [isLenient=false] — when true, Simplified vs Ground-Truth uses threshold 40 instead of 60
+ * @returns {{
+ *   label: "Simplified"|"Ground-Truth",
+ *   totalScore: number,
+ *   semanticScore: number,
+ *   compressionScore: number,
+ *   penaltyScore: number,
+ *   hasAssociation: boolean
+ * }}
+ */
+function calculatePrecisionMetrics(flatSteps, routingCost = 0, isLenient = false) {
+  const hasDerived = flatSteps.some((s, i) => i > 0 && s?.isDirect === false);
+  const hasAssociation = flatSteps.some((s) => s?.isAssociation);
+
+  let semanticScore = 0;
+  let compressionScore = 0;
+  let penaltyScore = 0;
+
+  if (hasDerived) {
+    const hasExecutiveSemantics = flatSteps.some((s) => {
+      const type = archimateElementTypeForPrecisionStep(s);
+      return type && EXECUTIVE_ELEMENT_TYPES.includes(type);
+    });
+    semanticScore = hasExecutiveSemantics ? 30 : 0;
+
+    const MAX_EXPECTED_COST = 15;
+    const COMPRESSION_WEIGHT_MAX = 70;
+    const cost = Number(routingCost);
+    const safeCost = Number.isFinite(cost) && cost > 0 ? cost : 0;
+    compressionScore = Math.min(
+      (safeCost / MAX_EXPECTED_COST) * COMPRESSION_WEIGHT_MAX,
+      COMPRESSION_WEIGHT_MAX
+    );
+  }
+
+  if (hasAssociation) {
+    penaltyScore = -50;
+  }
+
+  const rawTotal = semanticScore + compressionScore + penaltyScore;
+  const totalScore = Math.max(0, Math.min(Math.round(rawTotal), 100));
+
+  const SIMPLIFIED_THRESHOLD = isLenient ? 40 : 60;
+  const label = totalScore >= SIMPLIFIED_THRESHOLD ? "Simplified" : "Ground-Truth";
+
+  return {
+    label,
+    totalScore,
+    semanticScore,
+    compressionScore,
+    penaltyScore,
+    hasAssociation,
+  };
 }
 
 function classifyLayerLabel(flatSteps) {
@@ -1673,16 +1755,19 @@ function classifyPerspective(
  *   pathWeightAssociation?: number,
  *   pathWeightLayerSkip?: number,
  *   perspectiveClassMode?: "exclusive"|"dominant-share",
- *   perspectiveDominantShare?: number
+ *   perspectiveDominantShare?: number,
+ *   lenientSimplification?: boolean
  * }} [weightOpts] — same hop costs as path search (for totalWeight display and perspective grouping)
  * @returns {{
  *   byPerspective: { A: any[], B: any[], C: any[] },
  *   byPathIndex: Record<string, any>,
  *   all: any[]
- * }} Each meta includes costDirect, costDerived, costAssociation, costLayerSkip, costViolation (weighted subtotals), ucsRoutingTotal.
+ * }} Each meta includes costDirect, costDerived, costAssociation, costLayerSkip, costViolation (weighted subtotals), ucsRoutingTotal,
+ *   precisionScore (0–100), precisionFactors: { semantic, compression, penalty }.
  */
 function clusterPaths(segments, weightOpts = {}) {
   const weights = normalizePathWeights(weightOpts);
+  const lenientSimplification = !!weightOpts.lenientSimplification;
   const maxAlts = Math.max(0, ...((segments || []).map((s) => s.paths?.length || 0)));
   const byPerspective = { A: [], B: [], C: [] };
   const byPathIndex = {};
@@ -1694,15 +1779,14 @@ function clusterPaths(segments, weightOpts = {}) {
     const hopCount = Math.max(0, flatSteps.length - 1);
     const totalWeight = pathTotalWeight(flatSteps, weights);
     const ucsRoutingTotal = compositeStitchedUcsRoutingCost(segments, i, weights);
+    const pathCost = ucsRoutingTotal;
     const bd = pathCostBreakdown(flatSteps, weights);
     const layerLabel = classifyLayerLabel(flatSteps);
-    const precisionLabel = classifyPrecisionLabel(flatSteps);
+    const precisionMetrics = calculatePrecisionMetrics(flatSteps, pathCost, lenientSimplification);
     const perspective = classifyPerspective(flatSteps, {
       perspectiveClassMode: weightOpts?.perspectiveClassMode,
       perspectiveDominantShare: weightOpts?.perspectiveDominantShare,
     });
-    const hasDerived = precisionLabel === "Executive Summary";
-    const hasAssociation = flatSteps.some((s, idx) => idx > 0 && !!s?.isAssociation);
 
     const meta = {
       pathIndex: i,
@@ -1715,11 +1799,17 @@ function clusterPaths(segments, weightOpts = {}) {
       costLayerSkip: bd.layerSkip,
       costViolation: bd.violation,
       layerLabel,
-      precisionLabel,
+      precisionLabel: precisionMetrics.label,
+      precisionScore: precisionMetrics.totalScore,
+      precisionFactors: {
+        semantic: precisionMetrics.semanticScore,
+        compression: precisionMetrics.compressionScore,
+        penalty: precisionMetrics.penaltyScore,
+      },
       perspective,
-      hasDerived,
-      hasAssociation,
-      isGroundTruth: !hasDerived,
+      hasDerived: precisionMetrics.label === "Simplified",
+      hasAssociation: precisionMetrics.hasAssociation,
+      isGroundTruth: precisionMetrics.label === "Ground-Truth",
     };
     byPerspective[perspective].push(meta);
     byPathIndex[String(i)] = meta;
@@ -1742,6 +1832,121 @@ function clusterPaths(segments, weightOpts = {}) {
  * @param {{ maxResults?: number, maxDepth?: number, skipAssociation?: boolean }} [options]
  * @returns {Array<{ element: string, distance: number, layer: string, bucket: string }>}
  */
+/**
+ * Motivation + Strategy element names that read as business / strategy waypoints
+ * (explicit matrix hops; not generic Business-layer application types).
+ */
+const EXECUTIVE_SUGGESTION_ELEMENT_NAMES = new Set([
+  "Stakeholder",
+  "Driver",
+  "Assessment",
+  "Goal",
+  "Outcome",
+  "Principle",
+  "Requirement",
+  "Value",
+  "Resource",
+  "Capability",
+  "Value Stream",
+  "Course of Action",
+]);
+
+function buildReverseAdjacencyForSuggestions(graph, skipAssociation) {
+  const rev = new Map();
+  if (!graph || typeof graph.entries !== "function") return rev;
+  for (const [from, edges] of graph.entries()) {
+    if (!Array.isArray(edges)) continue;
+    for (const edge of edges) {
+      if (!edge || !edge.to) continue;
+      if (skipAssociation && edge.isAssociation) continue;
+      if (!rev.has(edge.to)) rev.set(edge.to, []);
+      rev.get(edge.to).push(from);
+    }
+  }
+  return rev;
+}
+
+/**
+ * Suggest Motivation/Strategy element types 1–2 explicit (non-Association) hops from the
+ * route endpoints, using the same directed graph the pathfinder uses.
+ *
+ * @param {string|null|undefined} startElement
+ * @param {string|null|undefined} targetElement
+ * @param {Map<string, Array<{ to: string, isAssociation?: boolean }>>} graph
+ * @param {{ maxResults?: number, maxDepth?: number, skipAssociation?: boolean, excludeElements?: Set<string>|string[] }} [options]
+ * @returns {Array<{ id: string, name: string, type: string, distance: number }>}
+ */
+function findNearbyExecutiveElements(startElement, targetElement, graph, options = {}) {
+  const maxResults = Math.max(1, Number(options.maxResults ?? 2));
+  const maxDepth = Math.min(2, Math.max(1, Number(options.maxDepth ?? 2)));
+  const skipAssociation = options.skipAssociation !== false;
+  const rawEx = options.excludeElements;
+  const exclude =
+    rawEx instanceof Set ? rawEx : new Set(Array.isArray(rawEx) ? rawEx : []);
+
+  const seeds = Array.from(
+    new Set(
+      [startElement, targetElement]
+        .map((s) => String(s || "").trim())
+        .filter((n) => n && graph && typeof graph.has === "function" && graph.has(n))
+    )
+  );
+  if (!seeds.length || !graph || typeof graph.get !== "function") return [];
+
+  const revAdj = buildReverseAdjacencyForSuggestions(graph, skipAssociation);
+  const bestDist = new Map();
+  const queue = [];
+  for (const s of seeds) {
+    bestDist.set(s, 0);
+    queue.push({ node: s, dist: 0 });
+  }
+
+  while (queue.length) {
+    const cur = queue.shift();
+    if (!cur) continue;
+    const { node, dist } = cur;
+    if (dist >= maxDepth) continue;
+
+    const relax = (next) => {
+      if (!next || next === node) return;
+      const nd = dist + 1;
+      const prev = bestDist.get(next);
+      if (prev !== undefined && prev <= nd) return;
+      bestDist.set(next, nd);
+      queue.push({ node: next, dist: nd });
+    };
+
+    const outs = graph.get(node) || [];
+    for (const edge of outs) {
+      if (!edge || !edge.to) continue;
+      if (skipAssociation && edge.isAssociation) continue;
+      relax(edge.to);
+    }
+    const ins = revAdj.get(node) || [];
+    for (const from of ins) {
+      relax(from);
+    }
+  }
+
+  const rows = [];
+  for (const [el, d] of bestDist) {
+    if (d < 1 || d > maxDepth) continue;
+    if (seeds.includes(el)) continue;
+    if (exclude.has(el)) continue;
+    if (!EXECUTIVE_SUGGESTION_ELEMENT_NAMES.has(el)) continue;
+    const layer = ELEMENTS?.[el]?.layer || "";
+    const typeLabel = layer === "Motivation" || layer === "Strategy" ? layer : el;
+    rows.push({ el, d, typeLabel });
+  }
+  rows.sort((a, b) => a.d - b.d || a.el.localeCompare(b.el));
+  return rows.slice(0, maxResults).map(({ el, d, typeLabel }) => ({
+    id: el,
+    name: el,
+    type: typeLabel,
+    distance: d,
+  }));
+}
+
 function findNearestElementsByBucket(graph, sourceElements, targetBuckets, options = {}) {
   if (!graph || typeof graph.get !== "function") return [];
   const maxResults = Math.max(1, Number(options.maxResults ?? 3));

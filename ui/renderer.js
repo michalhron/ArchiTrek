@@ -5631,9 +5631,39 @@ function layerBadgeClassForExplain(layerLabel) {
 }
 
 function precisionBadgeClassForExplain(precisionLabel) {
-  return precisionLabel === "Executive Summary"
-    ? "path-badge--precision-executive"
-    : "path-badge--precision-ground";
+  switch (precisionLabel) {
+    case "Simplified":
+      return "path-badge--precision-executive";
+    case "Ground-Truth":
+      return "path-badge--precision-ground";
+    case "Executive Summary":
+      return "path-badge--precision-executive";
+    case "Abstracted Topology":
+      return "path-badge--precision-abstracted";
+    case "Informal Bridge":
+      return "path-badge--precision-informal";
+    default:
+      return "path-badge--precision-ground";
+  }
+}
+
+function precisionBadgeShortLabelForExplain(precisionLabel) {
+  switch (precisionLabel) {
+    case "Simplified":
+      return "Simplified";
+    case "Ground-Truth":
+      return "Ground-Truth";
+    case "Executive Summary":
+      return "Simplified";
+    case "Abstracted Topology":
+      return "Abstracted";
+    case "Informal Bridge":
+      return "Informal";
+    case "Engineering Ground-Truth":
+      return "Ground-Truth";
+    default:
+      return "Ground-Truth";
+  }
 }
 
 /**
@@ -5876,9 +5906,9 @@ function explainPath(segments, selectedPathIndex = 0, { constrained = true, pers
       }
       if (perspectiveMeta.precisionLabel) {
         out.push(
-          `<span class="path-badge ${precisionBadgeClassForExplain(perspectiveMeta.precisionLabel)}">${
-            perspectiveMeta.precisionLabel === "Executive Summary" ? "Simplified" : "Ground-Truth"
-          }</span>`
+          `<span class="path-badge ${precisionBadgeClassForExplain(perspectiveMeta.precisionLabel)}">${escPathDiag(
+            precisionBadgeShortLabelForExplain(perspectiveMeta.precisionLabel)
+          )}</span>`
         );
       }
       return out.length ? `<div class="explain-route-meta-pills">${out.join("")}</div>` : "";

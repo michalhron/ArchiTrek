@@ -25,7 +25,12 @@ const VERT_LABEL_GAP_FROM_LINE = 2;
  * Vertical stroke (spine or outer bus at tx) to the nearest horizontal edge of the numbered badge circle:
  * keeps the relationship line from visually bisecting the badge when label anchors shift (nudge/stair).
  */
-const SPINE_BADGE_CLEAR_FROM_LINE = 20;
+const SPINE_BADGE_CLEAR_FROM_LINE = 14;
+/**
+ * Minimum horizontal gap between the relationship spine/bus stroke and the label stack (badge, text, flip).
+ * Used with {@link SPINE_BADGE_CLEAR_FROM_LINE} — effective clearance is max of the two.
+ */
+const LABEL_TO_LINE_BUFFER_PX = 12;
 /** Minimum gap between badge circle and relationship name for spine-aligned straddle (px). */
 const SPINE_TEXT_GAP_AFTER_BADGE = 16;
 /**
@@ -33,7 +38,8 @@ const SPINE_TEXT_GAP_AFTER_BADGE = 16;
  * Hops *into* a flanked composite (subs left/right) use a west straddle instead so notes sit left of the spine
  * and do not cover the right-hand illustration (see makeRelLabel verticalStraddleWest).
  */
-const VERT_STRADDLE_PAST_MAIN = EL_W / 2;
+/** Tightened vs full EL_W/2 so spine labels stay closer to the connector without crossing shapes. */
+const VERT_STRADDLE_PAST_MAIN = Math.round(EL_W * 0.36);
 /** Estimated max width (px) for wrapped relation name + badge so viewBox does not clip. */
 const VERT_LABEL_TEXT_RESERVE = 190;
 /** Hard cap (px) on vertical swim-lane column width — guardrail to prevent “horizontal figure” bleed. */
@@ -69,16 +75,18 @@ const OUTER_ROUTE_BASE_GAP = (window.RENDER_GEOMETRY && Number.isFinite(window.R
   ? window.RENDER_GEOMETRY.OUTER_ROUTE_BASE_GAP
   : 40;
 /** Keep labels off the top-right glyph and 3D “roof”; must match text layout in drawStandardElement. */
-const SAFE_TEXT_RIGHT_TRIM = 24;
+const SAFE_TEXT_RIGHT_TRIM = 26;
 const SAFE_TEXT_TOP_TRIM = 12;
 /** Horizontal depth of the cube front face (must match drawShape `cube` case). */
 const SHAPE_CUBE_DEPTH = 10;
+/** Vertical perspective depth for cube/Facility shapes — matches `cube` case `d` in drawShape (bottom/roof extrusion). */
+const DEPTH_3D_Y_PX = SHAPE_CUBE_DEPTH;
 /** Parallel bypass tracks when multiple hops share the same side (px). */
-const OUTER_ROUTE_STAGGER_PX = 20;
+const OUTER_ROUTE_STAGGER_PX = 28;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const ICON_BADGE_SIZE = 14;
-const ICON_GLYPH_SIZE = 12;
+const ICON_BADGE_SIZE = 16;
+const ICON_GLYPH_SIZE = 14;
 const ICON_PAD = 3;
 // Nudge the top-right corner glyph so it doesn't intersect the shape border.
 // (Positive X nudges left; positive Y nudges down.)
@@ -117,15 +125,16 @@ const REL_LABEL_MAX_LINES = 2;
 const SCAFFOLD_BANDS = [
   { id: "top", label: "Motivation & Strategy", color: "#e4d9f3", borderColor: "#7b57b2" },
   { id: "midUpper", label: "Business", color: "#f5e87a", borderColor: "#c0a000" },
-  { id: "midLower", label: "Application", color: "#a8d4a8", borderColor: "#208020" },
-  { id: "bottom", label: "Technology & Physical", color: "#b9d2e8", borderColor: "#2f5f90" },
+  { id: "midLower", label: "Application", color: "#BFFFFF", borderColor: "#1a1a1a" },
+  { id: "bottom", label: "Technology", color: "#C1FFB1", borderColor: "#2d6b38" },
+  { id: "impl", label: "Implementation & Migration", color: "#FCE4E4", borderColor: "#a02020" },
 ];
 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHAPE DEFINITIONS
 // Each entry describes how to draw the element's base shape.
-// type: rect | rounded | parallelogram | ellipse | cloud | chevron | cube | document | dashed
+// type: rect | rounded | parallelogram | ellipse | cloud | chevron | cube | technology-component | document | dashed
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SHAPES = {
@@ -151,7 +160,7 @@ const SHAPES = {
   "Business Role":          { type: "rounded" },
   "Business Collaboration": { type: "rounded" },
   "Business Interface":     { type: "rounded" },
-  "Business Process":       { type: "rounded-arrow" },
+  "Business Process":       { type: "pill" },
   "Business Function":      { type: "rounded" },
   "Business Interaction":   { type: "rounded" },
   "Business Event":         { type: "chevron" },
@@ -170,9 +179,10 @@ const SHAPES = {
   "Application Event":         { type: "chevron" },
   "Application Service":       { type: "rounded" },
   "Data Object":               { type: "rect" },
-  // Technology
-  "Node":                     { type: "cube" },
-  "Device":                   { type: "cube" },
+  // Technology — UML-style deployment node: plain rectangle + isometric cube in the corner.
+  "Node":                     { type: "rect" },
+  /** Plain rectangle + corner monitor glyph. */
+  "Device":                   { type: "rect" },
   "System Software":          { type: "rounded" },
   "Technology Collaboration": { type: "rounded" },
   "Technology Interface":     { type: "rounded" },
@@ -182,10 +192,12 @@ const SHAPES = {
   "Technology Process":       { type: "rounded-arrow" },
   "Technology Interaction":   { type: "rounded" },
   "Technology Event":         { type: "chevron" },
-  "Technology Service":       { type: "rounded" },
+  /** Plain rectangle + capsule glyph in the corner (ArchiMate 140×60 service body in the badge). */
+  "Technology Service":       { type: "rect" },
   "Technology Object":        { type: "rect" },
-  "Artifact":                 { type: "document" },
-  // Physical
+  /** Plain rectangle + file glyph (not the folded-corner document shape). */
+  "Artifact":                 { type: "rect" },
+  // Technology (physical ArchiMate elements)
   "Equipment":           { type: "cube" },
   "Facility":            { type: "cube" },
   "Distribution Network":{ type: "rounded" },
@@ -198,7 +210,7 @@ const SHAPES = {
   "Gap":                  { type: "rect" },
   // Composite
   "Location":  { type: "rect" },
-  "Grouping":  { type: "dashed" },
+  // "Grouping":  { type: "dashed" },
 };
 
 
@@ -344,18 +356,35 @@ const ICONS = {
   "Course of Action": () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,4 C4,4 8,4 8,6 C8,8 4,8 4,8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="4" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.1"/>`,
 
   "Business Actor":         () => `<circle cx="6" cy="3.5" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M2,11 C2,7.5 10,7.5 10,11" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Role":          () => `<path d="M1,11 L1,9 C1,6 11,6 11,9 L11,11" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="4" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
+  // Cylinder (ArchiMate-style role glyph): path + end ellipse from 450×200 artwork, fitted to 12×12 corner badge.
+  "Business Role": () =>
+    `<g transform="translate(0 ${(12 - (200 * 12) / 450) / 2}) scale(${12 / 450})"><path d="M 340 30 L 120 30 A 45 70 0 0 0 120 170 L 340 170 Z" fill="#fffeb3" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><ellipse cx="340" cy="100" rx="45" ry="70" fill="#fffeb3" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
+  // Two semicircles (100×100 artwork) fitted to 12×12 corner badge.
+  "Business Collaboration": () =>
+    `<g transform="scale(${12 / 100})"><path d="M 45 10 A 40 40 0 0 0 45 90" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 55 10 A 40 40 0 0 1 55 90" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
   "Business Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Function":      () => `<path d="M2,1 L10,1 L10,11 L2,11 Z M2,4 C4,4 8,4 10,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Business Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
-  "Business Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Business Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
+  "Business Process": () =>
+    `<rect x="1" y="3.5" width="10" height="5" rx="2.5" ry="2.5" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`,
+  // Chevron hex (400×300 artwork) fitted to 12×12 corner badge.
+  "Business Function": () =>
+    `<g transform="translate(0 ${(12 - (300 * 12) / 400) / 2}) scale(${12 / 400})"><polygon points="80,120 200,60 320,120 320,200 200,140 80,200" fill="#fffeb3" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></g>`,
+  // Two semicircles (100×80 artwork) fitted to 12×12 corner badge — matches user Business Interaction glyph.
+  "Business Interaction": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 100) / 2}) scale(${12 / 100})"><path d="M 45 10 A 30 30 0 0 0 45 70" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 55 10 A 30 30 0 0 1 55 70" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
+  // Chevron tab (450×200 artwork) fitted to 12×12 corner badge.
+  "Business Event": () =>
+    `<g transform="translate(0 ${(12 - (200 * 12) / 450) / 2}) scale(${12 / 450})"><path d="M 120 50 L 320 50 A 50 50 0 0 1 320 150 L 120 150 L 160 100 Z" fill="#fffeb3" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></g>`,
+  // Pill / capsule (140×60 artwork) fitted to 12×12 corner badge — matches ArchiMate Business Service glyph.
+  "Business Service": () =>
+    `<g transform="translate(0 ${(12 - (60 * 12) / 140) / 2}) scale(${12 / 140})"><rect x="10" y="10" width="120" height="40" rx="20" ry="20" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
   "Business Object":        () => `<rect x="1" y="3" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
   "Contract":               () => `<path d="M2,1 L10,1 L10,11 L2,11 Z M4,4 L8,4 M4,6 L8,6 M4,8 L7,8" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Representation":         () => `<rect x="1" y="2" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="3" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1"/><line x1="3" y1="7" x2="8" y2="7" stroke="currentColor" stroke-width="1"/>`,
-  "Product":                () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.2"/>`,
+  // ArchiMate Representation (150×100 artwork) fitted to 12×12 corner badge.
+  "Representation": () =>
+    `<g transform="translate(0 ${(12 - (100 * 12) / 150) / 2}) scale(${12 / 150})"><rect x="10" y="10" width="130" height="15" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 10 25 L 10 70 Q 10 85 25 85 L 60 85 Q 100 85 110 50 Q 120 25 140 25 L 140 25 L 10 25 Z" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></g>`,
+  // ArchiMate Product (120×80 artwork) fitted to 12×12 corner badge.
+  "Product": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><rect x="10" y="10" width="100" height="60" fill="#ffffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 70 10 L 70 25 L 110 25" fill="none" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
 
   "Application Component":     () => `<rect x="2" y="2" width="8" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="0" y="3.5" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/><rect x="0" y="7" width="4" height="2.5" stroke="currentColor" fill="white" stroke-width="1"/>`,
   "Application Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
@@ -367,34 +396,71 @@ const ICONS = {
   "Application Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
   "Data Object":               () => `<rect x="1" y="2" width="10" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
 
-  "Node":                     () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Device":                   () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11" stroke="currentColor" fill="none" stroke-width="1.1"/><rect x="3" y="6" width="4" height="3" stroke="currentColor" fill="none" stroke-width="0.9"/>`,
-  "System Software":          () => `<circle cx="6" cy="6" r="5" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="6" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1"/>`,
+  // Isometric cube (12×12); fills match {@link drawShape} `cube` shading for Node green (#c1ffb1).
+  "Node": () =>
+    `<polygon points="2,3 8,1 10,3 4,5" fill="#c7ffb9" stroke="currentColor" stroke-width="1.05" stroke-linejoin="miter"/>
+     <polygon points="4,5 10,3 10,9 4,11" fill="#b5f0a6" stroke="currentColor" stroke-width="1.05" stroke-linejoin="miter"/>
+     <polygon points="2,3 4,5 4,11 2,9" fill="#c1ffb1" stroke="currentColor" stroke-width="1.05" stroke-linejoin="miter"/>`,
+  // Monitor only (12×12); main Device body is {@link drawShape} `rect` + fill from {@link getColor}.
+  "Device": () =>
+    `<rect x="2" y="2" width="8" height="6" rx="1.2" ry="1.2" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="4" y1="8.5" x2="3" y2="11" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><line x1="8" y1="8.5" x2="9" y2="11" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/>`,
+  // 120×80 artwork (two overlapping ellipses) fitted to 12×12 corner badge — ArchiMate System Software.
+  "System Software": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><ellipse cx="40" cy="35" rx="30" ry="25" fill="#ccffcc" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/><ellipse cx="65" cy="45" rx="30" ry="25" fill="#ccffcc" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`,
   "Technology Collaboration": () => `<circle cx="4" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/><circle cx="8" cy="6" r="3" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
   "Technology Interface":     () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Path":                     () => `<line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.4"/><path d="M8,3 L11,6 L8,9" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,3 L1,6 L4,9" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Communication Network":    () => `<circle cx="6" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="6" y1="1" x2="6" y2="4" stroke="currentColor" stroke-width="1"/><line x1="6" y1="8" x2="6" y2="11" stroke="currentColor" stroke-width="1"/><line x1="1" y1="6" x2="4" y2="6" stroke="currentColor" stroke-width="1"/><line x1="8" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1"/>`,
-  "Technology Function":      () => `<path d="M2,1 L2,11 M2,6 L8,6 M8,1 L8,11" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Process":       () => `<path d="M1,3 L8,3 L11,6 L8,9 L1,9 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Interaction":   () => `<line x1="1" y1="6" x2="5" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="7.5" cy="6" r="2.5" stroke="currentColor" fill="none" stroke-width="1.2"/><line x1="10" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/>`,
+  "Path": () =>
+    `<g transform="translate(0 3) scale(0.1)"><path d="M 25 15 L 10 30 L 25 45" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><line x1="45" y1="30" x2="55" y2="30" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><line x1="65" y1="30" x2="75" y2="30" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M 95 15 L 110 30 L 95 45" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/></g>`,
+  // 120×80 artwork fitted to 12×12 corner badge (ArchiMate Communication Network).
+  "Communication Network": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><line x1="20" y1="60" x2="35" y2="20" stroke="currentColor" stroke-width="2"/><line x1="35" y1="20" x2="85" y2="20" stroke="currentColor" stroke-width="2"/><line x1="85" y1="20" x2="100" y2="60" stroke="currentColor" stroke-width="2"/><line x1="20" y1="60" x2="100" y2="60" stroke="currentColor" stroke-width="2"/><line x1="35" y1="20" x2="100" y2="60" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="60" r="10" fill="currentColor"/><circle cx="35" cy="20" r="10" fill="currentColor"/><circle cx="85" cy="20" r="10" fill="currentColor"/><circle cx="100" cy="60" r="10" fill="currentColor"/></g>`,
+  // Chevron hex (120×80 artwork) fitted to 12×12 corner badge — matches ArchiMate Technology Function glyph.
+  "Technology Function": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><polygon points="60,10 115,45 90,70 60,50 30,70 5,45" fill="#ccffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></g>`,
+  // Two semicircles (100×80 artwork) fitted to 12×12 corner badge — ArchiMate Technology Process.
+  "Technology Process": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 100) / 2}) scale(${12 / 100})"><path d="M 45 10 A 30 30 0 0 0 45 70" fill="#ccffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 55 10 A 30 30 0 0 1 55 70" fill="#ccffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
+  // Two semicircles (100×80 artwork) fitted to 12×12 corner badge — matches user Technology Interaction glyph.
+  "Technology Interaction": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 100) / 2}) scale(${12 / 100})"><path d="M 45 10 A 30 30 0 0 0 45 70" fill="#ccffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/><path d="M 55 10 A 30 30 0 0 1 55 70" fill="#ccffcc" stroke="currentColor" stroke-width="1.2" vector-effect="non-scaling-stroke"/></g>`,
   "Technology Event":         () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Technology Service":       () => `<line x1="2" y1="6" x2="8" y2="6" stroke="currentColor" stroke-width="1.2"/><circle cx="10" cy="6" r="2" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
+  // Pill / capsule (140×60 artwork) fitted to 12×12 corner badge.
+  "Technology Service": () =>
+    `<g transform="translate(0 ${(12 - (60 * 12) / 140) / 2}) scale(${12 / 140})"><rect x="10" y="10" width="120" height="40" rx="20" ry="20" fill="#ccffcc" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`,
   "Technology Object":        () => `<rect x="1" y="2" width="10" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
-  "Artifact":                 () => `<path d="M2,1 L8,1 L11,4 L11,11 L2,11 Z M8,1 L8,4 L11,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
+  // 80×100 artwork fitted to 12×12 corner badge — document with folded corner.
+  "Artifact": () =>
+    `<g transform="translate(0 ${(12 - (100 * 12) / 80) / 2}) scale(${12 / 80})"><rect x="0" y="0" width="80" height="100" fill="#ccffcc"/><path d="M 15 10 L 50 10 L 65 25 L 65 90 L 15 90 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><path d="M 50 10 L 50 25 L 65 25" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></g>`,
 
-  "Equipment":           () => `<circle cx="6" cy="6" r="4" stroke="currentColor" fill="none" stroke-width="1.1"/><path d="M6,2 L6,4 M6,8 L6,10 M2,6 L4,6 M8,6 L10,6" stroke="currentColor" stroke-width="1.1"/><circle cx="6" cy="6" r="1.5" stroke="currentColor" fill="none" stroke-width="1"/>`,
-  "Facility":            () => `<path d="M2,9 L2,3 L8,1 L10,3 L10,9 L4,11 Z M2,3 L4,5 L10,3 M4,5 L4,11 M4,7 L8,7 M4,9 L8,9" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
+  // ArchiMate Equipment (120×100 artwork) fitted to 12×12 corner badge — interlocking gears.
+  "Equipment": () =>
+    `<g transform="translate(0 ${(12 - (100 * 12) / 120) / 2}) scale(${12 / 120})"><g transform="translate(40, 58)"><path d="M -5 -28 L 5 -28 L 6 -24 L 10 -22 L 14 -25 L 22 -18 L 19 -14 L 20 -10 L 25 -8 L 25 3 L 20 5 L 19 9 L 23 14 L 16 22 L 12 18 L 8 20 L 6 25 L -6 25 L -8 20 L -12 18 L -17 23 L -24 16 L -20 11 L -22 7 L -27 5 L -27 -6 L -22 -8 L -20 -12 L -24 -17 L -17 -24 L -12 -20 L -8 -22 L -6 -27 Z" fill="#ccffcc" stroke="currentColor" stroke-width="0.85" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><circle cx="0" cy="0" r="10" fill="#ccffcc" stroke="currentColor" stroke-width="0.85" vector-effect="non-scaling-stroke"/></g><g transform="translate(78, 38)"><path d="M -3 -20 L 3 -20 L 4 -16 L 8 -14 L 11 -17 L 16 -12 L 13 -8 L 14 -4 L 18 -3 L 18 3 L 14 4 L 13 8 L 17 12 L 12 17 L 8 13 L 4 15 L 3 19 L -3 19 L -4 15 L -8 13 L -12 17 L -17 12 L -13 8 L -14 4 L -18 3 L -18 -3 L -14 -4 L -13 -8 L -17 -12 L -12 -17 L -8 -14 L -4 -16 L -3 -20 Z" fill="#ccffcc" stroke="currentColor" stroke-width="0.85" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><circle cx="0" cy="0" r="7" fill="#ccffcc" stroke="currentColor" stroke-width="0.85" vector-effect="non-scaling-stroke"/></g></g>`,
+  // ArchiMate Facility (120×100 artwork) fitted to 12×12 corner badge — factory silhouette.
+  "Facility": () =>
+    `<g transform="translate(0 ${(12 - (100 * 12) / 120) / 2}) scale(${12 / 120})"><path d="M 15 85 L 15 20 L 30 20 L 30 50 L 45 35 L 45 50 L 60 35 L 60 50 L 75 35 L 75 50 L 90 35 L 90 85 Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></g>`,
   "Distribution Network":() => `<line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.4"/><path d="M8,3 L11,6 L8,9" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M4,3 L1,6 L4,9" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Material":            () => `<path d="M3,9 L3,5 L9,3 L9,7 Z M3,9 L9,7 M3,5 L9,3" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
+  // ArchiMate Material (140×80 artwork) fitted to 12×12 corner badge — arrow/chevron with rounded right end.
+  "Material": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 140) / 2}) scale(${12 / 140})"><path d="M 10 15 L 40 15 L 110 15 A 25 25 0 0 1 110 65 L 40 65 L 10 40 Z" fill="#ffe4e4" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>`,
 
-  "Work Package":         () => `<rect x="1" y="3" width="10" height="7" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1"/>`,
-  "Deliverable":          () => `<path d="M2,1 L8,1 L11,4 L11,11 L2,11 Z M8,1 L8,4 L11,4" stroke="currentColor" fill="none" stroke-width="1.1"/>`,
-  "Implementation Event": () => `<path d="M1,4 L7,4 L11,6 L7,8 L1,8 Z" stroke="currentColor" fill="none" stroke-width="1.2"/>`,
-  "Plateau":              () => `<rect x="1" y="2" width="10" height="8" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="2" y1="11" x2="11" y2="11" stroke="currentColor" stroke-width="1"/><line x1="3" y1="12.5" x2="11" y2="12.5" stroke="currentColor" stroke-width="1"/>`,
-  "Gap":                  () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1" stroke-dasharray="2,2"/>`,
+  // ArchiMate Work Package (100×80 artwork) fitted to 12×12 corner badge — circular arrow + head.
+  "Work Package": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 100) / 2}) scale(${12 / 100})"><path d="M 55 15 A 25 25 0 1 0 55 55" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/><polygon points="55,40 55,60 80,50" fill="currentColor"/></g>`,
+  // ArchiMate Deliverable (140×90 artwork) fitted to 12×12 corner badge — rectangle with wavy bottom.
+  "Deliverable": () =>
+    `<g transform="translate(0 ${(12 - (90 * 12) / 140) / 2}) scale(${12 / 140})"><path d="M 10 10 L 130 10 L 130 50 Q 100 50, 85 65 Q 70 80, 50 65 Q 30 50, 10 55 L 10 10 Z" fill="#ffe4e4" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>`,
+  // ArchiMate Implementation Event (140×80 artwork) fitted to 12×12 corner badge — chevron + rounded cap.
+  "Implementation Event": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 140) / 2}) scale(${12 / 140})"><path d="M 10 15 L 40 15 L 110 15 A 25 25 0 0 1 110 65 L 40 65 L 10 40 Z" fill="#ffe4e4" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>`,
+  // ArchiMate Plateau (80×60 artwork) fitted to 12×12 corner badge — three horizontal bars.
+  "Plateau": () =>
+    `<g transform="translate(0 ${(12 - (60 * 12) / 80) / 2}) scale(${12 / 80})"><rect x="15" y="10" width="45" height="8" fill="currentColor"/><rect x="15" y="26" width="55" height="8" fill="currentColor"/><rect x="15" y="42" width="50" height="8" fill="currentColor"/></g>`,
+  // ArchiMate Gap (120×80 artwork) fitted to 12×12 corner badge — horizontal lines + circle.
+  "Gap": () =>
+    `<g transform="translate(0 ${(12 - (80 * 12) / 120) / 2}) scale(${12 / 120})"><line x1="10" y1="25" x2="110" y2="25" stroke="currentColor" stroke-width="2"/><line x1="10" y1="55" x2="110" y2="55" stroke="currentColor" stroke-width="2"/><circle cx="60" cy="40" r="28" fill="#ffe4e4" stroke="currentColor" stroke-width="2"/><line x1="32" y1="25" x2="88" y2="25" stroke="currentColor" stroke-width="2"/><line x1="32" y1="55" x2="88" y2="55" stroke="currentColor" stroke-width="2"/></g>`,
 
   "Location":  () => `<path d="M6,1 C3.5,1 1.5,3 1.5,5.5 C1.5,8.5 6,12 6,12 C6,12 10.5,8.5 10.5,5.5 C10.5,3 8.5,1 6,1 Z" stroke="currentColor" fill="none" stroke-width="1.1"/><circle cx="6" cy="5.5" r="1.5" stroke="currentColor" fill="none" stroke-width="1"/>`,
-  "Grouping":  () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1" stroke-dasharray="3,2"/>`,
+  // "Grouping":  () => `<rect x="1" y="1" width="10" height="10" stroke="currentColor" fill="none" stroke-width="1.1" stroke-dasharray="3,2"/>`,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

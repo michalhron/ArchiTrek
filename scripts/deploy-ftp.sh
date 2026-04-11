@@ -37,6 +37,20 @@ EXCLUDE_ARGS=(
   -X '.DS_Store'
   -X 'Archive.zip'
   -X '**/Untitled'
+  # Dev-only (never upload to shared hosting — huge, symlinks fail on FTP)
+  -X 'node_modules/'
+  -X 'package.json'
+  -X 'package-lock.json'
+  -X 'pnpm-lock.yaml'
+  -X 'yarn.lock'
+  -X 'playwright.config.js'
+  -X 'vitest.config.js'
+  -X 'tests/'
+  -X 'test-results/'
+  -X 'playwright-report/'
+  -X 'blob-report/'
+  -X 'coverage/'
+  -X '.vite/'
 )
 
 if [[ "$FTP_USE_TLS" == "1" ]]; then

@@ -3,7 +3,8 @@ export function getLayerBucketForPathMetaFromLayer(layerName) {
   if (layer === "Physical") layer = "Technology";
   if (layer === "Motivation" || layer === "Strategy" || layer === "Business") return "upper";
   if (layer === "Application") return "middle";
-  if (layer === "Technology" || layer === "Implementation") return "lower";
+  if (layer === "Technology") return "lower";
+  if (layer === "Implementation") return "project";
   if (layer === "Composite") return "composite";
   return "other";
 }
@@ -31,7 +32,7 @@ export function getViewpointPerspectiveSupport({ viewpoint, elementToLayer, over
           const layer = map[elementName];
           const bucket = getLayerBucketForPathMetaFromLayer(layer);
           if (bucket === "upper") supportsUpperPalette = true;
-          if (bucket === "middle" || bucket === "lower") supportsInfraPalette = true;
+          if (bucket === "middle" || bucket === "lower" || bucket === "project") supportsInfraPalette = true;
         }
         return {
           A: supportsUpperPalette,
@@ -44,12 +45,12 @@ export function getViewpointPerspectiveSupport({ viewpoint, elementToLayer, over
 
 export function perspectiveSuggestionBuckets(sectionId, grouped) {
   if (sectionId === "A") return ["upper"];
-  if (sectionId === "B") return ["middle", "lower"];
+  if (sectionId === "B") return ["middle", "lower", "project"];
   const countA = grouped?.byPerspective?.A?.length || 0;
   const countB = grouped?.byPerspective?.B?.length || 0;
   const countC = grouped?.byPerspective?.C?.length || 0;
   if (countC > 0) return [];
-  if (countA > 0 && countB === 0) return ["middle", "lower"];
+  if (countA > 0 && countB === 0) return ["middle", "lower", "project"];
   if (countB > 0 && countA === 0) return ["upper"];
-  return ["upper", "middle", "lower"];
+  return ["upper", "middle", "lower", "project"];
 }

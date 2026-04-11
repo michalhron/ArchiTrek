@@ -6,8 +6,6 @@ window.state = {
   mode:           'compact',
   /** When true, pathfinding also includes §5.7 derived (lowercase) relationships for simplified routing options. */
   includeDerived: true,
-  /** When true, Simplified vs Ground-Truth labeling uses a lower score threshold (40 vs 60). */
-  lenientSimplification: false,
   selectionMode:  'set',
   viewpoint:      null,
   allowedElements: null,
@@ -102,7 +100,7 @@ window.state = {
   _findRunId: 0,
   /** Last find run id for which the path-failure modal was shown (avoid duplicate modals per search). */
   _pathFailModalShownForRunId: null,
-  /** After at least one findPath completion that applied results; the first-ever search skips the wave label. */
+  /** After at least one findPath completion that applied results (min loading delay when inputs change). */
   _findPathCompletedOnce: false,
   /** Input fingerprint from the last completed findPath (min loading duration when inputs change). */
   _lastFindPathInputKey: null,
@@ -527,7 +525,6 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
     penaltyGrowthFactor: clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor),
     /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
-    lenientSimplification: !!state.lenientSimplification,
     allowAssociationFallback: !!state.allowAssociationFallback,
     restrictCoreToCore: !!state.restrictCoreToCore,
     enforceGrammar: !!state.enforceGrammar,
@@ -817,7 +814,7 @@ function syncDerivedToggleFromState() {
 }
 
 /**
- * Restore Direct/Derived + Association Options after a one-shot relaxed findPath (overlay CTAs).
+ * Restore Direct/Derived + Association Options after a one-shot relaxed findPath (overlay / widen-search CTAs).
  */
 function applyRelaxOneShotRestore() {
   const snap = state._relaxOneShotRestore;
@@ -1548,7 +1545,6 @@ function gatherSessionSnapshot() {
     perspectiveClassMode: normalizePerspectiveClassMode(plain.perspectiveClassMode),
     perspectiveDominantSharePct: clampPerspectiveDominantSharePct(plain.perspectiveDominantSharePct),
     allowAssociationFallback: !!plain.allowAssociationFallback,
-    lenientSimplification: !!plain.lenientSimplification,
   };
 }
 
@@ -1696,9 +1692,6 @@ function restoreSessionSnapshot() {
     }
     if (typeof data.allowAssociationFallback === "boolean") {
       state.allowAssociationFallback = data.allowAssociationFallback;
-    }
-    if (typeof data.lenientSimplification === "boolean") {
-      state.lenientSimplification = data.lenientSimplification;
     }
     if (state.searchRigorPreset !== "custom" && SEARCH_RIGOR_PRESETS[state.searchRigorPreset]) {
       applySearchRigorPresetToState(state.searchRigorPreset);
@@ -6978,13 +6971,6 @@ window.setDerived = function(include) {
   schedulePersistSession();
 };
 
-window.setLenientSimplification = function (lenient) {
-  state.lenientSimplification = !!lenient;
-  if (state.segments) window.dispatch({ type: "RENDER_RESULTS" });
-  updatePathOptionsTriggerSummary();
-  schedulePersistSession();
-};
-
 /**
  * Connect-set mode finds a directed chain but leaves waypoint slots in pick order.
  * Ordered mode uses slot order as Start → Via → End; after switching, align slots with
@@ -7147,14 +7133,12 @@ window.findPath = function(opts = {}) {
     hadPriorCompletedFind &&
     state._lastFindPathInputKey != null &&
     state._lastFindPathInputKey !== fpThisRun;
-  /* Top-bar layout: always use the wave label (sidebar skips wave only on the very first find). */
-  const loadingWave = hadPriorCompletedFind || isLayoutTop();
   const minFindPathLoadingMs =
     hadPriorCompletedFind && inputsChangedFromLast ? MIN_FIND_PATH_LOADING_MS : 0;
 
   try {
     const tFindPathLoadingStart = performance.now();
-    setLoading(true, "Finding…", { wave: loadingWave });
+    setLoading(true, "Finding…", { wave: true });
     if (!preserveUserChoices) {
       state.userChoices = {}; // Clear previous decisions
     }
@@ -7545,7 +7529,6 @@ function layerBadgeClassForLabel(layerLabel) {
     case "Business-Heavy":
       return "path-badge--layer-business";
     case "Application-Heavy":
-      return "path-badge--layer-application";
     case "Technology-Heavy":
       return "path-badge--layer-tech";
     default:
@@ -7598,9 +7581,9 @@ function escapeHtmlAttr(s) {
 
 function precisionTooltip(precisionLabel) {
   if (precisionLabel === "Simplified") {
-    return "Assigned to paths that score highly on our simplification index, heavily weighting the amount of technical compression (70%) alongside the presence of high-level business semantics (30%).";
+    return 'Hides the technical "plumbing" to focus on the big picture. Use this when communicating with business stakeholders or when you need a high-level summary of how distant layers connect.';
   }
-  return "Assigned to explicit paths and minor abstractions that score below the simplification threshold, retaining enough structural detail to serve as a rigorous engineering view.";
+  return "Follows strict, step-by-step structural relationships. Use this when you need absolute precision for engineering, solution design, or auditing the exact mechanics of how a system is wired.";
 }
 
 function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
@@ -7636,6 +7619,99 @@ function buildCoachActionsFromPerspectiveAction(action, recCtx = {}) {
   return [];
 }
 
+/**
+ * Chip / pill UI for perspective variation coach — matches empty-tab suggestion chips (lead + pills).
+ */
+function buildPerspectiveCoachActionButton(label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.onclick = onClick;
+  const raw = String(label);
+
+  if (raw.startsWith("Add ")) {
+    const elName = raw.slice(4);
+    btn.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--add";
+    btn.title = elName;
+    btn.innerHTML = `
+      <span class="path-perspective-suggestion-plus" aria-hidden="true">+</span>
+      <span class="path-perspective-suggestion-text">${escapeHtml(elName)}</span>
+    `;
+    return btn;
+  }
+  if (raw.startsWith("Remove ")) {
+    const elName = raw.slice(7);
+    btn.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--remove";
+    btn.title = `Remove ${elName}`;
+    btn.innerHTML = `
+      <span class="path-perspective-suggestion-plus path-perspective-suggestion-plus--remove" aria-hidden="true">×</span>
+      <span class="path-perspective-suggestion-text">${escapeHtml(elName)}</span>
+    `;
+    return btn;
+  }
+  if (raw.startsWith("Replace ")) {
+    const rest = raw.slice(8);
+    const idx = rest.indexOf(" -> ");
+    if (idx !== -1) {
+      const fromEl = rest.slice(0, idx);
+      const toEl = rest.slice(idx + 4);
+      btn.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--swap";
+      btn.setAttribute("title", escapeHtmlAttr(`Replace ${fromEl} with ${toEl}`));
+      btn.innerHTML = `
+        <span class="path-perspective-suggestion-swap-icon" aria-hidden="true">×+</span>
+        <span class="path-perspective-suggestion-text">${escapeHtml(fromEl)} → ${escapeHtml(toEl)}</span>
+      `;
+      return btn;
+    }
+  }
+
+  btn.className = "path-perspective-suggestion-chip path-perspective-suggestion-chip--coach-meta";
+  btn.innerHTML = `<span class="path-perspective-suggestion-text">${escapeHtml(raw)}</span>`;
+  return btn;
+}
+
+const PERSPECTIVE_VARIATION_COACH_MAX_ACTIONS = 3;
+
+/**
+ * Add/remove/replace suggestions for a single perspective section (swap/remove/add engine).
+ */
+function appendPerspectiveCoachCrossLensActions(actions, targetSection, grouped, segments, activePathIdx, recCtx) {
+  if (!Array.isArray(actions)) return;
+  if (actions.length >= PERSPECTIVE_VARIATION_COACH_MAX_ACTIONS) return;
+  if (!isPerspectiveBucketSupported(targetSection, recCtx)) return;
+
+  const existingLabels = new Set(actions.map((a) => String(a?.label || "")));
+  const primary = buildPerspectiveSuggestions(targetSection, grouped, segments, activePathIdx, recCtx);
+  const targetAction = resolvePerspectiveEmptyCta(targetSection, grouped, primary, recCtx, segments, activePathIdx);
+  const targetAdd =
+    targetAction.mode === "add" && (!primary || primary.length === 0)
+      ? buildFallbackPerspectiveAddSuggestions(targetSection, grouped, segments, activePathIdx, recCtx)
+      : primary;
+  const effectiveAction =
+    targetAction.mode === "add" ? { ...targetAction, candidates: targetAdd } : targetAction;
+  const extra = buildCoachActionsFromPerspectiveAction(effectiveAction, recCtx);
+
+  for (const a of extra) {
+    if (actions.length >= PERSPECTIVE_VARIATION_COACH_MAX_ACTIONS) break;
+    if (!a?.label || typeof a.onClick !== "function") continue;
+    const lab = String(a.label);
+    if (existingLabels.has(lab)) continue;
+    actions.push(a);
+    existingLabels.add(lab);
+  }
+}
+
+/**
+ * Suggestions from the opposite grouping (A↔B) or both A and B for C — avoids repeating “more of this tab”.
+ */
+function appendPerspectiveCoachBroadeningActions(actions, sectionId, grouped, segments, activePathIdx, recCtx) {
+  const crossOrder =
+    sectionId === "A" ? ["B"] : sectionId === "B" ? ["A"] : ["A", "B"];
+  for (const target of crossOrder) {
+    if (actions.length >= PERSPECTIVE_VARIATION_COACH_MAX_ACTIONS) break;
+    appendPerspectiveCoachCrossLensActions(actions, target, grouped, segments, activePathIdx, recCtx);
+  }
+}
+
 function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, activePathIdx, recCtx = {}) {
   if (!Array.isArray(items) || items.length < 3) return null;
 
@@ -7667,76 +7743,19 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
 
   if (pShare >= 0.8 && pTop.key === "Ground-Truth") {
     const canEnableSimplified = !state.includeDerived;
-    const canRelaxRules = !state.lenientSimplification;
     const actions = [];
-    const pickedEls = (state.waypoints || []).map((wp) => wp?.element).filter(Boolean);
-    const uniqOrdered = Array.from(new Set(pickedEls));
-    const startEl = uniqOrdered[0] || null;
-    const targetEl = uniqOrdered.length > 1 ? uniqOrdered[uniqOrdered.length - 1] : startEl;
-    const excludeElements = new Set(pickedEls);
-    const coachGraph = recCtx.graph || state.graph;
-    const suggestedElements =
-      typeof findNearbyExecutiveElements === "function" && startEl
-        ? findNearbyExecutiveElements(startEl, targetEl, coachGraph, {
-            maxResults: 2,
-            excludeElements,
-            skipAssociation: true,
-          })
-        : [];
-
-    if (suggestedElements.length > 0) {
-      const elementNames = suggestedElements
-        .map((e) => `[${e.type}: ${e.name}]`)
-        .join(" or ");
-      const coachTextGroundTruth = `Most routes here are technical Ground-Truths. To generate a Simplified view, try routing through a related business concept like ${elementNames}.`;
-      for (const el of suggestedElements) {
-        const name = String(el?.id || el?.name || "").trim();
-        if (!name) continue;
-        actions.push({
-          label: `Route via '${name}'`,
-          onClick: () =>
-            withVisibleEditingControls(() =>
-              addPerspectiveSuggestedElement(name, {
-                expandedScope:
-                  isElementOutsideStrictViewpoint(name, recCtx) && !!recCtx.usingFullMetamodel,
-              })
-            ),
-        });
-      }
-      if (canEnableSimplified) {
-        actions.push({
-          label: "Enable Simplified (+Inferred)",
-          onClick: () => setDerived(true),
-        });
-      }
-      if (canRelaxRules && state.includeDerived) {
-        actions.push({
-          label: "Relax Abstraction Rules",
-          onClick: () => setLenientSimplification(true),
-        });
-      }
-      return { text: coachTextGroundTruth, actions };
-    }
-
-    let coachText =
-      "Most routes here are strict Ground-Truths. To see a high-level summary, try routing through a business or strategy concept.";
-    actions.push({
-      label: "Add Business Waypoint",
-      onClick: () => withVisibleEditingControls(() => addPerspectiveExplorationWaypoint()),
-    });
     if (canEnableSimplified) {
       actions.push({
-        label: "Enable Simplified (+Inferred)",
+        label: "Turn on inferred relationships (Simplified)",
         onClick: () => setDerived(true),
       });
     }
-    if (canRelaxRules && state.includeDerived) {
-      actions.push({
-        label: "Relax Abstraction Rules",
-        onClick: () => setLenientSimplification(true),
-      });
-    }
-    return { text: coachText, actions };
+    appendPerspectiveCoachBroadeningActions(actions, sectionId, grouped, segments, activePathIdx, recCtx);
+    if (!actions.length) return null;
+    const text = canEnableSimplified
+      ? "Most routes here are Ground-Truth: only explicit structural steps. Turn on inferred shortcuts for Simplified storylines, or broaden the story using a suggestion from the opposite lens."
+      : "Most routes here are Ground-Truth. Inferred edges are already on; these paths still read as explicit-heavy. Broaden the story with a waypoint change from the opposite lens (see buttons).";
+    return { text, actions };
   }
 
   if (pShare >= 0.8 && pTop.key === "Simplified") {
@@ -7744,15 +7763,16 @@ function buildPerspectiveVariationCoach(sectionId, items, grouped, segments, act
     const actions = [];
     if (canGroundTruth) {
       actions.push({
-        label: "Switch to Ground-Truth (Explicit)",
+        label: "Use explicit-only routing (Ground-Truth)",
         onClick: () => setDerived(false),
       });
     }
+    appendPerspectiveCoachBroadeningActions(actions, sectionId, grouped, segments, activePathIdx, recCtx);
     if (!actions.length) return null;
-    return {
-      text: "Most routes here use inferred relationships. Consider Ground-Truth variants for full relationship detail.",
-      actions,
-    };
+    const text = canGroundTruth
+      ? "Most routes here are Simplified: they use inferred shortcuts. Turn inferred off for strict Ground-Truth hops, or broaden the story from the opposite lens."
+      : "Most routes here are Simplified. Broaden the story with a waypoint change from the opposite lens (see buttons).";
+    return { text, actions };
   }
 
   if (lShare >= 0.85 && lTop.key) {
@@ -7784,9 +7804,8 @@ function layerTooltip(layerLabel) {
     case "Business-Heavy":
       return "Most hops touch Motivation, Strategy, or Business elements.";
     case "Application-Heavy":
-      return "Most hops touch Application-layer elements.";
     case "Technology-Heavy":
-      return "Most hops touch Technology or Implementation elements.";
+      return "Most hops are in the Technology, Application, or Physical layers.";
     case "Full-Stack Alignment":
       return "Connects upper layers (Motivation/Strategy/Business) with infrastructure (Application and/or Technology), or a balanced mix.";
     default:
@@ -7854,12 +7873,8 @@ function buildPathLabelsModalHtml() {
           <span class="path-labels-badge-explainer__desc">Most hops are in Motivation, Strategy, or Business.</span>
         </li>
         <li class="path-labels-badge-explainer__row">
-          <span class="path-labels-pill path-labels-pill--application">Application-Heavy</span>
-          <span class="path-labels-badge-explainer__desc">Most hops are in the Application layer.</span>
-        </li>
-        <li class="path-labels-badge-explainer__row">
           <span class="path-labels-pill path-labels-pill--tech">Technology-Heavy</span>
-          <span class="path-labels-badge-explainer__desc">Most hops are in Technology or Implementation.</span>
+          <span class="path-labels-badge-explainer__desc">Most hops are in the Technology, Application, or Physical layers.</span>
         </li>
         <li class="path-labels-badge-explainer__row">
           <span class="path-labels-pill path-labels-pill--fullstack">Full-Stack Alignment</span>
@@ -8158,7 +8173,6 @@ function scorePerspectiveAction(sectionId, { removeIndex = null, addElement = nu
     String(addElement ?? ""),
     (state.waypoints || []).map((wp) => wp?.element || "").join("|"),
     String(state.includeDerived),
-    String(!!state.lenientSimplification),
     String(state.allowAssociationFallback),
     String(state.searchMaxDepth),
     String(state.searchMaxPaths),
@@ -8667,20 +8681,15 @@ function renderPerspectiveAccordion(tabsEl, segments, activePathIdx) {
         const coachWrap = document.createElement("div");
         coachWrap.className = "path-perspective-coach";
         const coachText = document.createElement("p");
-        coachText.className = "path-perspective-coach-text";
+        coachText.className = "path-perspective-suggestion-lead";
         coachText.textContent = coach.text;
         coachWrap.appendChild(coachText);
         if (Array.isArray(coach.actions) && coach.actions.length) {
           const actionRow = document.createElement("div");
-          actionRow.className = "path-perspective-coach-actions";
+          actionRow.className = "path-perspective-suggestion-chips";
           for (const a of coach.actions.slice(0, 3)) {
             if (!a?.label || typeof a?.onClick !== "function") continue;
-            const coachBtn = document.createElement("button");
-            coachBtn.type = "button";
-            coachBtn.className = "path-perspective-coach-btn";
-            coachBtn.textContent = a.label;
-            coachBtn.onclick = () => a.onClick();
-            actionRow.appendChild(coachBtn);
+            actionRow.appendChild(buildPerspectiveCoachActionButton(a.label, () => a.onClick()));
           }
           if (actionRow.childElementCount > 0) coachWrap.appendChild(actionRow);
         }

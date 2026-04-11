@@ -1492,7 +1492,8 @@ function getLayerBucketForPathMeta(elementName) {
         })();
   if (layer === "Motivation" || layer === "Strategy" || layer === "Business") return "upper";
   if (layer === "Application") return "middle";
-  if (layer === "Technology" || layer === "Implementation") return "lower";
+  if (layer === "Technology") return "lower";
+  if (layer === "Implementation") return "project";
   if (layer === "Composite") return "composite";
   return "other";
 }
@@ -1525,7 +1526,7 @@ function getViewpointPerspectiveSupport(viewpointKey) {
       for (const elementName of elements) {
         const bucket = getLayerBucketForPathMeta(elementName);
         if (bucket === "upper") supportsUpperPalette = true;
-        if (bucket === "middle" || bucket === "lower") supportsInfraPalette = true;
+        if (bucket === "middle" || bucket === "lower" || bucket === "project") supportsInfraPalette = true;
       }
       return {
         A: supportsUpperPalette,
@@ -1691,23 +1692,30 @@ function calculatePrecisionMetrics(flatSteps, routingCost = 0, isLenient = false
 }
 
 function classifyLayerLabel(flatSteps) {
-  const counts = { upper: 0, middle: 0, lower: 0, composite: 0, other: 0 };
+  const counts = { upper: 0, middle: 0, lower: 0, project: 0, composite: 0, other: 0 };
   for (const step of flatSteps) {
-    counts[getLayerBucketForPathMeta(step?.element)] += 1;
+    const elementName = archimateElementTypeForPrecisionStep(step);
+    const bucket = getLayerBucketForPathMeta(elementName);
+    if (counts[bucket] !== undefined) counts[bucket] += 1;
   }
 
-  const upper = counts.upper;
-  const middle = counts.middle;
-  const lower = counts.lower;
+  const { upper, middle, lower, project } = counts;
 
-  if (middle > upper && middle > lower) return "Application-Heavy";
-  if (lower > upper && lower >= middle) return "Technology-Heavy";
-  if (upper > lower && upper >= middle) return "Business-Heavy";
+  if (project > upper && project > middle && project > lower) return "Implementation-Heavy";
+  if (
+    (middle > upper && middle > lower && middle > project) ||
+    (lower > upper && lower >= middle && lower > project)
+  ) {
+    return "Technology-Heavy";
+  }
+  if (upper > lower && upper >= middle && upper > project) return "Business-Heavy";
   if (upper > 0 && lower > 0) return "Full-Stack Alignment";
-  if (middle > 0 && upper === 0 && lower === 0) return "Application-Heavy";
+  if (project > 0 && upper === 0 && middle === 0 && lower === 0) return "Implementation-Heavy";
+  if (middle > 0 && upper === 0 && lower === 0) return "Technology-Heavy";
   if (lower > 0 && upper === 0) return "Technology-Heavy";
   if (upper > 0 && lower === 0) return "Business-Heavy";
-  return "Full-Stack Alignment";
+
+  return "Cross-Layer Alignment";
 }
 
 function classifyPerspective(
@@ -1724,7 +1732,7 @@ function classifyPerspective(
       hasUpper = true;
       upperCount += 1;
     }
-    if (b === "middle" || b === "lower") {
+    if (b === "middle" || b === "lower" || b === "project") {
       hasInfra = true;
       infraCount += 1;
     }

@@ -5622,9 +5622,10 @@ function layerBadgeClassForExplain(layerLabel) {
     case "Business-Heavy":
       return "path-badge--layer-business";
     case "Application-Heavy":
-      return "path-badge--layer-application";
     case "Technology-Heavy":
       return "path-badge--layer-tech";
+    case "Implementation-Heavy":
+      return "path-badge--layer-implementation";
     default:
       return "path-badge--layer-fullstack";
   }

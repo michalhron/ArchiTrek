@@ -101,7 +101,6 @@ const ELEMENTS = {
   "Technology Interaction":    { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "internal-behavior" },
   "Technology Event":          { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "event" },
   "Technology Service":        { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "external-behavior" },
-  "Technology Object":         { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
   "Artifact":                  { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
   // Equipment, Facility, … (ArchiMate §10.4) — same Technology layer as IT infrastructure in this app.
   "Equipment":           { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },

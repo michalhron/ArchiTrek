@@ -223,10 +223,6 @@ const ELEMENT_DEFINITIONS = {
     definition: "Represents a piece of data that is used or produced in a software development process, or by deployment and operation of an IT system.",
     section: "§10.3.1", aspect: "Passive Structure",
   },
-  "Technology Object": {
-    definition: "Represents a passive element used or produced by technology behavior elements.",
-    section: "§10.3.2", aspect: "Passive Structure",
-  },
 
   // ── §10.4 Equipment & facility (Technology layer in this app) ────────────────
 

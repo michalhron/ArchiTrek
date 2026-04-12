@@ -112,7 +112,7 @@ const SCENARIOS = {
       "Empire operations on the Death Star: command, strategy, station IT, and physical systems from reactor to docking bays.",
       "ArchiMate element types are renamed into this setting so paths read like Imperial operations—inspiration only; validity still follows the spec.",
     ],
-
+ 
     // Micro-clusters: see file header (`clusters` + `state.activeClusterIndex`).
     clusters: [
       {
@@ -126,18 +126,18 @@ const SCENARIOS = {
           "Principle": "Tarkin Doctrine (Rule Through Fear)",
           "Requirement": "Planetary Destruction Capability",
           "Constraint": "Limited Kyber Crystal Supply",
-          "Meaning": "Disturbance in the Force",
+          "Meaning": "Target Priority Designation",
           "Value": "Unquestioned Absolute Power",
           
           "Resource": "Imperial Kyber Crystal Reserves",
           "Capability": "Strategic Orbital Bombardment",
           "Value Stream": "Order-to-Planetary-Compliance Stream",
-          "Course of Action": "Single-Reactor Firing Sequence",
+          "Course of Action": "Demonstrate Overwhelming Force",
           
           "Business Actor": "Superlaser Operating Crew",
           "Business Role": "Gunnery Chief",
           "Business Collaboration": "Ignition Coordination Team",
-          "Business Interface": "Firing Control Console",
+          "Business Interface": "Weapon Authorization Access Point",
           "Business Process": "Execute Superlaser Fire Sequence",
           "Business Function": "Weapon Systems Management",
           "Business Interaction": "Multi-Crew Ignition Synchronization",
@@ -146,7 +146,7 @@ const SCENARIOS = {
           "Business Object": "Firing Authorization Code",
           "Contract": "Targeting Directive",
           "Representation": "Tactical HUD Hologram",
-          "Product": "Peace Through Absolute Power",
+          "Product": "Death Star Deterrence Package",
           
           "Application Component": "Superlaser Targeting Computer",
           "Application Collaboration": "Multi-Turbolaser Combat Data Link",
@@ -170,7 +170,6 @@ const SCENARIOS = {
           "Technology Interaction": "Beam Convergence",
           "Technology Event": "Primary Ignition Initiated",
           "Technology Service": "Energy Focusing Service",
-          "Technology Object": "Ignition Sequence Logs",
           "Artifact": "Firing Execution Manifest",
           
           "Equipment": "Kyber Crystal Focusing Array",
@@ -190,25 +189,25 @@ const SCENARIOS = {
         _description: "Detention Block Security",
         labels: {
           "Stakeholder": "Imperial Security Bureau (ISB)",
-          "Driver": "Information Extraction",
+          "Driver": "Unknown Rebel Base Location",
           "Assessment": "Hidden Rebel Base Location Unknown",
           "Goal": "Crush All Resistance",
           "Outcome": "Rebel Intel Secured",
           "Principle": "No Prisoners Without Interrogation",
           "Requirement": "Inescapable Confinement",
           "Constraint": "Diplomatic Immunity Technicalities",
-          "Meaning": "Traitor to the Empire",
+          "Meaning": "Intelligence Value Assessment",
           "Value": "Actionable Intelligence",
           
           "Resource": "Mind-Probe Technology",
           "Capability": "Hostile Interrogation",
           "Value Stream": "Capture-to-Confession Stream",
-          "Course of Action": "Deploy Interrogation Droid",
+          "Course of Action": "Aggressive Intelligence Extraction Strategy",
           
           "Business Actor": "Stormtrooper Guard",
           "Business Role": "Detention Block Supervisor",
           "Business Collaboration": "Cell Block Security Detail",
-          "Business Interface": "Detention Block Control Desk",
+          "Business Interface": "Security Services Access Point",
           "Business Process": "Interrogate Rebel Prisoners",
           "Business Function": "Station Internal Security",
           "Business Interaction": "Prisoner Transfer Protocol",
@@ -241,7 +240,6 @@ const SCENARIOS = {
           "Technology Interaction": "Automated Blaster Turret Tracking",
           "Technology Event": "Blast Doors Sealed",
           "Technology Service": "Surveillance Monitoring Service",
-          "Technology Object": "Encrypted Security Footage",
           "Artifact": "Shift Patrol Roster",
           
           "Equipment": "IT-O Interrogation Droid",
@@ -268,18 +266,18 @@ const SCENARIOS = {
           "Principle": "Redundancy in Critical Systems",
           "Requirement": "Constant Cooling Circulation",
           "Constraint": "Maximum Core Temperature Limits",
-          "Meaning": "Critical Infrastructure Health",
+          "Meaning": "System Health Classification",
           "Value": "Operational Stability",
           
           "Resource": "Hypermatter Fuel Reserves",
           "Capability": "Deep Space Power Generation",
           "Value Stream": "Fuel-to-Energy Stream",
-          "Course of Action": "Emergency Power Rerouting",
+          "Course of Action": "Prioritize Weapon Systems Power Allocation",
           
           "Business Actor": "Imperial Engineering Crew",
           "Business Role": "Reactor Technician",
           "Business Collaboration": "Core Maintenance Team",
-          "Business Interface": "Engineering Bay Access Panel",
+          "Business Interface": "Maintenance Request Interface",
           "Business Process": "Regulate Core Temperature",
           "Business Function": "Station Infrastructure Maintenance",
           "Business Interaction": "Shift Handoff Briefing",
@@ -312,7 +310,6 @@ const SCENARIOS = {
           "Technology Interaction": "Plasma Venting",
           "Technology Event": "Containment Field Fluctuation",
           "Technology Service": "Magnetic Stabilization Service",
-          "Technology Object": "Core Diagnostic Logs",
           "Artifact": "Engineering Duty Roster",
           
           "Equipment": "Tractor Beam Generator Assembly",
@@ -329,7 +326,7 @@ const SCENARIOS = {
         }
       }
     ],
-
+ 
     perspectiveTitles: {
       A: "Imperial Command and Strategic Intent",
       B: "Reactor Engineering and Station Security",
@@ -341,6 +338,8 @@ const SCENARIOS = {
       C: { intro: "No route currently bridges galactic strategy to physical infrastructure.", cta: "Add element for the cross-layer lens", suggestionsLead: "Try: Strategic Orbital Bombardment, Execute Superlaser Fire Sequence, Kyber Reactor Stabilization" },
     },
   },
+ 
+
 
   // ══════════════════════════════════════════════════════════════════════════
   // REBEL ALLIANCE — asymmetric warfare and intelligence operations
@@ -367,14 +366,14 @@ const SCENARIOS = {
           "Principle": "Self-Sacrifice for the Greater Good",
           "Requirement": "Precise Proton Torpedo Delivery",
           "Constraint": "Heavy Turbolaser Fire",
-          "Meaning": "Spark of Rebellion",
+          "Meaning": "Critical Vulnerability Identified",
           "Value": "Survival of the Alliance",
-
+ 
           "Resource": "Red Squadron Pilots",
           "Capability": "Precision Starfighter Strike",
           "Value Stream": "Scramble-to-Target Stream",
-          "Course of Action": "Assault on Thermal Exhaust Port",
-
+          "Course of Action": "Direct Strike on Critical Infrastructure",
+ 
           "Business Actor": "Red Squadron Pilot",
           "Business Role": "Gold Leader",
           "Business Collaboration": "Trench Run Strike Wing",
@@ -383,12 +382,12 @@ const SCENARIOS = {
           "Business Function": "Starfighter Combat Operations",
           "Business Interaction": "Covering Fire Coordination",
           "Business Event": "Approaching the Target Shaft",
-          "Business Service": "Orbital Strike Defense",
+          "Business Service": "Precision Strike Delivery Service",
           "Business Object": "Targeting Telemetry",
           "Contract": "Mission Briefing Parameters",
           "Representation": "Targeting Computer Display",
-          "Product": "Neutralized Superweapon",
-
+          "Product": "Starfighter Combat Package",
+ 
           "Application Component": "R2-Series Astromech Navigation System",
           "Application Collaboration": "Fighter-Droid Combat Data Link",
           "Application Interface": "Cockpit Targeting HUD",
@@ -398,7 +397,7 @@ const SCENARIOS = {
           "Application Event": "Target Lock Confirmed",
           "Application Service": "In-Flight Diagnostics Support",
           "Data Object": "Exhaust Port Coordinates",
-
+ 
           "Node": "X-Wing Avionics Mainframe",
           "Device": "X-Wing Onboard Flight Computer",
           "System Software": "Incom T-65 Targeting OS",
@@ -411,14 +410,13 @@ const SCENARIOS = {
           "Technology Interaction": "Engine Thrust Synchronization",
           "Technology Event": "TIE Fighter Lock-On Detected",
           "Technology Service": "Evasive Maneuvers Calculation Service",
-          "Technology Object": "Flight Recorder Logs",
           "Artifact": "Post-Flight Combat Analysis",
-
+ 
           "Equipment": "X-Wing Starfighter",
           "Facility": "Massassi Temple Hangar Bay",
           "Distribution Network": "Fighter Refueling Lines",
           "Material": "Proton Torpedo Munitions",
-
+ 
           "Work Package": "Operation: Trench Run",
           "Deliverable": "Direct Hit on Reactor Shaft",
           "Implementation Event": "Squadron Deployment",
@@ -438,18 +436,18 @@ const SCENARIOS = {
           "Principle": "Information is the Best Weapon",
           "Requirement": "Undetected System Infiltration",
           "Constraint": "Guerrilla Warfare Resource Limitations",
-          "Meaning": "A Chance for Victory",
+          "Meaning": "Exploitable Weakness Confirmed",
           "Value": "Strategic Superiority",
-
+ 
           "Resource": "Alliance Intelligence Network",
           "Capability": "Deep Cover Infiltration",
           "Value Stream": "Infiltration-to-Extraction Stream",
-          "Course of Action": "Heist the Citadel Data Vault",
-
+          "Course of Action": "Covert Intelligence Acquisition Strategy",
+ 
           "Business Actor": "Bothan Spy",
           "Business Role": "Rebel Intelligence Agent",
           "Business Collaboration": "Covert Extraction Team",
-          "Business Interface": "Secret Rebel Rendezvous Point",
+          "Business Interface": "Secure Intelligence Drop Protocol",
           "Business Process": "Steal Imperial Data Tapes",
           "Business Function": "Covert Espionage Operations",
           "Business Interaction": "Clandestine Data Handoff",
@@ -458,8 +456,8 @@ const SCENARIOS = {
           "Business Object": "Stolen Imperial Intelligence Dossier",
           "Contract": "Alliance Non-Disclosure Agreement",
           "Representation": "Encrypted Holo-Message",
-          "Product": "Actionable Target Intelligence",
-
+          "Product": "Intelligence Services Suite",
+ 
           "Application Component": "Cryptographic Decryption Engine",
           "Application Collaboration": "Slicer-Droid Interface Link",
           "Application Interface": "Data Spike Terminal",
@@ -469,7 +467,7 @@ const SCENARIOS = {
           "Application Event": "Encryption Cipher Cracked",
           "Application Service": "Secure Data Decryption Service",
           "Data Object": "Death Star Technical Schematics",
-
+ 
           "Node": "Covert Listening Post Server",
           "Device": "Portable Slicer Datapad",
           "System Software": "Custom Intrusion Firmware",
@@ -482,14 +480,13 @@ const SCENARIOS = {
           "Technology Interaction": "Biometric Spoofing Sequence",
           "Technology Event": "Unauthorized Access Alarm Triggered",
           "Technology Service": "Signal Obfuscation Service",
-          "Technology Object": "Stolen Access Tokens",
           "Artifact": "Forged Imperial Clearance Documents",
-
+ 
           "Equipment": "Slicer Gear Kit",
           "Facility": "Imperial Citadel Tower",
           "Distribution Network": "Smuggler Supply Routes",
           "Material": "Physical Data Tapes",
-
+ 
           "Work Package": "Operation: Stardust Retrieval",
           "Deliverable": "Transmitted Structural Plans",
           "Implementation Event": "Data Transmission Initiated",
@@ -509,18 +506,18 @@ const SCENARIOS = {
           "Principle": "Live to Fight Another Day",
           "Requirement": "Covering Fire for Transports",
           "Constraint": "Planetary Ion Cannon Recharge Time",
-          "Meaning": "Tactical Retreat",
+          "Meaning": "Survival Priority Status",
           "Value": "Preservation of the Rebellion",
-
+ 
           "Resource": "Mon Calamari Cruisers",
           "Capability": "Capital Ship Coordination",
           "Value Stream": "Defense-to-Evacuation Stream",
-          "Course of Action": "Scramble Escort Fighters",
-
+          "Course of Action": "Defensive Withdrawal with Covering Action",
+ 
           "Business Actor": "Alliance Fleet Commander",
           "Business Role": "Base Evacuation Coordinator",
           "Business Collaboration": "Transport Escort Convoy",
-          "Business Interface": "Command Center Holo-Table",
+          "Business Interface": "Fleet Command Access Point",
           "Business Process": "Coordinate Fleet Hyperspace Jump",
           "Business Function": "Base Logistics and Evacuation",
           "Business Interaction": "Fleet Jump Synchronization",
@@ -529,8 +526,8 @@ const SCENARIOS = {
           "Business Object": "Evacuation Roster",
           "Contract": "Fleet Rendezvous Protocol",
           "Representation": "Tactical Fleet Hologrid",
-          "Product": "Secured Rebel Personnel",
-
+          "Product": "Fleet Evacuation Package",
+ 
           "Application Component": "Fleet Command Tactical System",
           "Application Collaboration": "Cruiser-to-Transport Nav Link",
           "Application Interface": "Bridge Command Console",
@@ -540,7 +537,7 @@ const SCENARIOS = {
           "Application Event": "Navicomputer Coordinates Locked",
           "Application Service": "Mass-Transit Jump Coordination",
           "Data Object": "Secret Rendezvous Coordinates",
-
+ 
           "Node": "Mon Calamari Fleet Command Server",
           "Device": "Capital Ship Navicomputer",
           "System Software": "Alliance Fleet Command OS",
@@ -553,24 +550,23 @@ const SCENARIOS = {
           "Technology Interaction": "Shield Door Synchronization",
           "Technology Event": "Energy Shield Holding",
           "Technology Service": "Long-Range Sensor Sweeps",
-          "Technology Object": "Jump Trajectory Logs",
           "Artifact": "Fleet Deployment Manifest",
-
+ 
           "Equipment": "GR-75 Medium Transport",
           "Facility": "Echo Base Command Center",
           "Distribution Network": "Hangar Evacuation Tunnels",
           "Material": "Salvaged Starship Components",
-
+ 
           "Work Package": "Emergency Base Evacuation",
           "Deliverable": "Clear Flight Corridor",
           "Implementation Event": "First Transport Away",
-          "Plateau": "Fleet Jumped to Lightsped",
+          "Plateau": "Fleet Jumped to Lightspeed",
           "Gap": "Blockading Star Destroyers",
           "Location": "Hoth System"
         }
       }
     ],
-
+ 
     perspectiveTitles: {
       A: "Rebel Command, Intelligence and Field Operations",
       B: "Fleet Technology and Fighter Systems",
@@ -582,6 +578,7 @@ const SCENARIOS = {
       C: { intro: "No route currently demonstrates alliance liberation through one cross-layer chain.", cta: "Add element for the cross-layer lens", suggestionsLead: "Try: Deep Space Infiltration, Execute Trench Run Attack, X-Wing Starfighter" },
     },
   },
+
 
   // ══════════════════════════════════════════════════════════════════════════
   // HOSPITAL — clinical care operations
@@ -614,12 +611,12 @@ const SCENARIOS = {
           "Resource": "Emergency Triage Staff",
           "Capability": "Rapid Diagnostic Screening",
           "Value Stream": "Arrival-to-Stabilization Stream",
-          "Course of Action": "Initiate Fast-Track Trauma Protocol",
+          "Course of Action": "Prioritize Critical Cases Strategy",
 
           "Business Actor": "Triage Nurse",
           "Business Role": "ED Attending Physician",
           "Business Collaboration": "Trauma Response Team",
-          "Business Interface": "Emergency Reception Desk",
+          "Business Interface": "Emergency Services Access Point",
           "Business Process": "Admit and Triage Patient",
           "Business Function": "Emergency Intake Services",
           "Business Interaction": "Paramedic Handover Briefing",
@@ -628,7 +625,7 @@ const SCENARIOS = {
           "Business Object": "Initial Patient Intake Form",
           "Contract": "Emergency Care Mandate",
           "Representation": "Patient ID Wristband",
-          "Product": "Acute Stabilization Care",
+          "Product": "Emergency Care Package",
 
           "Application Component": "ED Registration System",
           "Application Collaboration": "Ambulance-to-ED Data Sync",
@@ -652,7 +649,6 @@ const SCENARIOS = {
           "Technology Interaction": "Wristband Printing Sequence",
           "Technology Event": "Network Connection Timeout",
           "Technology Service": "Identity Verification Service",
-          "Technology Object": "Encrypted Patient ID Token",
           "Artifact": "Triage Protocol Documentation",
 
           "Equipment": "Mobile Defibrillator Cart",
@@ -685,12 +681,12 @@ const SCENARIOS = {
           "Resource": "Specialist Surgical Team",
           "Capability": "Advanced Minimally Invasive Surgery",
           "Value Stream": "PreOp-to-Recovery Stream",
-          "Course of Action": "Schedule Robot-Assisted Procedure",
+          "Course of Action": "Adopt Minimally Invasive Techniques",
 
           "Business Actor": "Lead Surgeon",
           "Business Role": "Scrub Nurse",
           "Business Collaboration": "Surgical Theatre Staff",
-          "Business Interface": "Pre-Op Holding Area",
+          "Business Interface": "Surgical Scheduling Interface",
           "Business Process": "Perform Surgical Procedure",
           "Business Function": "Surgical Services",
           "Business Interaction": "Pre-Incision Safety Timeout",
@@ -699,7 +695,7 @@ const SCENARIOS = {
           "Business Object": "Surgical Consent Form",
           "Contract": "Informed Consent Agreement",
           "Representation": "Printed Radiology Scan",
-          "Product": "Surgical Intervention Plan",
+          "Product": "Surgical Services Package",
 
           "Application Component": "Clinical Decision Support System",
           "Application Collaboration": "Imaging-to-Theatre Data Link",
@@ -723,7 +719,6 @@ const SCENARIOS = {
           "Technology Interaction": "Instrument Tracking Sync",
           "Technology Event": "Endoscope Feed Interrupted",
           "Technology Service": "Sterile Field Communication Service",
-          "Technology Object": "Surgical Video Recording",
           "Artifact": "Instrument Sterilization Log",
 
           "Equipment": "Surgical Robot Arm",
@@ -756,12 +751,12 @@ const SCENARIOS = {
           "Resource": "Intensivist Physician",
           "Capability": "Continuous Life Support",
           "Value Stream": "Critical-to-Stable Stream",
-          "Course of Action": "Initiate Mechanical Ventilation",
+          "Course of Action": "Aggressive Life Support Intervention",
 
           "Business Actor": "ICU Charge Nurse",
           "Business Role": "Respiratory Therapist",
           "Business Collaboration": "Critical Care Multidisciplinary Team",
-          "Business Interface": "Patient Bedside",
+          "Business Interface": "Bedside Care Access Point",
           "Business Process": "Monitor Vital Signs Continuously",
           "Business Function": "Intensive Care Services",
           "Business Interaction": "Morning Consultant Ward Round",
@@ -770,7 +765,7 @@ const SCENARIOS = {
           "Business Object": "Patient Medical Chart",
           "Contract": "Do Not Resuscitate (DNR) Order",
           "Representation": "Continuous ECG Tracing",
-          "Product": "Intensive Care Pathway",
+          "Product": "Critical Care Service Package",
 
           "Application Component": "Electronic Health Record (EHR) System",
           "Application Collaboration": "Monitor-EHR Results Integration",
@@ -794,7 +789,6 @@ const SCENARIOS = {
           "Technology Interaction": "Patient Monitor Sensor Sync",
           "Technology Event": "Ventilator Pressure Drop Alert",
           "Technology Service": "Secure Clinical Data Storage Service",
-          "Technology Object": "Two-Factor Authentication Token",
           "Artifact": "Deployed Software License Certificate",
 
           "Equipment": "Mechanical Ventilator",
@@ -870,7 +864,7 @@ const SCENARIOS = {
           "Business Actor": "Pit Crew Mechanic",
           "Business Role": "Chief Strategist",
           "Business Collaboration": "Pit Wall Strategy Team",
-          "Business Interface": "Team Radio Channel",
+          "Business Interface": "Race Operations Access Point",
           "Business Process": "Execute Pit Stop",
           "Business Function": "Trackside Operations",
           "Business Interaction": "Driver-Engineer Lap Data Debrief",
@@ -879,7 +873,7 @@ const SCENARIOS = {
           "Business Object": "Lap Time and Sector Data",
           "Contract": "Driver Contract Agreement",
           "Representation": "Printed Timing Tower Sheet",
-          "Product": "Race Strategy Execution",
+          "Product": "Race Weekend Services Package",
           
           "Application Component": "Race Strategy Simulation Model",
           "Application Collaboration": "Pit Wall Strategy Data Sync",
@@ -903,7 +897,6 @@ const SCENARIOS = {
           "Technology Interaction": "Timing Beacon Sync",
           "Technology Event": "Sector Purple Time Registered",
           "Technology Service": "Live Timing Relay Service",
-          "Technology Object": "Encrypted Strategy Model",
           "Artifact": "Race Strategy Run Plan",
           
           "Equipment": "Wheel Gun and Pneumatic Rig",
@@ -936,12 +929,12 @@ const SCENARIOS = {
           "Resource": "Wind Tunnel and CFD Simulation Capacity",
           "Capability": "Aerodynamic Package Development",
           "Value Stream": "Design-to-Manufacture Stream",
-          "Course of Action": "Accelerate Floor Upgrade Production",
+          "Course of Action": "Aggressive In-Season Development",
           
           "Business Actor": "Aerodynamicist",
           "Business Role": "Technical Director",
           "Business Collaboration": "Aero Design Department",
-          "Business Interface": "Design Review Board",
+          "Business Interface": "Design Submission Interface",
           "Business Process": "Validate CFD Simulations",
           "Business Function": "Aerodynamic Development",
           "Business Interaction": "Cross-Department Upgrade Sync",
@@ -974,7 +967,6 @@ const SCENARIOS = {
           "Technology Interaction": "Node Workload Distribution",
           "Technology Event": "Compute Node Failure",
           "Technology Service": "HPC Batch Processing Service",
-          "Technology Object": "Simulation Output Logs",
           "Artifact": "Validated 3D Mesh File",
           
           "Equipment": "60% Scale Wind Tunnel Model",
@@ -1007,12 +999,12 @@ const SCENARIOS = {
           "Resource": "Car Sensor Network",
           "Capability": "High-Frequency Telemetry Ingestion",
           "Value Stream": "Car-to-Garage Data Stream",
-          "Course of Action": "Adjust Engine Mapping via Steering Wheel",
+          "Course of Action": "Conservative Component Management",
           
           "Business Actor": "Race Driver",
           "Business Role": "Race Engineer",
           "Business Collaboration": "Garage Telemetry Team",
-          "Business Interface": "Steering Wheel Dash Display",
+          "Business Interface": "Driver Systems Interface",
           "Business Process": "Monitor Power Unit Health",
           "Business Function": "Systems Engineering",
           "Business Interaction": "Driver Setting Change Confirmation",
@@ -1021,7 +1013,7 @@ const SCENARIOS = {
           "Business Object": "Car Setup Configuration Sheet",
           "Contract": "Engine Supplier Customer Agreement",
           "Representation": "Steering Wheel Alarm LED",
-          "Product": "Reliable Power Unit Operation",
+          "Product": "Power Unit Services Package",
           
           "Application Component": "Telemetry Analysis Platform",
           "Application Collaboration": "Pit Wall — Factory Data Bridge",
@@ -1045,7 +1037,6 @@ const SCENARIOS = {
           "Technology Interaction": "Timing Beacon — Car Transponder Sync",
           "Technology Event": "Trackside Data Uplink Dropped",
           "Technology Service": "Trackside Telemetry Relay Service",
-          "Technology Object": "Encrypted Setup Configuration File",
           "Artifact": "Deployed Firmware Image (ECU)",
           
           "Equipment": "F1 Race Car (Chassis and Power Unit)",
@@ -1078,6 +1069,11 @@ const SCENARIOS = {
   // ══════════════════════════════════════════════════════════════════════════
   // CIRCUS — grand spectacle touring production
   // ══════════════════════════════════════════════════════════════════════════
+
+
+
+// NOT YET CHECKED BY CLAUDE FROM NOW ON !!!!!
+
 
   circus: {
     label: "Circus",
@@ -1144,7 +1140,6 @@ const SCENARIOS = {
           "Technology Interaction": "Crew-to-Performer Comms",
           "Technology Event": "Go Signal Transmitted",
           "Technology Service": "Backstage Coordination Service",
-          "Technology Object": "Digital Safety Checklist",
           "Artifact": "Deployed Safety Certification Record",
           
           "Equipment": "Safety Net and High-Wire Rigging Assembly",
@@ -1215,7 +1210,6 @@ const SCENARIOS = {
           "Technology Interaction": "Database Read/Write Locking",
           "Technology Event": "Payment Gateway Timeout",
           "Technology Service": "Secure Transaction Service",
-          "Technology Object": "Encrypted Credit Card Payload",
           "Artifact": "PCI Compliance Certificate",
           
           "Equipment": "Entry Turnstile Gate",
@@ -1286,7 +1280,6 @@ const SCENARIOS = {
           "Technology Interaction": "Multi-System Cue Timing Coordination",
           "Technology Event": "Effect Misfire or Hardware Fault",
           "Technology Service": "Front-of-House Audio Relay Service",
-          "Technology Object": "Lighting Preset Configuration File",
           "Artifact": "Venue Acoustics Profile",
           
           "Equipment": "Moving Head LED Spotlight",
@@ -1388,7 +1381,6 @@ const SCENARIOS = {
           "Technology Interaction": "Live-Stream Audio Sync",
           "Technology Event": "LMS Outage During Peak Submission",
           "Technology Service": "On-Demand Video Streaming Service",
-          "Technology Object": "Compressed Lecture Video File",
           "Artifact": "Deployed LMS Plugin Package",
 
           "Equipment": "Smart Lectern and Projection Rig",
@@ -1459,7 +1451,6 @@ const SCENARIOS = {
           "Technology Interaction": "Compute Node Load Balancing",
           "Technology Event": "Storage Quota Exceeded Alert",
           "Technology Service": "Big Data Computation Service",
-          "Technology Object": "Encrypted Patient Trial Data",
           "Artifact": "Custom Statistical Analysis Script",
 
           "Equipment": "High-Performance Research Spectrometer",
@@ -1530,7 +1521,6 @@ const SCENARIOS = {
           "Technology Interaction": "Multi-System Single Sign-On (SSO) Sync",
           "Technology Event": "Ransomware Incident Alert",
           "Technology Service": "Managed Cloud Storage Service",
-          "Technology Object": "SSL / TLS Certificate",
           "Artifact": "Firewall Configuration Ruleset",
 
           "Equipment": "Uninterruptible Power Supply (UPS) Unit",
@@ -1629,7 +1619,6 @@ const SCENARIOS = {
           "Technology Interaction": "Printer Driver Sync Failure",
           "Technology Event": "Disk Full on C:",
           "Technology Service": "Managed “Best Effort” Print Service",
-          "Technology Object": "Unsigned Macro Script",
           "Artifact": "Meeting Minutes (Unread)",
 
           "Equipment": "Coffee Machine (Out of Order)",
@@ -1700,7 +1689,6 @@ const SCENARIOS = {
           "Technology Interaction": "Database Deadlock",
           "Technology Event": "VPN Certificate Expired",
           "Technology Service": "Unreliable Offsite Backup",
-          "Technology Object": "config.json (Checked Into Git)",
           "Artifact": "deploy.zip (Untested)",
 
           "Equipment": "Loud Server Rack Fan",
@@ -1771,7 +1759,6 @@ const SCENARIOS = {
           "Technology Interaction": "Third-Party Outage Dependency",
           "Technology Event": "Cloud Billing Alert Ignored",
           "Technology Service": "Containerized Spaghetti Code",
-          "Technology Object": "Stale Docker Image",
           "Artifact": "Unread Confluence Page",
 
           "Equipment": "Office Chair (Squeaks)",

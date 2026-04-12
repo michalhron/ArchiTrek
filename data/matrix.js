@@ -8,9 +8,6 @@
  * Explicit (Appendix B) vs §5.7 inferred letter buckets follow
  * data/source/matrix-code-buckets.json (derived from the prior in-repo normative split).
  *
- * Technology Object rows are merged from data/source/matrix-technology-object-rows.json
- * (that type is not listed in the 3.2 ontology relationships file).
- *
  * Regenerate: node scripts/build-matrix.mjs
  *
  * Normative human-readable tables:
@@ -80,7 +77,6 @@ const MATRIX = [
   { from:"Application Collaboration", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Collaboration", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Collaboration", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Collaboration", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Collaboration", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Collaboration", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Collaboration", to:"Value",  direct:["N"],         derived:[] },
@@ -135,7 +131,6 @@ const MATRIX = [
   { from:"Application Component", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Component", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Component", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Component", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Component", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Component", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Component", to:"Value",  direct:[],         derived:["N"] },
@@ -187,7 +182,6 @@ const MATRIX = [
   { from:"Application Event", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Event", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Event", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Event", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Event", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Event", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Event", to:"Value",  direct:[],         derived:["N"] },
@@ -240,7 +234,6 @@ const MATRIX = [
   { from:"Application Function", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Function", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Function", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Function", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Function", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Function", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Function", to:"Value",  direct:[],         derived:["N"] },
@@ -294,7 +287,6 @@ const MATRIX = [
   { from:"Application Interaction", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interaction", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interaction", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Interaction", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Interaction", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interaction", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interaction", to:"Value",  direct:[],         derived:["N"] },
@@ -349,7 +341,6 @@ const MATRIX = [
   { from:"Application Interface", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interface", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interface", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Interface", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Interface", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interface", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Interface", to:"Value",  direct:[],         derived:["N"] },
@@ -403,7 +394,6 @@ const MATRIX = [
   { from:"Application Process", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Process", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Process", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Process", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Process", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Process", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Process", to:"Value",  direct:[],         derived:["N"] },
@@ -457,7 +447,6 @@ const MATRIX = [
   { from:"Application Service", to:"Technology Function",  direct:[],         derived:["F","T","V"] },
   { from:"Application Service", to:"Technology Interaction",  direct:[],         derived:["F","T","V"] },
   { from:"Application Service", to:"Technology Interface",  direct:[],         derived:["F","T","V"] },
-  { from:"Application Service", to:"Technology Object",  direct:[],         derived:["A"] },
   { from:"Application Service", to:"Technology Process",  direct:[],         derived:["F","T","V"] },
   { from:"Application Service", to:"Technology Service",  direct:[],         derived:["F","T","V"] },
   { from:"Application Service", to:"Value",  direct:[],         derived:["N"] },

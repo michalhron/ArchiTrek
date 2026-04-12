@@ -3,7 +3,6 @@
  * Regenerates data/matrix.js from:
  *   - data/source/relationships.xml (AlbertoDMendoza/archimate_ontology validation matrix)
  *   - data/source/matrix-code-buckets.json (explicit vs §5.7 inferred letter buckets, keyed "from|to" → code → "d"|"der")
- *   - data/source/matrix-technology-object-rows.json (rows absent from the 3.2 ontology file)
  *
  * Run from repo root: node scripts/build-matrix.mjs
  */
@@ -72,9 +71,6 @@ function main() {
   const buckets = JSON.parse(
     fs.readFileSync(path.join(root, "data", "source", "matrix-code-buckets.json"), "utf8")
   );
-  const techRows = JSON.parse(
-    fs.readFileSync(path.join(root, "data", "source", "matrix-technology-object-rows.json"), "utf8")
-  );
 
   const appNames = loadAppElementNames();
   const elementSet = new Set(appNames);
@@ -116,16 +112,6 @@ function main() {
     pairMap.set(key, { from, to, direct, derived });
   }
 
-  for (const row of techRows) {
-    const key = `${row.from}|${row.to}`;
-    pairMap.set(key, {
-      from: row.from,
-      to: row.to,
-      direct: [...row.direct],
-      derived: [...row.derived],
-    });
-  }
-
   const matrix = [...pairMap.values()].sort((a, b) => {
     if (a.from !== b.from) return a.from.localeCompare(b.from);
     return a.to.localeCompare(b.to);
@@ -141,9 +127,6 @@ function main() {
   lines.push(` *`);
   lines.push(` * Explicit (Appendix B) vs §5.7 inferred letter buckets follow`);
   lines.push(` * data/source/matrix-code-buckets.json (derived from the prior in-repo normative split).`);
-  lines.push(` *`);
-  lines.push(` * Technology Object rows are merged from data/source/matrix-technology-object-rows.json`);
-  lines.push(` * (that type is not listed in the 3.2 ontology relationships file).`);
   lines.push(` *`);
   lines.push(` * Regenerate: node scripts/build-matrix.mjs`);
   lines.push(` *`);

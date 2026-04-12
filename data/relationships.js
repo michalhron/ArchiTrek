@@ -1,6 +1,6 @@
 // === data/relationships.js ===
 /**
- * ArchiMate 3.1 — Relationship Type Definitions
+ * ArchiMate 3.2 — Relationship type definitions (notation / pedagogy)
  * Source: Chapter 5, Relationships and Relationship Connectors
  * https://pubs.opengroup.org/architecture/archimate32-doc/ch-Relationships-and-Relationship-Connectors.html
  */
@@ -83,5 +83,5 @@ const RELATIONSHIP_CATEGORIES = {
 /** Always permitted between two instances of the same element type (§5 rules). */
 const ALWAYS_PERMITTED_SAME_TYPE = ["S","C","G"];
 
-/** Association is universal (§5.2.4); not listed per cell in Appendix B. Pathfinder adds O arcs with a penalty unless the user allows fallback. */
+/** Association is universal (§5.2.4); not listed per cell in the 3.2 relationship grid. Pathfinder adds O arcs with a penalty unless the user allows fallback. */
 const EXCLUDED_FROM_PATHFINDING = ["O"];

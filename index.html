@@ -195,6 +195,8 @@
         aria-selected="true" aria-controls="help-pane-app" tabindex="0">About the app</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
         aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
+      <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
+        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
     </div>
 
     <div id="help-pane-app" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-app">
@@ -208,6 +210,16 @@
           ArchiTrek helps you find a valid <strong>relationship chain</strong> (a “route”) — often crossing Business /
           Application / Technology layers.
         </p>
+        <p class="help-text">
+          <strong>ArchiMate 3.2:</strong> which relationship kinds may appear between which element types is driven by a
+          frozen, machine-readable 3.2 relationship grid shipped inside the app — same information families as the normative
+          tables, packaged for offline lookup and path search.
+        </p>
+        <p class="help-note" role="note">
+          That grid’s machine encoding is taken from the validation dataset published alongside the community ArchiMate OWL work:
+          <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml</a>
+          (AlbertoDMendoza/archimate_ontology). Details and caveats live under <strong>Technical notes</strong>.
+        </p>
       </div>
 
       <div class="help-card">
@@ -215,7 +227,7 @@
         <div class="help-card-title">Pick points → Find Path → read the explanation</div>
         <ul class="help-list">
           <li><strong>Choose 2+ element types</strong> using the pickers.</li>
-          <li>Click <strong>Find Path</strong> to search Appendix B (plus optional derivation rules).</li>
+          <li>Click <strong>Find Path</strong> to search the 3.2 relationship matrix (plus optional derivation rules).</li>
           <li>Review the diagram and the <strong>hop-by-hop</strong> explanation; click items to learn more.</li>
         </ul>
       </div>
@@ -251,8 +263,8 @@
           <div class="help-kicker">Relationship rules</div>
           <div class="help-card-title">Explicit, + Inferred, Semantic rigor</div>
           <ul class="help-list">
-            <li><strong>Explicit</strong>: only uppercase Appendix B relationships (strictest graph).</li>
-            <li><strong>+ Inferred</strong>: also allow §5.7 inferred links (lowercase in tables) to unlock more routes.</li>
+            <li><strong>Explicit</strong>: only the “primary” relationship codes wired into the strict graph.</li>
+            <li><strong>+ Inferred</strong>: also allow the secondary bucket (§5.7-style material) so more chains become traversable.</li>
             <li><strong>Semantic rigor</strong> (Academic / Pragmatic / Discovery): bundles grammar gates with whether §5.2.4 Association may be used as a last-resort bridge. Use <strong>Advanced options → Advanced Logic Overrides</strong> for manual control.</li>
             <li><strong>Together:</strong> <strong>Explicit vs +Inferred</strong> decides which edges exist in the graph; <strong>Semantic rigor</strong> judges routes and Association on top. They are separate controls.</li>
           </ul>
@@ -281,6 +293,58 @@
     <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
       <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
       <div id="help-labels-body" class="path-labels-body"></div>
+    </div>
+
+    <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>
+      <div class="help-card help-card--primary">
+        <div class="help-kicker">Where 3.2 shows up</div>
+        <div class="help-card-title">Type-to-type validity</div>
+        <p class="help-text">
+          The engine treats <strong>ArchiMate 3.2</strong> as the contract for “may this relationship kind exist on this
+          directed element-type pair?” That contract is a full pairwise grid of allowed letters (structural, dependency,
+          dynamic, other), frozen for offline use — not re-derived at runtime from prose in the PDF.
+          <strong>Association</strong> follows the usual “always permitted” rule (§5.2.4): it is not part of that per-cell
+          letter set; the UI layers it in as a deliberately weak escape hatch with a tunable cost so specific links stay
+          preferable when you want discipline.
+        </p>
+        <p class="help-text">
+          Canonical language definition and diagrams remain with The Open Group; what you get here is an implementation
+          snapshot aligned to that family.
+          <a href="https://pubs.opengroup.org/architecture/archimate32-doc/" target="_blank" rel="noopener noreferrer">https://pubs.opengroup.org/architecture/archimate32-doc/</a>
+        </p>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Honest limits</div>
+        <div class="help-card-title">Explicit vs + Inferred is only half spec-sourced</div>
+        <p class="help-text">
+          The frozen grid answers <em>which</em> relationship symbols are legal between types; it does <strong>not</strong>
+          label each symbol as “printed verbatim in the normative table” versus “only appears after §5.7-style chaining.”
+          The product still exposes two buckets so <strong>Explicit</strong> vs <strong>+ Inferred</strong> means something
+          in scoring and graph shape: historically known splits were carried forward where the same pair and symbol still
+          exist, and anything newly legal under 3.2 defaults to the primary bucket until someone revisits it against an
+          authoritative split. Bottom line: <strong>legality tracks 3.2; the primary/secondary classification is
+          engineering judgement, not a stamped compliance artifact for every cell.</strong>
+        </p>
+        <p class="help-note" role="note">
+          Viewpoint palettes, aspect/metamodel blurbs, and narrative copy are curated for teaching — they should stay
+          consistent with the grid, but they are not emitted from the same mechanical source as the pairwise rules.
+        </p>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Upstream</div>
+        <div class="help-card-title">Where the grid encoding came from</div>
+        <p class="help-text">
+          The machine-readable relationship encoding used for 3.2 alignment comes from the validation dataset published
+          with the community ArchiMate OWL ontology effort:
+          <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml</a>
+          (<strong>AlbertoDMendoza/archimate_ontology</strong>). The same project ships a Turtle ontology for RDF tooling;
+          an optional offline extractor (same GitHub org) can walk concrete models and reason about direct vs inferred
+          instance edges — a different concern from the in-browser type matrix that drives ArchiTrek’s path search.
+          <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl</a>
+        </p>
+      </div>
     </div>
   </div>
 </div>

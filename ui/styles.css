@@ -555,29 +555,48 @@ body {
   margin-top: 0.125rem;
   min-width: 0;
 }
-/* One row: endpoint chips + spec-accurate relationship SVG (replaces text → + duplicate diagram). */
+/* One row: equal flex flanks so the connector sits on the row midpoint; chips hug the connector. */
 .explain-hop-summary-route--single {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  column-gap: 0.5rem;
+  gap: 0.5rem;
   width: 100%;
   max-width: 100%;
   min-width: 0;
 }
-.explain-hop-summary-route--single > .explain-hop-summary-endpoint:first-of-type {
-  justify-self: end;
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint {
+  flex: 1 1 0;
   min-width: 0;
 }
-.explain-hop-summary-route--single > .explain-hop-summary-endpoint:last-of-type {
-  justify-self: start;
-  min-width: 0;
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint:first-of-type:not(.explain-hop-summary-endpoint--plain) {
+  justify-content: flex-end;
+}
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint--plain:first-of-type {
+  text-align: right;
+}
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint:last-of-type:not(.explain-hop-summary-endpoint--plain) {
+  justify-content: flex-start;
+}
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint--plain:last-of-type {
+  text-align: left;
 }
 .explain-hop-summary-route--single .explain-hop-summary-connector {
-  justify-self: center;
+  flex: 0 0 auto;
+  align-self: center;
+}
+.explain-hop-summary-connector-caption {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: inherit;
+  text-align: center;
+  line-height: 1.2;
+  max-width: 8rem;
 }
 .explain-hop-summary-endpoint.step-el-tip-wrap {
-  /* Stay inside the grid column (max-width:none was letting chips ignore the fr track and overflow the card). */
+  /* Stay inside the flex cell (max-width:none was letting chips ignore the track and overflow the card). */
   max-width: 100%;
   width: 100%;
   min-width: 0;
@@ -648,6 +667,15 @@ body {
   margin: 0 4px;
   padding: 0;
   gap: 0;
+}
+/* Stack caption under stroke in hop summary (overrides row direction above). */
+.explain-hop-summary-connector.explain-edge-connector--inline-arrow.explain-hop-summary-connector--stacked {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  min-width: 2.75rem;
 }
 .explain-hop-justification:not([open]) > summary {
   border-radius: 0;

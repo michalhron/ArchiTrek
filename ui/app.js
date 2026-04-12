@@ -4952,27 +4952,38 @@ function initResultsSplit() {
 // ── Initialise ──────────────────────────────────────────────────────────────
 
 const HELP_PANE_APP = "app";
+const HELP_PANE_TECH = "tech";
 const HELP_PANE_LABELS = "labels";
 
 function setHelpModalPane(pane) {
-  const isLabels = pane === HELP_PANE_LABELS;
+  const showApp = pane === HELP_PANE_APP;
+  const showTech = pane === HELP_PANE_TECH;
+  const showLabels = pane === HELP_PANE_LABELS;
   const appPane = document.getElementById("help-pane-app");
+  const techPane = document.getElementById("help-pane-tech");
   const labelsPane = document.getElementById("help-pane-labels");
   const tabApp = document.getElementById("help-tab-app");
+  const tabTech = document.getElementById("help-tab-tech");
   const tabLabels = document.getElementById("help-tab-labels");
-  if (appPane) appPane.hidden = isLabels;
-  if (labelsPane) labelsPane.hidden = !isLabels;
+  if (appPane) appPane.hidden = !showApp;
+  if (techPane) techPane.hidden = !showTech;
+  if (labelsPane) labelsPane.hidden = !showLabels;
   if (tabApp) {
-    tabApp.setAttribute("aria-selected", String(!isLabels));
-    tabApp.classList.toggle("help-modal-tab--active", !isLabels);
-    tabApp.tabIndex = !isLabels ? 0 : -1;
+    tabApp.setAttribute("aria-selected", String(showApp));
+    tabApp.classList.toggle("help-modal-tab--active", showApp);
+    tabApp.tabIndex = showApp ? 0 : -1;
+  }
+  if (tabTech) {
+    tabTech.setAttribute("aria-selected", String(showTech));
+    tabTech.classList.toggle("help-modal-tab--active", showTech);
+    tabTech.tabIndex = showTech ? 0 : -1;
   }
   if (tabLabels) {
-    tabLabels.setAttribute("aria-selected", String(isLabels));
-    tabLabels.classList.toggle("help-modal-tab--active", isLabels);
-    tabLabels.tabIndex = isLabels ? 0 : -1;
+    tabLabels.setAttribute("aria-selected", String(showLabels));
+    tabLabels.classList.toggle("help-modal-tab--active", showLabels);
+    tabLabels.tabIndex = showLabels ? 0 : -1;
   }
-  if (isLabels) {
+  if (showLabels) {
     const body = document.getElementById("help-labels-body");
     if (body && typeof buildPathLabelsModalHtml === "function") {
       body.innerHTML = buildPathLabelsModalHtml();
@@ -4988,12 +4999,18 @@ function initHelpModalTabs() {
     const t = e.target.closest(".help-modal-tab");
     if (!t || !list.contains(t)) return;
     if (t.id === "help-tab-app") setHelpModalPane(HELP_PANE_APP);
+    else if (t.id === "help-tab-tech") setHelpModalPane(HELP_PANE_TECH);
     else if (t.id === "help-tab-labels") setHelpModalPane(HELP_PANE_LABELS);
   });
 }
 
 window.showHelp = function (pane) {
-  const p = pane === HELP_PANE_LABELS ? HELP_PANE_LABELS : HELP_PANE_APP;
+  const p =
+    pane === HELP_PANE_LABELS
+      ? HELP_PANE_LABELS
+      : pane === HELP_PANE_TECH
+        ? HELP_PANE_TECH
+        : HELP_PANE_APP;
   const m = document.getElementById("help-modal");
   if (!m) return;
   setHelpModalPane(p);

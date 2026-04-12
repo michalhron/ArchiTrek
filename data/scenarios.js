@@ -170,7 +170,6 @@ const SCENARIOS = {
           "Technology Interaction": "Beam Convergence",
           "Technology Event": "Primary Ignition Initiated",
           "Technology Service": "Energy Focusing Service",
-          "Technology Object": "Ignition Sequence Logs",
           "Artifact": "Firing Execution Manifest",
           
           "Equipment": "Kyber Crystal Focusing Array",
@@ -241,7 +240,6 @@ const SCENARIOS = {
           "Technology Interaction": "Automated Blaster Turret Tracking",
           "Technology Event": "Blast Doors Sealed",
           "Technology Service": "Surveillance Monitoring Service",
-          "Technology Object": "Encrypted Security Footage",
           "Artifact": "Shift Patrol Roster",
           
           "Equipment": "IT-O Interrogation Droid",
@@ -312,7 +310,6 @@ const SCENARIOS = {
           "Technology Interaction": "Plasma Venting",
           "Technology Event": "Containment Field Fluctuation",
           "Technology Service": "Magnetic Stabilization Service",
-          "Technology Object": "Core Diagnostic Logs",
           "Artifact": "Engineering Duty Roster",
           
           "Equipment": "Tractor Beam Generator Assembly",
@@ -411,7 +408,6 @@ const SCENARIOS = {
           "Technology Interaction": "Engine Thrust Synchronization",
           "Technology Event": "TIE Fighter Lock-On Detected",
           "Technology Service": "Evasive Maneuvers Calculation Service",
-          "Technology Object": "Flight Recorder Logs",
           "Artifact": "Post-Flight Combat Analysis",
 
           "Equipment": "X-Wing Starfighter",
@@ -482,7 +478,6 @@ const SCENARIOS = {
           "Technology Interaction": "Biometric Spoofing Sequence",
           "Technology Event": "Unauthorized Access Alarm Triggered",
           "Technology Service": "Signal Obfuscation Service",
-          "Technology Object": "Stolen Access Tokens",
           "Artifact": "Forged Imperial Clearance Documents",
 
           "Equipment": "Slicer Gear Kit",
@@ -553,7 +548,6 @@ const SCENARIOS = {
           "Technology Interaction": "Shield Door Synchronization",
           "Technology Event": "Energy Shield Holding",
           "Technology Service": "Long-Range Sensor Sweeps",
-          "Technology Object": "Jump Trajectory Logs",
           "Artifact": "Fleet Deployment Manifest",
 
           "Equipment": "GR-75 Medium Transport",
@@ -652,7 +646,6 @@ const SCENARIOS = {
           "Technology Interaction": "Wristband Printing Sequence",
           "Technology Event": "Network Connection Timeout",
           "Technology Service": "Identity Verification Service",
-          "Technology Object": "Encrypted Patient ID Token",
           "Artifact": "Triage Protocol Documentation",
 
           "Equipment": "Mobile Defibrillator Cart",
@@ -723,7 +716,6 @@ const SCENARIOS = {
           "Technology Interaction": "Instrument Tracking Sync",
           "Technology Event": "Endoscope Feed Interrupted",
           "Technology Service": "Sterile Field Communication Service",
-          "Technology Object": "Surgical Video Recording",
           "Artifact": "Instrument Sterilization Log",
 
           "Equipment": "Surgical Robot Arm",
@@ -794,7 +786,6 @@ const SCENARIOS = {
           "Technology Interaction": "Patient Monitor Sensor Sync",
           "Technology Event": "Ventilator Pressure Drop Alert",
           "Technology Service": "Secure Clinical Data Storage Service",
-          "Technology Object": "Two-Factor Authentication Token",
           "Artifact": "Deployed Software License Certificate",
 
           "Equipment": "Mechanical Ventilator",
@@ -903,7 +894,6 @@ const SCENARIOS = {
           "Technology Interaction": "Timing Beacon Sync",
           "Technology Event": "Sector Purple Time Registered",
           "Technology Service": "Live Timing Relay Service",
-          "Technology Object": "Encrypted Strategy Model",
           "Artifact": "Race Strategy Run Plan",
           
           "Equipment": "Wheel Gun and Pneumatic Rig",
@@ -974,7 +964,6 @@ const SCENARIOS = {
           "Technology Interaction": "Node Workload Distribution",
           "Technology Event": "Compute Node Failure",
           "Technology Service": "HPC Batch Processing Service",
-          "Technology Object": "Simulation Output Logs",
           "Artifact": "Validated 3D Mesh File",
           
           "Equipment": "60% Scale Wind Tunnel Model",
@@ -1045,7 +1034,6 @@ const SCENARIOS = {
           "Technology Interaction": "Timing Beacon — Car Transponder Sync",
           "Technology Event": "Trackside Data Uplink Dropped",
           "Technology Service": "Trackside Telemetry Relay Service",
-          "Technology Object": "Encrypted Setup Configuration File",
           "Artifact": "Deployed Firmware Image (ECU)",
           
           "Equipment": "F1 Race Car (Chassis and Power Unit)",
@@ -1144,7 +1132,6 @@ const SCENARIOS = {
           "Technology Interaction": "Crew-to-Performer Comms",
           "Technology Event": "Go Signal Transmitted",
           "Technology Service": "Backstage Coordination Service",
-          "Technology Object": "Digital Safety Checklist",
           "Artifact": "Deployed Safety Certification Record",
           
           "Equipment": "Safety Net and High-Wire Rigging Assembly",
@@ -1215,7 +1202,6 @@ const SCENARIOS = {
           "Technology Interaction": "Database Read/Write Locking",
           "Technology Event": "Payment Gateway Timeout",
           "Technology Service": "Secure Transaction Service",
-          "Technology Object": "Encrypted Credit Card Payload",
           "Artifact": "PCI Compliance Certificate",
           
           "Equipment": "Entry Turnstile Gate",
@@ -1286,7 +1272,6 @@ const SCENARIOS = {
           "Technology Interaction": "Multi-System Cue Timing Coordination",
           "Technology Event": "Effect Misfire or Hardware Fault",
           "Technology Service": "Front-of-House Audio Relay Service",
-          "Technology Object": "Lighting Preset Configuration File",
           "Artifact": "Venue Acoustics Profile",
           
           "Equipment": "Moving Head LED Spotlight",
@@ -1388,7 +1373,6 @@ const SCENARIOS = {
           "Technology Interaction": "Live-Stream Audio Sync",
           "Technology Event": "LMS Outage During Peak Submission",
           "Technology Service": "On-Demand Video Streaming Service",
-          "Technology Object": "Compressed Lecture Video File",
           "Artifact": "Deployed LMS Plugin Package",
 
           "Equipment": "Smart Lectern and Projection Rig",
@@ -1459,7 +1443,6 @@ const SCENARIOS = {
           "Technology Interaction": "Compute Node Load Balancing",
           "Technology Event": "Storage Quota Exceeded Alert",
           "Technology Service": "Big Data Computation Service",
-          "Technology Object": "Encrypted Patient Trial Data",
           "Artifact": "Custom Statistical Analysis Script",
 
           "Equipment": "High-Performance Research Spectrometer",
@@ -1530,7 +1513,6 @@ const SCENARIOS = {
           "Technology Interaction": "Multi-System Single Sign-On (SSO) Sync",
           "Technology Event": "Ransomware Incident Alert",
           "Technology Service": "Managed Cloud Storage Service",
-          "Technology Object": "SSL / TLS Certificate",
           "Artifact": "Firewall Configuration Ruleset",
 
           "Equipment": "Uninterruptible Power Supply (UPS) Unit",
@@ -1629,7 +1611,6 @@ const SCENARIOS = {
           "Technology Interaction": "Printer Driver Sync Failure",
           "Technology Event": "Disk Full on C:",
           "Technology Service": "Managed “Best Effort” Print Service",
-          "Technology Object": "Unsigned Macro Script",
           "Artifact": "Meeting Minutes (Unread)",
 
           "Equipment": "Coffee Machine (Out of Order)",
@@ -1700,7 +1681,6 @@ const SCENARIOS = {
           "Technology Interaction": "Database Deadlock",
           "Technology Event": "VPN Certificate Expired",
           "Technology Service": "Unreliable Offsite Backup",
-          "Technology Object": "config.json (Checked Into Git)",
           "Artifact": "deploy.zip (Untested)",
 
           "Equipment": "Loud Server Rack Fan",
@@ -1771,7 +1751,6 @@ const SCENARIOS = {
           "Technology Interaction": "Third-Party Outage Dependency",
           "Technology Event": "Cloud Billing Alert Ignored",
           "Technology Service": "Containerized Spaghetti Code",
-          "Technology Object": "Stale Docker Image",
           "Artifact": "Unread Confluence Page",
 
           "Equipment": "Office Chair (Squeaks)",

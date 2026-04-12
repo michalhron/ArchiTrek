@@ -1,6 +1,6 @@
 // === data/metamodel.js ===
 /**
- * ArchiMate 3.1 — Metamodel aspect compatibility rules
+ * ArchiMate 3.2 — Metamodel aspect compatibility rules
  * Source: Chapter 4 (§4.2–§4.4), The ArchiMate Framework
  * https://pubs.opengroup.org/architecture/archimate32-doc/ch-Introduction.html
  *

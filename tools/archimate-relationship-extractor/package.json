@@ -1,0 +1,16 @@
+{
+  "name": "archimate-relationship-extractor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extract ArchiMate direct vs derived relationships from TTL / .archimate / JSON",
+  "type": "module",
+  "bin": {
+    "archimate-relationship-extractor": "./src/cli.mjs"
+  },
+  "scripts": {
+    "extract": "node src/cli.mjs"
+  },
+  "dependencies": {
+    "n3": "^1.17.2"
+  }
+}

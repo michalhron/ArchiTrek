@@ -19,8 +19,13 @@
 // Used for: layer tile selector, swimlane rendering, viewpoint filtering.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Appendix B still lists these in matrix.js; the app omits them from registry, UI, and pathfinding. */
-const EXCLUDED_APP_ELEMENTS = new Set(["Grouping"]);
+/**
+ * Matrix rows may still list these; the app omits them from pathfinding (and Grouping from registry/UI).
+ * Junction is a relationship connector in the metamodel — allowing it as an intermediate would create
+ * spurious shortest paths (e.g. Value → Junction → Data Object) that bypass the pedagogical “O-only”
+ * story for pairs that are Association-only in the 3.2 grid.
+ */
+const EXCLUDED_APP_ELEMENTS = new Set(["Grouping", "Junction"]);
 
 /**
  * metamodelRole — position of each element in the ArchiMate core metamodel diagram
@@ -101,7 +106,6 @@ const ELEMENTS = {
   "Technology Interaction":    { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "internal-behavior" },
   "Technology Event":          { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "event" },
   "Technology Service":        { layer: "Technology", aspect: "Behavior",          color: "#c1ffb1", metamodelRole: "external-behavior" },
-  "Technology Object":         { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
   "Artifact":                  { layer: "Technology", aspect: "Passive Structure", color: "#c1ffb1", metamodelRole: "passive" },
   // Equipment, Facility, … (ArchiMate §10.4) — same Technology layer as IT infrastructure in this app.
   "Equipment":           { layer: "Technology", aspect: "Active Structure",  color: "#c1ffb1", metamodelRole: "internal-active" },
@@ -244,8 +248,8 @@ const MUTUAL_INFLUENCE_EDGE_DROPS = computeMutualInfluenceEdgeDrops();
  *   If non-null, only elements in this set are included as nodes and targets.
  *   Used for viewpoint filtering. null = all elements allowed.
  * @param {boolean} options.includeDerived
- *   If true, derived (lowercase) edges are included in the graph.
- *   If false, only direct (uppercase) edges are traversable.
+ *   If true, matrix `derived` edges are included in the graph.
+ *   If false, only matrix `direct` edges are traversable.
  * @param {boolean} [options.includeAssociationBridges=true]
  *   If true, add directed Association (O) arcs for every ordered pair of allowed nodes (§5.2.4 —
  *   always permitted; not listed per-cell in Appendix B). Pathfinder applies a penalty so matrix

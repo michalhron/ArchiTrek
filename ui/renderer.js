@@ -5127,29 +5127,7 @@ function getRelationVisualSnippet(code, isDirect, hopIndexForIds, opts = {}) {
   const cls =
     "explain-edge-connector-svg" +
     (compact ? " explain-edge-connector-svg--compact" : "");
-  /** ArchiMate §5.3 notation: solid/dashed line, filled arrowhead, relationship name centered below (same for Triggering and Flow). */
-  const dynamicNotationBelow =
-    (UPPER === "T" || UPPER === "F") &&
-    style.endMarker === "arrow-filled" &&
-    style.startMarker === "none";
-  if (dynamicNotationBelow) {
-    const relName =
-      typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS[UPPER]?.name
-        ? RELATIONSHIPS[UPPER].name
-        : UPPER;
-    const label = typeof escPathDiag === "function" ? escPathDiag(relName) : String(relName ?? "");
-    const lineY = 12;
-    const vb = 'viewBox="0 0 80 34" preserveAspectRatio="xMidYMid meet"';
-    const w = compact ? 52 : 80;
-    const h = compact ? 28 : 36;
-    return (
-      `<svg class="${cls} explain-edge-connector-svg--dynamic" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">` +
-      `${defs}` +
-      `<line x1="5" y1="${lineY}" x2="65" y2="${lineY}" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" />` +
-      `<text x="35" y="28" text-anchor="middle" font-size="10" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="500" fill="currentColor">${label}</text>` +
-      `</svg>`
-    );
-  }
+  /** Relationship name under the stroke is HTML in the hop summary (`.explain-hop-summary-connector-caption`) for reliable centering and legibility. */
   const w = compact ? 52 : 80;
   const h = compact ? 20 : 30;
   const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
@@ -6355,7 +6333,8 @@ function explainPath(
             i,
             { compact: true }
           );
-      const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(narrFrom, narrIdxFrom, showThematicRoute)}<span class="explain-hop-summary-connector explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}</span>${hopSummaryEndpointHtml(narrTo, narrIdxTo, showThematicRoute)}</span>`;
+      const hopConnectorCaption = escPathDiag(relHeaderName);
+      const routeCaptionHtml = `<span class="explain-hop-summary-route explain-hop-summary-route--single">${hopSummaryEndpointHtml(narrFrom, narrIdxFrom, showThematicRoute)}<span class="explain-hop-summary-connector explain-hop-summary-connector--stacked explain-edge-connector explain-edge-connector--inline-arrow" aria-hidden="true">${headerSnippet}<span class="explain-hop-summary-connector-caption">${hopConnectorCaption}</span></span>${hopSummaryEndpointHtml(narrTo, narrIdxTo, showThematicRoute)}</span>`;
       const revCodesForSummary = reverseRelationshipCodesForDirectedPair(narrFrom, narrTo);
       const reverseSummaryLine = isProvisional
         ? ""
@@ -6436,7 +6415,7 @@ function explainPath(
       .join(" · ");
 
     detailParts.push(`<div class="explain-closing">
-      <strong>Spec references:</strong> Appendix B (Normative) · ${citations}
+      <strong>Spec references:</strong> ArchiMate 3.2 relationship grid · ${citations}
       ${derivedCount > 0 ? "· §5.7 Derivation Rules" : ""}
       <div class="explain-rigor-summary">Found ${pathCount} path${pathCount === 1 ? "" : "s"} using ${escPathDiag(rigorLabel)} Rigor.${rigorHint ? ` (${escPathDiag(rigorHint)})` : ""}</div>
     </div>`);
@@ -6549,7 +6528,7 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
   const assocHint =
     "Associations are the weakest form of relationship, useful for early-stage planning or capturing undocumented “tribal knowledge”.";
   const rationaleText =
-    "Explicit (Appendix B uppercase) relationships form the “ground truth” of your architecture. Prefer them when you need rigor and verifiability; inferred links can be helpful to simplify the story, but they intentionally abstract away detail.";
+    "Explicit (matrix direct) relationships form the “ground truth” of your architecture against the ArchiMate 3.2 grid. Prefer them when you need rigor and verifiability; inferred links can be helpful to simplify the story, but they intentionally abstract away detail.";
 
   const titleText = includeDerived
     ? "No Architectural Path Found"
@@ -6586,7 +6565,7 @@ function renderNoPathEducationalPanel(sourceName, targetName, opts = {}) {
       <div class="path-dead-end__action-block">
         <div class="path-dead-end__tier">
           <span class="path-dead-end__tier-badge">Stricter widening</span>
-          <span class="path-dead-end__tier-text">Still normative—Appendix B types plus §5.7 derivation</span>
+          <span class="path-dead-end__tier-text">Still normative—3.2 matrix types plus §5.7 derivation</span>
         </div>
         <div class="path-dead-end__btn-row">
           <button type="button" class="path-dead-end__btn path-dead-end__btn--choice"${derivedDisabled} onclick="if(!this.disabled)window.tryRelaxPathDerived()">🔍 Search with + Inferred (§5.7)</button>
@@ -6639,7 +6618,7 @@ function renderPathRelaxationActionSteps(hints) {
     parts.push(`<li class="path-failure-suggestions__step">
       <div class="path-failure-suggestions__step-body">
         <strong>1. Indirect (derived) relationships</strong>
-        <span class="path-failure-suggestions__step-desc">Include §5.7 derived links from Appendix B (shown in lowercase in the tables). This is still “specific” relationships, not generic Association.</span>
+        <span class="path-failure-suggestions__step-desc">Include matrix <strong>derived</strong> relationship codes (§5.7-style inferred links). This is still “specific” relationship types, not generic Association.</span>
         <button type="button" class="path-relax-btn" onclick="tryRelaxPathDerived()">Enable + Inferred and search again</button>
       </div>
     </li>`);

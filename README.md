@@ -1,6 +1,6 @@
 # ArchiTrek (ArchiMate Navigator)
 
-**ArchiTrek** is a browser-based **ArchiMate study engine**: an interactive workspace for exploring the ArchiMate metamodel, checking relationship validity, reasoning about derivation rules (including Appendix B style routing), and visualizing **step-by-step pathfinding** between concepts you select.
+**ArchiTrek** is a browser-based **ArchiMate study engine**: an interactive workspace for exploring the ArchiMate metamodel, checking relationship validity, reasoning about derivation rules, and visualizing **step-by-step pathfinding** between concepts you select. **Relationship validity is aligned with ArchiMate 3.2**, from the normative grid in `data/relationships-3.2.xml` (compiled into `data/matrix.js` via `node scripts/build-matrix-3.2.js`).
 
 The UI is optimized for **desktop** screen space (a mobile gate explains why and offers a reminder link).
 
@@ -16,7 +16,7 @@ The UI is optimized for **desktop** screen space (a mobile gate explains why and
 
 ## Tech stack
 
-- **Plain static site** — no bundler, no build step. Scripts are loaded in order from `index.html`.
+- **Plain static site** — no bundler. Scripts load in order from `index.html`. Regenerate `data/matrix.js` after editing `data/relationships-3.2.xml` with `node scripts/build-matrix-3.2.js`.
 - **Vanilla JavaScript**, HTML, and CSS (`ui/styles.css`).
 - Deploy anywhere that can serve static files (object storage + CDN, Apache with `.htaccess`, nginx, GitHub Pages in a subpath, etc.).
 
@@ -27,7 +27,9 @@ The UI is optimized for **desktop** screen space (a mobile gate explains why and
 | `index.html` | Application shell, script includes, base-URL handling for subdirectory deploys |
 | `ui/` | Main app (`app.js`), styles, renderer modules, components, export controller |
 | `logic/` | Graph model, pathfinder, layout engine, lightweight store, path export helpers |
-| `data/` | Metamodel: elements, relationships, matrix, viewpoints, derivation logic, scenarios, renderer visuals |
+| `data/` | Metamodel: elements, relationships, **3.2** `relationships-3.2.xml` → generated `matrix.js`, viewpoints, derivation logic, scenarios, renderer visuals |
+| `scripts/` | Maintenance utilities (e.g. `build-matrix-3.2.js` to compile the relationship XML into `data/matrix.js`) |
+| `tools/archimate-relationship-extractor/` | Optional Node tool: extract **direct vs derived** links from `.archimate` / JSON / ontology TTL (`npm install` in that folder, then `node src/cli.mjs --help`) |
 | `config/` | Analytics, feedback, renderer tuning |
 | `assets/` | Favicon, vendor libraries |
 | `.htaccess` | Example Apache rules (adjust for your host) |

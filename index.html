@@ -181,7 +181,7 @@
 </header>
 <div id="top-drawer-backdrop" class="top-drawer-backdrop" aria-hidden="true" hidden></div>
 <!-- ── App Layout ─────────────────────────────────────────────────────────── -->
-<!-- Help modal (app guide + scenarios / route labels) -->
+<!-- Help modal: About the app → Scenarios & route labels → Technical notes -->
 <div id="help-modal" class="help-modal" aria-hidden="true">
   <div class="help-modal-backdrop" aria-hidden="true" onclick="hideHelp()"></div>
   <div class="help-modal-card" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" tabindex="-1">
@@ -193,10 +193,10 @@
     <div class="help-modal-tabs" role="tablist" aria-label="Help topics">
       <button type="button" class="help-modal-tab help-modal-tab--active" role="tab" id="help-tab-app"
         aria-selected="true" aria-controls="help-pane-app" tabindex="0">About the app</button>
-      <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
-        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
         aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
+      <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
+        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
     </div>
 
     <div id="help-pane-app" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-app">
@@ -211,13 +211,13 @@
           Application / Technology layers.
         </p>
         <p class="help-note">
-          Which relationship symbols are legal between which element types follows the normative <strong>ArchiMate 3.1</strong>
+          Which relationship symbols are legal between which element types follows the normative <strong>ArchiMate 3.2</strong>
           Appendix&nbsp;B matrix shipped in the app (offline snapshot of the same table family as the public spec).
           Caveats on encoding and limits are under
           <button type="button" class="help-note-tab-link" onclick="showHelp('tech')" aria-controls="help-pane-tech">
             Technical notes
           </button>
-          (same tab in the bar above).
+          (last tab in the bar above).
         </p>
       </div>
 
@@ -289,15 +289,20 @@
       </div>
     </div>
 
+    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
+      <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
+      <div id="help-labels-body" class="path-labels-body"></div>
+    </div>
+
     <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>
       <div class="help-card help-card--primary">
         <div class="help-kicker">Where Appendix B shows up</div>
         <div class="help-card-title">Type-to-type validity</div>
         <p class="help-text">
-          The engine treats the embedded <strong>ArchiMate 3.1</strong> relationship matrix as the contract for “may this
-          relationship kind exist on this directed element-type pair?” That contract is a frozen snapshot of the normative
-          Appendix&nbsp;B tables — letter codes per cell, packaged for offline lookup — not re-derived at runtime from prose
-          in the PDF.
+          The engine treats the embedded <strong>ArchiMate 3.2</strong> relationship matrix as the contract for “may this
+          relationship kind exist on this directed element-type pair?” That contract is built offline from the vendored
+          machine-readable table under <code>data/source/</code> (see <strong>Upstream</strong> below) and shipped as
+          <code>data/matrix.js</code> — letter codes per cell for offline lookup, not re-derived at runtime from prose in the PDF.
           <strong>Association</strong> follows the usual “always permitted” rule (section 5.2.4): it is not part of the per-cell
           letter set in the matrix file; the UI layers it in as a deliberately weak escape hatch with a tunable cost so
           specific links stay preferable when you want discipline.
@@ -331,9 +336,10 @@
         <div class="help-kicker">Upstream</div>
         <div class="help-card-title">How the matrix was captured</div>
         <p class="help-text">
-          The <code>MATRIX</code> records in <code>data/matrix.js</code> were transcribed from the normative Appendix&nbsp;B
-          relationship tables (see the file header for the exact chapter link). If you find a mismatch against the
-          published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
+          The <code>MATRIX</code> records in <code>data/matrix.js</code> are produced by <code>scripts/build-matrix.mjs</code>
+          from the vendored machine-readable table in <code>data/source/relationships.xml</code> (AlbertoDMendoza/archimate_ontology),
+          aligned to the same Appendix&nbsp;B family as the public spec (see <code>data/matrix.js</code> for the chapter link).
+          If you find a mismatch against the published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
         </p>
       </div>
 
@@ -365,17 +371,11 @@
             <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml</a>,
             and a Turtle ontology at
             <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl</a>.
-            That work is acknowledged as an important parallel reference in the ecosystem.
-            <strong>On this branch, the in-browser matrix used for path search is still the Appendix&nbsp;B transcription in
-            <code>data/matrix.js</code> — it is not mechanically imported from those repository files.</strong>
+            ArchiTrek’s pathfinding matrix is generated from the ontology project’s <code>relationships.xml</code> snapshot under
+            <code>data/source/</code> (see the generator and headers in <code>data/matrix.js</code>).
           </li>
         </ul>
       </div>
-    </div>
-
-    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
-      <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
-      <div id="help-labels-body" class="path-labels-body"></div>
     </div>
   </div>
 </div>
@@ -408,7 +408,7 @@
     </div>
     <div class="rigor-guide-modal-body">
       <h3 class="rigor-guide-section-title">Understanding Semantic Rigor Modes</h3>
-      <p class="rigor-guide-lead">This engine evaluates architectural paths based on strict ArchiMate 3.1 derivation rules (§5.7). The Rigor Mode determines how strictly the &quot;Grammar&quot; of the language is enforced.</p>
+      <p class="rigor-guide-lead">This engine evaluates architectural paths based on strict ArchiMate 3.2 derivation rules (§5.7). The Rigor Mode determines how strictly the &quot;Grammar&quot; of the language is enforced.</p>
       <div class="rigor-guide-table-wrap">
         <table class="rigor-guide-table">
           <thead>
@@ -598,7 +598,7 @@
       <h2 class="feedback-modal-title" id="welcome-modal-title">Welcome to ArchiTrek</h2>
     </div>
     <div class="welcome-modal-body">
-      <p class="feedback-modal-lead">ArchiTrek is an <strong>unofficial study tool</strong> for ArchiMate 3.1: choose two or more element types, and it searches the standard <strong>Appendix B</strong> relationship tables for valid routes. You get a diagram, hop-by-hop explanation, and links to dig into elements and the metamodel.</p>
+      <p class="feedback-modal-lead">ArchiTrek is an <strong>unofficial study tool</strong> for ArchiMate 3.2: choose two or more element types, and it searches the standard <strong>Appendix B</strong> relationship tables for valid routes. You get a diagram, hop-by-hop explanation, and links to dig into elements and the metamodel.</p>
       <div class="welcome-try-section" role="region" aria-labelledby="welcome-try-heading">
         <h3 class="welcome-try-heading" id="welcome-try-heading">Try an example</h3>
         <p class="welcome-try-hint">Jump straight to a path, or skip and pick your own elements below.</p>

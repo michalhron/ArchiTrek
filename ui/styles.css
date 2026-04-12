@@ -3421,7 +3421,7 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
-/* In “About the app”, jump to Technical notes without hunting the tab row */
+/* In “About the app”, jump to Technical notes (last help tab) without hunting the tab row */
 .help-note-tab-link {
   display: inline;
   margin: 0;

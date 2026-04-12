@@ -8,7 +8,9 @@
 
 /** Normative exchange namespace (archimate3_Model.xsd targetNamespace). */
 const ARCHIMATE_EXCHANGE_NS = "http://www.opengroup.org/xsd/archimate/3.0/";
-const ARCHIMATE_MODEL_XSD = "https://www.opengroup.org/xsd/archimate/3.1/archimate3_Model.xsd";
+/** Same entry as OpenGroupXMLExchange test models (Diagram.xsd pulls in Model + View). */
+const ARCHIMATE_SCHEMA_LOCATION =
+  ARCHIMATE_EXCHANGE_NS + " http://www.opengroup.org/xsd/archimate/3.0/archimate3_Diagram.xsd";
 
 export const DERIVED_NOTE =
   "Note: This relationship is derived. Consider modeling intermediate bridging elements.";
@@ -190,12 +192,12 @@ export function buildPathExportXml(exportData) {
       ARCHIMATE_EXCHANGE_NS +
       '" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
       'xsi:schemaLocation="' +
-      xmlEscapeAttr(`${ARCHIMATE_EXCHANGE_NS} ${ARCHIMATE_MODEL_XSD}`) +
+      xmlEscapeAttr(ARCHIMATE_SCHEMA_LOCATION) +
       '" identifier="' +
       xmlEscapeAttr(nextPrefixedId("model")) +
       '" version="3.1.0">'
   );
-  lines.push("  <name>ArchiTrek Path Export</name>");
+  lines.push('  <name xml:lang="en">ArchiTrek Path Export</name>');
   if (exportData.hasDerived) {
     lines.push(`  <!-- ${xmlEscapeText(DERIVED_NOTE)} -->`);
   }
@@ -204,7 +206,7 @@ export function buildPathExportXml(exportData) {
     lines.push(
       `    <element identifier="${xmlEscapeAttr(el.identifier)}" xsi:type="${xmlEscapeAttr(el.xsiType)}">`
     );
-    lines.push(`      <name>${xmlEscapeText(el.placeholderName)}</name>`);
+    lines.push(`      <name xml:lang="en">${xmlEscapeText(el.placeholderName)}</name>`);
     lines.push("    </element>");
   }
   lines.push("  </elements>");

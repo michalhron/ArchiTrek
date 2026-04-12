@@ -140,6 +140,24 @@ function parseHydrationFromUrl() {
       const idx = Number(pathRaw);
       if (Number.isFinite(idx) && idx >= 0) out.activePathIdx = Math.floor(idx);
     }
+    const hasFlowParam = sp.has("flow") || sp.has("pathFlow");
+    const flowRaw = String(sp.get("flow") || sp.get("pathFlow") || "").trim().toLowerCase();
+    if (hasFlowParam && (flowRaw === "horizontal" || flowRaw === "vertical" || flowRaw === "compact")) {
+      out.pathFlow = flowRaw;
+    }
+    const hasRoutingParam = sp.has("route") || sp.has("routing");
+    if (hasRoutingParam) {
+      out._hasRoutingParam = true;
+      const routingRaw = String(sp.get("route") || sp.get("routing") || "").trim();
+      const parsedRouting = parseSharedRoutingPayload(routingRaw);
+      if (parsedRouting) {
+        out.edgeConstraints = parsedRouting.edgeConstraints;
+        out.userChoices = parsedRouting.userChoices;
+      } else {
+        out.edgeConstraints = [];
+        out.userChoices = {};
+      }
+    }
     const waypointEntries = [...sp.entries()]
       .map(([k, v]) => {
         const m = /^wp(\d+)$/i.exec(k);
@@ -1413,12 +1431,103 @@ let urlSyncBootstrapped = false;
 /** Debounce store-driven URL updates so we do not call history.replaceState on every transient dispatch. */
 let urlSyncStoreDebounceTimer = null;
 const URL_SYNC_FROM_STORE_MS = 320;
+const SHARE_ROUTE_PARAM = "route";
+const SHARE_ROUTE_LEGACY_PARAM = "routing";
+const SHARE_FLOW_PARAM = "flow";
+const SHARE_FLOW_LEGACY_PARAM = "pathFlow";
+const SHARE_URL_SOFT_LIMIT = 1900;
+window.SHARE_URL_SOFT_LIMIT = SHARE_URL_SOFT_LIMIT;
+
+function encodeSharePayloadBase64Url(jsonText) {
+  if (typeof jsonText !== "string" || !jsonText) return "";
+  try {
+    const bytes = new TextEncoder().encode(jsonText);
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function decodeSharePayloadBase64Url(payload) {
+  const raw = String(payload || "").trim();
+  if (!raw) return "";
+  try {
+    const padded = raw + "=".repeat((4 - (raw.length % 4 || 4)) % 4);
+    const b64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch (_) {
+    return "";
+  }
+}
+
+function normalizeUserChoicesForShare(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  const entries = Object.entries(raw);
+  for (const [k, v] of entries) {
+    const idx = Number(k);
+    if (!Number.isFinite(idx) || idx < 1) continue;
+    const code = String(v || "").trim().toUpperCase();
+    if (!code) continue;
+    out[String(Math.floor(idx))] = code;
+  }
+  return out;
+}
+
+function buildSharedRoutingPayload(currentState) {
+  const edgeConstraints = Array.isArray(currentState?.edgeConstraints)
+    ? currentState.edgeConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+    : [];
+  const userChoices = normalizeUserChoicesForShare(currentState?.userChoices);
+  if (!edgeConstraints.length && !Object.keys(userChoices).length) return "";
+  const payload = {};
+  if (edgeConstraints.length) payload.ec = edgeConstraints;
+  if (Object.keys(userChoices).length) payload.uc = userChoices;
+  try {
+    const json = JSON.stringify(payload);
+    return encodeSharePayloadBase64Url(json);
+  } catch (_) {
+    return "";
+  }
+}
+
+function parseSharedRoutingPayload(rawPayload) {
+  const raw = String(rawPayload || "").trim();
+  if (!raw) return null;
+  let parsed = null;
+  try {
+    const candidate = raw.startsWith("{") ? raw : decodeSharePayloadBase64Url(raw);
+    if (!candidate) return null;
+    parsed = JSON.parse(candidate);
+  } catch (_) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const edgeConstraints = Array.isArray(parsed.ec)
+    ? parsed.ec.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+    : [];
+  const userChoices = normalizeUserChoicesForShare(parsed.uc);
+  return { edgeConstraints, userChoices };
+}
+
+function shareUrlHasSoftLengthWarning(url) {
+  return typeof url === "string" && url.length > SHARE_URL_SOFT_LIMIT;
+}
 
 function stateToSearchParams(currentState) {
   const params = new URLSearchParams(window.location.search || "");
   params.delete("viewpoint");
   params.delete("mode");
   params.delete("path");
+  params.delete(SHARE_FLOW_PARAM);
+  params.delete(SHARE_FLOW_LEGACY_PARAM);
+  params.delete(SHARE_ROUTE_PARAM);
+  params.delete(SHARE_ROUTE_LEGACY_PARAM);
   [...params.keys()].forEach((k) => {
     if (/^wp\d+$/i.test(k)) params.delete(k);
   });
@@ -1434,6 +1543,12 @@ function stateToSearchParams(currentState) {
     .map((w) => w?.element)
     .filter((el) => typeof el === "string" && el.trim() !== "");
   waypointElements.forEach((el, idx) => params.set(`wp${idx}`, el));
+  const flow = String(currentState?.pathFlow || "").trim().toLowerCase();
+  if (flow && flow !== "horizontal" && PATH_FLOW_ORDER.includes(flow)) {
+    params.set(SHARE_FLOW_PARAM, flow);
+  }
+  const routingPayload = buildSharedRoutingPayload(currentState);
+  if (routingPayload) params.set(SHARE_ROUTE_PARAM, routingPayload);
   return params;
 }
 
@@ -1442,7 +1557,15 @@ function getShareableDiagramUrl() {
   const params = stateToSearchParams(getPlainAppState());
   const u = new URL(window.location.href);
   u.search = params.toString();
-  return u.toString();
+  const nextUrl = u.toString();
+  window.__lastShareUrlWarning = shareUrlHasSoftLengthWarning(nextUrl);
+  if (window.__lastShareUrlWarning) {
+    console.warn("[share-link] URL may be too long for some apps", {
+      length: nextUrl.length,
+      softLimit: SHARE_URL_SOFT_LIMIT,
+    });
+  }
+  return nextUrl;
 }
 
 window.getShareableDiagramUrl = getShareableDiagramUrl;
@@ -1468,7 +1591,15 @@ function syncUrlFromState(opts = {}) {
 
 function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
   const route = parseHydrationFromUrl();
-  const hasRoute = !!(route.viewpoint || (Array.isArray(route.waypoints) && route.waypoints.length >= 2));
+  const hasRoute = !!(
+    route.viewpoint ||
+    route.selectionMode ||
+    Number.isFinite(route.activePathIdx) ||
+    route.pathFlow ||
+    (Array.isArray(route.waypoints) && route.waypoints.length >= 2) ||
+    (Array.isArray(route.edgeConstraints) && route.edgeConstraints.length > 0) ||
+    (route.userChoices && Object.keys(route.userChoices).length > 0)
+  );
   if (!hasRoute) return false;
   urlSyncSuspend = true;
   try {
@@ -1493,9 +1624,41 @@ function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
     if (Number.isFinite(route.activePathIdx)) {
       state.activePathIdx = Math.max(0, Math.floor(route.activePathIdx));
     }
+    if (route.pathFlow === "horizontal" || route.pathFlow === "vertical" || route.pathFlow === "compact") {
+      state.pathFlow = route.pathFlow;
+      try {
+        localStorage.setItem(getPathFlowStorageKey(), route.pathFlow);
+      } catch (_) {}
+      updatePathFlowButton();
+    }
+    if (route._hasRoutingParam) {
+      const nextConstraints = Array.isArray(route.edgeConstraints) ? route.edgeConstraints : [];
+      if (window.store && typeof window.store.dispatch === "function") {
+        window.store.dispatch("SET_EDGE_CONSTRAINTS", nextConstraints);
+      } else {
+        state.edgeConstraints = nextConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean);
+      }
+    }
+    const routeUserChoices =
+      route._hasRoutingParam && route.userChoices && typeof route.userChoices === "object"
+        ? normalizeUserChoicesForShare(route.userChoices)
+        : {};
+    const pendingExtras = {};
+    if (route._hasRoutingParam) {
+      state.userChoices = { ...routeUserChoices };
+      if (Object.keys(routeUserChoices).length) {
+        pendingExtras.userChoices = routeUserChoices;
+      }
+    }
+    if (Number.isFinite(route.activePathIdx)) {
+      pendingExtras.activePathIdx = Math.max(0, Math.floor(route.activePathIdx));
+    }
     if (triggerFindPath) {
       const picked = state.waypoints.map((wp) => wp.element).filter(Boolean);
       if (picked.length >= 2) {
+        if (Object.keys(pendingExtras).length) {
+          window.__pendingSessionExtras = pendingExtras;
+        }
         window.dispatch({ type: "FIND_PATH", reason: "url-popstate" });
       }
     }
@@ -1520,6 +1683,11 @@ function initUrlSync() {
           mode: s?.selectionMode ?? "set",
           path: s?.activePathIdx ?? 0,
           waypoints: (s?.waypoints || []).map((w) => w?.element || null),
+          flow: s?.pathFlow ?? "horizontal",
+          edgeConstraints: Array.isArray(s?.edgeConstraints)
+            ? s.edgeConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+            : [],
+          userChoices: normalizeUserChoicesForShare(s?.userChoices),
         }),
       () => {
         if (urlSyncStoreDebounceTimer) clearTimeout(urlSyncStoreDebounceTimer);
@@ -5473,7 +5641,7 @@ window.showElementDetails = function showElementDetails(elementName) {
   const subParts = [];
   if (meta) subParts.push(`${meta.layer} · ${meta.aspect}`);
   if (def?.section) subParts.push(def.section);
-  subEl.textContent = subParts.join(" · ") || "ArchiMate 3.1";
+  subEl.textContent = subParts.join(" · ") || "ArchiMate 3.2";
 
   fillElementInfoHero(name, meta);
 

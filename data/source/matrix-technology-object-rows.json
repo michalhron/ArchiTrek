@@ -1,0 +1,10 @@
+[
+  { "from": "Application Collaboration", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Component", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Event", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Function", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Interaction", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Interface", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Process", "to": "Technology Object", "direct": [], "derived": ["A"] },
+  { "from": "Application Service", "to": "Technology Object", "direct": [], "derived": ["A"] }
+]

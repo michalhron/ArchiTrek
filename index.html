@@ -175,7 +175,6 @@
     </div>
     <nav class="header-links" aria-label="Feedback">
       <button type="button" class="header-link" id="header-feedback-btn"
-        onclick="if(window.openFeedbackModal){window.openFeedbackModal();}else{var m=document.getElementById('feedback-modal');if(m){m.style.display='flex';m.setAttribute('aria-hidden','false');}}"
         title="Send feedback with a summary of your current settings">Feedback</button>
     </nav>
   </div>
@@ -384,22 +383,111 @@
         onclick="window.closeFeedbackModal&&window.closeFeedbackModal();">×</button>
     </div>
     <form id="feedback-form" class="feedback-form">
-      <p class="feedback-modal-lead">Describe what went wrong, what you expected, or an idea for improvement.</p>
-      <label class="feedback-label" for="feedback-message-field">Message</label>
-      <textarea id="feedback-message-field" class="feedback-textarea" rows="5"
-        placeholder="What happened?"></textarea>
-      <label class="feedback-label" for="feedback-reply-email">Your email <span class="feedback-optional">(optional, if you want a reply)</span></label>
-      <input type="email" id="feedback-reply-email" class="feedback-input" autocomplete="email" placeholder="you@example.com"/>
-      <details class="feedback-context-details">
-        <summary>Technical details <span class="feedback-summary-note">(included when you send)</span></summary>
-        <textarea id="feedback-context-field" class="feedback-context-readonly" readonly rows="14" aria-label="Technical details"></textarea>
-      </details>
-      <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
-      <div class="feedback-modal-actions">
-        <button type="button" class="feedback-btn feedback-btn-secondary" data-feedback-close="1">Cancel</button>
-        <button type="button" class="feedback-btn feedback-btn-secondary" id="feedback-copy-btn">Copy report</button>
-        <button type="submit" class="feedback-btn feedback-btn-primary" id="feedback-send-btn">Send feedback</button>
+      <div id="feedback-toolbar-type-wrap" class="feedback-toolbar-type-wrap" hidden>
+        <fieldset class="feedback-radio-group">
+          <legend class="feedback-label">What would you like to do?</legend>
+          <label class="feedback-radio-option" for="feedback-toolbar-kind-general">
+            <input type="radio" id="feedback-toolbar-kind-general" name="feedback-toolbar-kind" value="general" checked/>
+            <span class="feedback-radio-text">
+              <strong>General feedback</strong>
+              <small>Anything about the app — sent by email only. You can expand <em>Technical details</em> below to preview what will be attached.</small>
+            </span>
+          </label>
+          <label class="feedback-radio-option" for="feedback-toolbar-kind-logical">
+            <input type="radio" id="feedback-toolbar-kind-logical" name="feedback-toolbar-kind" value="logical"/>
+            <span class="feedback-radio-text">
+              <strong>Logical mismatch</strong>
+              <small>Post to the review sheet — pick which rendered path hop below.</small>
+            </span>
+          </label>
+          <label class="feedback-radio-option" for="feedback-toolbar-kind-metamodel">
+            <input type="radio" id="feedback-toolbar-kind-metamodel" name="feedback-toolbar-kind" value="metamodel"/>
+            <span class="feedback-radio-text">
+              <strong>Metamodel conflict</strong>
+              <small>Post to the review sheet — pick which rendered path hop below.</small>
+            </span>
+          </label>
+        </fieldset>
       </div>
+
+      <div id="feedback-general-section">
+        <p class="feedback-modal-lead">Describe what went wrong, what you expected, or an idea for improvement.</p>
+        <label class="feedback-label" for="feedback-message-field">Message</label>
+        <textarea id="feedback-message-field" class="feedback-textarea" rows="5"
+          placeholder="What happened?"></textarea>
+        <label class="feedback-label" for="feedback-reply-email">Your email <span class="feedback-optional">(optional, if you want a reply)</span></label>
+        <input type="email" id="feedback-reply-email" class="feedback-input" autocomplete="email" placeholder="you@example.com"/>
+        <details class="feedback-context-details">
+          <summary>Technical details <span class="feedback-summary-note">(included when you send)</span></summary>
+          <textarea id="feedback-context-field" class="feedback-context-readonly" readonly rows="14" aria-label="Technical details"></textarea>
+        </details>
+        <div class="feedback-modal-actions">
+          <button type="button" class="feedback-btn feedback-btn-secondary" data-feedback-close="1">Cancel</button>
+          <button type="button" class="feedback-btn feedback-btn-secondary" id="feedback-copy-btn">Copy report</button>
+          <button type="submit" class="feedback-btn feedback-btn-primary" id="feedback-send-btn">Send feedback</button>
+        </div>
+      </div>
+
+      <section id="feedback-relationship-section" hidden aria-label="Relationship feedback">
+        <p class="feedback-modal-lead">Report a relationship you think should be reviewed.</p>
+
+        <div id="feedback-toolbar-hop-wrap" class="feedback-toolbar-hop-wrap" hidden>
+          <label class="feedback-label" for="feedback-toolbar-hop-select">Which relationship hop?</label>
+          <select id="feedback-toolbar-hop-select" class="feedback-input" aria-describedby="feedback-toolbar-hop-empty"></select>
+          <p id="feedback-toolbar-hop-empty" class="feedback-status" hidden>No path is loaded. Run <strong>Find Path</strong> first, or switch to General feedback.</p>
+        </div>
+
+        <p id="feedback-relationship-summary" class="feedback-relationship-summary"></p>
+
+        <fieldset id="feedback-rel-category-fieldset" class="feedback-radio-group">
+          <legend class="feedback-label">Category</legend>
+          <label class="feedback-radio-option" for="feedback-rel-category-logical">
+            <input type="radio" id="feedback-rel-category-logical" name="feedback-rel-category" value="Logical Mismatch"/>
+            <span class="feedback-radio-text">
+              <strong>Logical Mismatch</strong>
+              <small>This relationship feels weird or logically incorrect in the real world.</small>
+            </span>
+          </label>
+          <label class="feedback-radio-option" for="feedback-rel-category-metamodel">
+            <input type="radio" id="feedback-rel-category-metamodel" name="feedback-rel-category" value="Metamodel Conflict"/>
+            <span class="feedback-radio-text">
+              <strong>Metamodel Conflict</strong>
+              <small>This should be allowed, but the tool or metamodel is blocking it.</small>
+            </span>
+          </label>
+          <label class="feedback-radio-option" id="feedback-rel-general-wrap" for="feedback-rel-category-general" hidden>
+            <input type="radio" id="feedback-rel-category-general" name="feedback-rel-category" value="General feedback"/>
+            <span class="feedback-radio-text">
+              <strong>General feedback</strong>
+              <small>Anything else about the app — sent by email only (not posted to the public review sheet).</small>
+            </span>
+          </label>
+        </fieldset>
+        <p id="feedback-relationship-category-warning" class="feedback-status feedback-status--error" hidden>Please select a category.</p>
+
+        <div id="feedback-relationship-reply-wrap" class="feedback-relationship-reply-wrap" hidden>
+          <label class="feedback-label" for="feedback-relationship-reply-email">Your email <span class="feedback-optional">(optional, if you want a reply)</span></label>
+          <input type="email" id="feedback-relationship-reply-email" class="feedback-input" autocomplete="email" placeholder="you@example.com"/>
+        </div>
+
+        <label class="feedback-label" for="feedback-relationship-comments">Justification</label>
+        <textarea id="feedback-relationship-comments" class="feedback-textarea" rows="4" placeholder="Briefly explain why you think this is incorrect..."></textarea>
+
+        <div class="feedback-modal-actions">
+          <button type="button" class="feedback-btn feedback-btn-secondary" data-feedback-close="1">Cancel</button>
+          <button type="button" class="feedback-btn feedback-btn-primary" id="feedback-relationship-submit">Submit</button>
+        </div>
+      </section>
+
+      <section id="feedback-success-section" hidden aria-label="Feedback success">
+        <p class="feedback-modal-lead" id="feedback-success-lead">Thank you! Your feedback has been recorded.</p>
+        <a id="feedback-success-bounty-link" href="#" target="_blank" rel="noopener noreferrer" class="feedback-bounty-board-link">View the Live Bounty Board</a>
+        <div class="feedback-modal-actions">
+          <button type="button" class="feedback-btn feedback-btn-primary" id="feedback-success-close-btn" data-feedback-close="1">Close</button>
+        </div>
+      </section>
+
+      <p id="feedback-status" class="feedback-status" role="status" aria-live="polite"></p>
     </form>
   </div>
 </div>

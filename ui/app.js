@@ -3595,8 +3595,101 @@ function isResultsSideLayoutActive() {
 
 const FEEDBACK_MAIL_TO = "hron@hey.com";
 const FEEDBACK_MAIL_SUBJECT = "ArchiTrek Feedback";
+const FEEDBACK_RELATIONSHIP_SUBMIT_LABEL = "Submit";
+const FEEDBACK_RELATIONSHIP_SUBMIT_BUSY_LABEL = "Submitting...";
+const FEEDBACK_CATEGORY_GENERAL = "General feedback";
+const FEEDBACK_SUCCESS_REL_WEBHOOK =
+  "Thank you! Your feedback has been recorded.";
+const FEEDBACK_SUCCESS_GENERAL_EMAIL =
+  "Thank you! Your message was sent by email (not posted to the public review sheet).";
+const relationshipFeedbackState = {
+  edge: null,
+  /** When true, the relationship feedback form shows the extra “General feedback” category (header entry). */
+  allowGeneralCategory: false,
+  /** Header “Feedback” flow: type picker + general form or hop-based relationship report. */
+  isToolbarEntry: false,
+  /** @type {"general"|"logical"|"metamodel"} */
+  toolbarFeedbackKind: "general",
+};
 
-function buildFeedbackContextBody() {
+/** One line per MATRIX row for email / diagnostics (Appendix B encoding in this app). */
+function buildAppendixBMatrixDumpLines() {
+  if (typeof MATRIX === "undefined" || !Array.isArray(MATRIX)) {
+    return ["(MATRIX not loaded in this page — appendix dump skipped.)"];
+  }
+  const lines = [
+    `Total directed pairs (non–O-only rows): ${MATRIX.length}`,
+    "Format: from → to · direct · derived (letters as stored; Association O is not listed per cell).",
+    "",
+  ];
+  for (const row of MATRIX) {
+    const from = row?.from != null ? String(row.from) : "?";
+    const to = row?.to != null ? String(row.to) : "?";
+    const direct = Array.isArray(row.direct) && row.direct.length ? row.direct.join("") : "—";
+    const derived = Array.isArray(row.derived) && row.derived.length ? row.derived.join("") : "—";
+    lines.push(`${from} → ${to} · ${direct} · ${derived}`);
+  }
+  return lines;
+}
+
+/**
+ * Flattened hop list for the active path alternative (same shape as diagram / explanation).
+ * @param {object} fb plain state snapshot (e.g. state.__raw__ || state)
+ */
+function buildChosenPathFeedbackLines(fb) {
+  const lines = [];
+  const segs = fb?.segments;
+  const pathIdx = Number.isFinite(fb?.activePathIdx) ? Math.max(0, Math.floor(fb.activePathIdx)) : 0;
+  if (!Array.isArray(segs) || segs.length === 0) {
+    lines.push("(No path in memory — Find Path may not have been run, or results were cleared.)");
+    return lines;
+  }
+  let flat;
+  try {
+    flat = flattenSegments(segs, pathIdx);
+  } catch (err) {
+    lines.push(`(Could not read path: ${String(err?.message || err)})`);
+    return lines;
+  }
+  if (!flat.length) {
+    lines.push("(Empty path for this alternative.)");
+    return lines;
+  }
+  const edgeConstraints = Array.isArray(fb.edgeConstraints) ? fb.edgeConstraints : [];
+  const uc = fb.userChoices && typeof fb.userChoices === "object" ? fb.userChoices : {};
+  lines.push(`Active alternative (0-based path index): ${pathIdx}`);
+  lines.push(`Nodes in flattened route: ${flat.length}`);
+  lines.push("");
+  lines.push(`0. ${flat[0]?.element || "?"}`);
+  for (let i = 1; i < flat.length; i++) {
+    const st = flat[i];
+    const prevEl = flat[i - 1]?.element ?? "?";
+    const toEl = st?.element ?? "?";
+    let codes = Array.isArray(st?.codes) && st.codes.length ? st.codes.join("") : "";
+    if (typeof window.appendixMatrixCodesForPathHopIndex === "function") {
+      try {
+        const eff = window.appendixMatrixCodesForPathHopIndex(flat, i, edgeConstraints);
+        if (Array.isArray(eff) && eff.length) codes = eff.join("");
+      } catch (_) {}
+    }
+    const assoc = st?.isAssociation ? " · hop=Association(§5.2.4)" : "";
+    const sem = st?.semanticHop;
+    const semBits = [];
+    if (sem?.primaryCode) semBits.push(`code=${sem.primaryCode}`);
+    if (sem?.rule) semBits.push(`rule=${sem.rule}`);
+    if (sem?.violation && sem.violation !== "None") semBits.push(`violation=${sem.violation}`);
+    const semStr = semBits.length ? ` · ${semBits.join(", ")}` : "";
+    const pick = uc[String(i)] != null && String(uc[String(i)]).trim() !== "" ? ` · userResolved=${uc[String(i)]}` : "";
+    lines.push(`${i}. ${prevEl} → ${toEl} · matrixCodes=${codes || "?"}${assoc}${semStr}${pick}`);
+  }
+  return lines;
+}
+
+/**
+ * @param {{ includeFullAppendixB?: boolean }} [opts]
+ */
+function buildFeedbackContextBody(opts = {}) {
+  const includeFullAppendixB = !!opts.includeFullAppendixB;
   /** Plain store snapshot — avoids nested Proxy traps during deep reads (feedback context only). */
   const fb = typeof state.__raw__ === "object" && state.__raw__ != null ? state.__raw__ : state;
   const lines = [];
@@ -3853,13 +3946,31 @@ function buildFeedbackContextBody() {
     lines.push(`- ${mm.fromEl} → ${mm.toEl}${mm.appendixRel ? ` (${mm.appendixRel})` : ""}`);
   }
 
+  if (includeFullAppendixB) {
+    lines.push("");
+    lines.push("--- Active route (current results) — flattened hops ---");
+    for (const pl of buildChosenPathFeedbackLines(fb)) {
+      lines.push(pl);
+    }
+    lines.push("");
+    lines.push("--- Appendix B matrix — full in-app encoding (all rows) ---");
+    for (const ml of buildAppendixBMatrixDumpLines()) {
+      lines.push(ml);
+    }
+  }
+
   lines.push("");
   lines.push("--- End context ---");
 
   return lines.join("\n");
 }
 
-function buildFullFeedbackReport(message, replyEmail) {
+/**
+ * @param {string} message
+ * @param {string} replyEmail
+ * @param {{ includeFullAppendixB?: boolean }} [contextOpts]
+ */
+function buildFullFeedbackReport(message, replyEmail, contextOpts) {
   const parts = [];
   parts.push(`To: ${FEEDBACK_MAIL_TO}`);
   parts.push(`Subject: ${FEEDBACK_MAIL_SUBJECT}`);
@@ -3871,47 +3982,290 @@ function buildFullFeedbackReport(message, replyEmail) {
     parts.push(`Reply contact: ${replyEmail.trim()}`);
   }
   parts.push("");
-  parts.push(buildFeedbackContextBody());
+  parts.push(buildFeedbackContextBody(contextOpts || {}));
   return parts.join("\n");
 }
 
-window.openFeedbackModal = function openFeedbackModal() {
+function setRelationshipCategoryWarningVisible(visible) {
+  const warning = document.getElementById("feedback-relationship-category-warning");
+  if (!warning) return;
+  warning.hidden = !visible;
+}
+
+function clearFeedbackStatus() {
+  const status = document.getElementById("feedback-status");
+  if (!status) return;
+  status.textContent = "";
+  status.classList.remove("feedback-status--error");
+}
+
+function setRelationshipSubmitBusy(busy) {
+  const submitBtn = document.getElementById("feedback-relationship-submit");
+  if (!submitBtn) return;
+  submitBtn.disabled = !!busy;
+  if (busy) {
+    submitBtn.setAttribute("aria-busy", "true");
+    submitBtn.textContent = FEEDBACK_RELATIONSHIP_SUBMIT_BUSY_LABEL;
+  } else {
+    submitBtn.removeAttribute("aria-busy");
+    submitBtn.textContent = FEEDBACK_RELATIONSHIP_SUBMIT_LABEL;
+  }
+}
+
+function setFeedbackModalMode(mode) {
+  const generalSection = document.getElementById("feedback-general-section");
+  const relationshipSection = document.getElementById("feedback-relationship-section");
+  const successSection = document.getElementById("feedback-success-section");
+  const toolbarTypeWrap = document.getElementById("feedback-toolbar-type-wrap");
+  if (generalSection) generalSection.hidden = mode !== "general";
+  if (relationshipSection) relationshipSection.hidden = mode !== "relationship";
+  if (successSection) successSection.hidden = mode !== "success";
+  if (toolbarTypeWrap) {
+    if (relationshipFeedbackState.isToolbarEntry) {
+      toolbarTypeWrap.hidden = mode === "success";
+    } else {
+      toolbarTypeWrap.hidden = true;
+    }
+  }
+}
+
+function syncFeedbackGeneralCategoryOptionVisible() {
+  const row = document.getElementById("feedback-rel-general-wrap");
+  if (!row) return;
+  row.hidden =
+    !relationshipFeedbackState.allowGeneralCategory || relationshipFeedbackState.isToolbarEntry;
+}
+
+function syncRelationshipFeedbackReplyEmailRow() {
+  const wrap = document.getElementById("feedback-relationship-reply-wrap");
+  const generalRadio = document.getElementById("feedback-rel-category-general");
+  if (!wrap) return;
+  const show =
+    !relationshipFeedbackState.isToolbarEntry &&
+    relationshipFeedbackState.allowGeneralCategory &&
+    generalRadio instanceof HTMLInputElement &&
+    generalRadio.checked;
+  wrap.hidden = !show;
+}
+
+function onToolbarFeedbackKindChange() {
+  if (!relationshipFeedbackState.isToolbarEntry) return;
+  const c = document.querySelector('input[name="feedback-toolbar-kind"]:checked');
+  const v = c instanceof HTMLInputElement ? c.value : "general";
+  relationshipFeedbackState.toolbarFeedbackKind =
+    v === "metamodel" ? "metamodel" : v === "logical" ? "logical" : "general";
+  syncToolbarFeedbackPanels();
+}
+
+function updateToolbarRelationshipSummaryText() {
+  const edge = relationshipFeedbackState.edge;
+  const el = document.getElementById("feedback-relationship-summary");
+  if (!el) return;
+  if (!edge) {
+    if (
+      relationshipFeedbackState.isToolbarEntry &&
+      relationshipFeedbackState.toolbarFeedbackKind !== "general"
+    ) {
+      el.textContent =
+        "Pick a hop from the list, or run Find Path to load a route. You can switch back to General feedback anytime.";
+    } else {
+      el.textContent = "";
+    }
+    return;
+  }
+  el.textContent =
+    `Reporting: ${edge.source?.name || edge.source?.type || "Unknown"} \u2192 ` +
+    `${edge.type || edge.code || "Relationship"} \u2192 ` +
+    `${edge.target?.name || edge.target?.type || "Unknown"}`;
+}
+
+function populateFeedbackToolbarHopSelect() {
+  const sel = document.getElementById("feedback-toolbar-hop-select");
+  const emptyHint = document.getElementById("feedback-toolbar-hop-empty");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const flat = getFlatStepsForFeedback();
+  for (let i = 1; i < flat.length; i++) {
+    const meta = getHopMetaForFeedback(i);
+    if (!meta) continue;
+    const code = meta.currentCode || "?";
+    const relName =
+      typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS?.[code]?.name ? RELATIONSHIPS[code].name : code;
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `Hop ${i}: ${meta.from} → ${relName} (${code}) → ${meta.to}`;
+    sel.appendChild(opt);
+  }
+  if (!sel.options.length) {
+    sel.disabled = true;
+    if (emptyHint) emptyHint.hidden = false;
+    relationshipFeedbackState.edge = null;
+  } else {
+    sel.disabled = false;
+    if (emptyHint) emptyHint.hidden = true;
+    sel.selectedIndex = 0;
+    const firstIx = Number(sel.options[0].value);
+    relationshipFeedbackState.edge = buildEdgeFromFeedbackHopMeta(getHopMetaForFeedback(firstIx));
+  }
+  updateToolbarRelationshipSummaryText();
+}
+
+function syncToolbarFeedbackPanels() {
+  const tb = relationshipFeedbackState.isToolbarEntry;
+  const kind = relationshipFeedbackState.toolbarFeedbackKind;
+  const hopWrap = document.getElementById("feedback-toolbar-hop-wrap");
+  const catFs = document.getElementById("feedback-rel-category-fieldset");
+
+  if (!tb) {
+    if (hopWrap) hopWrap.hidden = true;
+    if (catFs) catFs.hidden = false;
+    return;
+  }
+
+  if (kind === "general") {
+    setFeedbackModalMode("general");
+    if (hopWrap) hopWrap.hidden = true;
+    if (catFs) catFs.hidden = true;
+    relationshipFeedbackState.edge = null;
+    const ctx = document.getElementById("feedback-context-field");
+    if (ctx) {
+      try {
+        ctx.value = buildFeedbackContextBody();
+      } catch (e) {
+        ctx.value = `Feedback context unavailable: ${String(e?.message || e || "unknown error")}`;
+      }
+    }
+    updateToolbarRelationshipSummaryText();
+    return;
+  }
+
+  setFeedbackModalMode("relationship");
+  if (catFs) catFs.hidden = true;
+  if (hopWrap) hopWrap.hidden = false;
+  populateFeedbackToolbarHopSelect();
+}
+
+function resetRelationshipFeedbackFields() {
+  relationshipFeedbackState.edge = null;
+  relationshipFeedbackState.allowGeneralCategory = false;
+  relationshipFeedbackState.isToolbarEntry = false;
+  relationshipFeedbackState.toolbarFeedbackKind = "general";
+  const summary = document.getElementById("feedback-relationship-summary");
+  const comments = document.getElementById("feedback-relationship-comments");
+  const bountyLink = document.getElementById("feedback-success-bounty-link");
+  const replyEmail = document.getElementById("feedback-relationship-reply-email");
+  const toolbarWrap = document.getElementById("feedback-toolbar-type-wrap");
+  const hopWrap = document.getElementById("feedback-toolbar-hop-wrap");
+  const catFs = document.getElementById("feedback-rel-category-fieldset");
+  document.querySelectorAll('input[name="feedback-rel-category"]').forEach((input) => {
+    if (input instanceof HTMLInputElement) input.checked = false;
+  });
+  document.querySelectorAll('input[name="feedback-toolbar-kind"]').forEach((input) => {
+    if (input instanceof HTMLInputElement) input.checked = input.value === "general";
+  });
+  if (toolbarWrap) toolbarWrap.hidden = true;
+  if (hopWrap) hopWrap.hidden = true;
+  if (catFs) catFs.hidden = false;
+  if (summary) summary.textContent = "";
+  if (comments) comments.value = "";
+  if (replyEmail) replyEmail.value = "";
+  syncFeedbackGeneralCategoryOptionVisible();
+  syncRelationshipFeedbackReplyEmailRow();
+  if (bountyLink) {
+    bountyLink.href = "#";
+    bountyLink.hidden = false;
+  }
+  setRelationshipCategoryWarningVisible(false);
+  setRelationshipSubmitBusy(false);
+}
+
+window.openFeedbackModal = function openFeedbackModal(opts = {}) {
   const modal = document.getElementById("feedback-modal");
-  const ctx = document.getElementById("feedback-context-field");
+  const title = document.getElementById("feedback-modal-title");
   const msg = document.getElementById("feedback-message-field");
   const reply = document.getElementById("feedback-reply-email");
-  const status = document.getElementById("feedback-status");
+  const relationshipSummary = document.getElementById("feedback-relationship-summary");
+  const relationshipFirstRadio = document.getElementById("feedback-rel-category-logical");
+  const generalCategoryRadio = document.getElementById("feedback-rel-category-general");
   if (!modal) return;
   try {
     closePathChromeOverlay?.();
     closePathOptionsOverlay?.();
     teardownPickerOverlay?.();
   } catch (_) {}
-  if (ctx) {
-    try {
-      ctx.value = buildFeedbackContextBody();
-    } catch (e) {
-      ctx.value = `Feedback context unavailable: ${String(e?.message || e || "unknown error")}`;
+
+  clearFeedbackStatus();
+  resetRelationshipFeedbackFields();
+
+  const relationshipEdge = opts && typeof opts === "object" ? opts.relationshipEdge : null;
+  if (relationshipEdge && typeof relationshipEdge === "object") {
+    relationshipFeedbackState.isToolbarEntry = false;
+    relationshipFeedbackState.edge = relationshipEdge;
+    relationshipFeedbackState.allowGeneralCategory = false;
+    syncFeedbackGeneralCategoryOptionVisible();
+    syncRelationshipFeedbackReplyEmailRow();
+    setFeedbackModalMode("relationship");
+    if (title) title.textContent = "Report relationship";
+    if (relationshipSummary) {
+      relationshipSummary.textContent =
+        `Reporting: ${relationshipEdge.source?.name || relationshipEdge.source?.type || "Unknown"} \u2192 ` +
+        `${relationshipEdge.type || relationshipEdge.code || "Relationship"} \u2192 ` +
+        `${relationshipEdge.target?.name || relationshipEdge.target?.type || "Unknown"}`;
     }
+    const comments = document.getElementById("feedback-relationship-comments");
+    if (comments) comments.value = "";
+  } else {
+    relationshipFeedbackState.edge = null;
+    relationshipFeedbackState.allowGeneralCategory = false;
+    relationshipFeedbackState.isToolbarEntry = true;
+    relationshipFeedbackState.toolbarFeedbackKind = "general";
+    syncFeedbackGeneralCategoryOptionVisible();
+    syncRelationshipFeedbackReplyEmailRow();
+    document.querySelectorAll('input[name="feedback-toolbar-kind"]').forEach((inp) => {
+      if (inp instanceof HTMLInputElement) inp.checked = inp.value === "general";
+    });
+    syncToolbarFeedbackPanels();
+    if (title) title.textContent = "Feedback";
+    const comments = document.getElementById("feedback-relationship-comments");
+    if (comments) comments.value = "";
+    const replyRel = document.getElementById("feedback-relationship-reply-email");
+    if (replyRel) replyRel.value = "";
+    if (msg) msg.value = "";
+    if (reply) reply.value = "";
   }
-  if (msg) msg.value = "";
-  if (reply) reply.value = "";
-  if (status) {
-    status.textContent = "";
-    status.classList.remove("feedback-status--error");
-  }
+
+  const bountyLink = document.getElementById("feedback-success-bounty-link");
+  if (bountyLink) bountyLink.hidden = false;
+  const successLead = document.getElementById("feedback-success-lead");
+  if (successLead) successLead.textContent = FEEDBACK_SUCCESS_REL_WEBHOOK;
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
   requestAnimationFrame(() => {
-    msg?.focus();
+    if (relationshipEdge) relationshipFirstRadio?.focus();
+    else if (relationshipFeedbackState.isToolbarEntry) {
+      if (relationshipFeedbackState.toolbarFeedbackKind === "general") {
+        msg?.focus();
+      } else {
+        document.getElementById("feedback-toolbar-hop-select")?.focus();
+      }
+    } else if (relationshipFeedbackState.allowGeneralCategory) {
+      generalCategoryRadio?.focus();
+    } else {
+      msg?.focus();
+    }
   });
 };
 
 window.closeFeedbackModal = function closeFeedbackModal() {
   const modal = document.getElementById("feedback-modal");
+  const title = document.getElementById("feedback-modal-title");
   if (!modal) return;
   modal.style.display = "none";
   modal.setAttribute("aria-hidden", "true");
+  if (title) title.textContent = "Feedback";
+  setFeedbackModalMode("general");
+  resetRelationshipFeedbackFields();
+  clearFeedbackStatus();
 };
 
 function syncRigorGuideModalHighlight() {
@@ -3976,6 +4330,223 @@ function setFeedbackStatus(text, isError) {
   status.classList.toggle("feedback-status--error", !!isError);
 }
 
+function getRelationshipFeedbackWebhookUrl() {
+  try {
+    const raw = typeof window !== "undefined" ? window.FEEDBACK_WEBHOOK_URL : "";
+    return typeof raw === "string" ? raw.trim() : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function getRelationshipFeedbackSpreadsheetUrl() {
+  try {
+    const raw = typeof window !== "undefined" ? window.FEEDBACK_SPREADSHEET_URL : "";
+    return typeof raw === "string" ? raw.trim() : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+window.submitRelationshipFeedback = async function submitRelationshipFeedback() {
+  const edge = relationshipFeedbackState.edge;
+  const commentsEl = document.getElementById("feedback-relationship-comments");
+  const successLink = document.getElementById("feedback-success-bounty-link");
+  const successCloseBtn = document.getElementById("feedback-success-close-btn");
+  const successLead = document.getElementById("feedback-success-lead");
+  const comments = commentsEl?.value?.trim() ?? "";
+
+  clearFeedbackStatus();
+
+  let selectedCategory = "";
+  if (relationshipFeedbackState.isToolbarEntry) {
+    if (relationshipFeedbackState.toolbarFeedbackKind === "general") {
+      setFeedbackStatus(
+        "For general notes, keep the first option selected above and use “Send feedback”.",
+        true
+      );
+      return;
+    }
+    selectedCategory =
+      relationshipFeedbackState.toolbarFeedbackKind === "logical"
+        ? "Logical Mismatch"
+        : "Metamodel Conflict";
+  } else {
+    const checkedCategory = document.querySelector('input[name="feedback-rel-category"]:checked');
+    selectedCategory =
+      checkedCategory instanceof HTMLInputElement ? checkedCategory.value.trim() : "";
+    if (!selectedCategory) {
+      setRelationshipCategoryWarningVisible(true);
+      return;
+    }
+  }
+  setRelationshipCategoryWarningVisible(false);
+
+  if (selectedCategory !== FEEDBACK_CATEGORY_GENERAL && !edge) {
+    setFeedbackStatus(
+      relationshipFeedbackState.isToolbarEntry
+        ? "Choose a hop from the list, or run Find Path to load a route first."
+        : "To post a specific relationship to the review sheet, right-click that hop on the diagram and choose Report feedback. Or pick “General feedback” to email the team instead.",
+      true
+    );
+    return;
+  }
+
+  if (!comments) {
+    setFeedbackStatus("Please provide a short justification before submitting.", true);
+    commentsEl?.focus();
+    return;
+  }
+
+  if (selectedCategory === FEEDBACK_CATEGORY_GENERAL) {
+    if (!getFeedbackWeb3AccessKey()) {
+      setFeedbackStatus(
+        "Email sending is not set up yet. Add your Web3Forms access key in config/feedback-config.js.",
+        true
+      );
+      trackEvent("feedback_submit", { ok: false, reason: "missing_web3forms_key" });
+      return;
+    }
+    const replyRel =
+      document.getElementById("feedback-relationship-reply-email")?.value?.trim() ?? "";
+    const bodyText = buildFullFeedbackReport(
+      `${FEEDBACK_CATEGORY_GENERAL}\n\n${comments}`,
+      replyRel,
+      { includeFullAppendixB: true }
+    ).replace(`Subject: ${FEEDBACK_MAIL_SUBJECT}`, `Subject: ${FEEDBACK_MAIL_SUBJECT} (General)`);
+
+    setRelationshipSubmitBusy(true);
+    try {
+      await submitArchitrekFeedbackEmail(bodyText, replyRel);
+      setRelationshipSubmitBusy(false);
+      if (successLead) successLead.textContent = FEEDBACK_SUCCESS_GENERAL_EMAIL;
+      if (successLink) {
+        successLink.href = "#";
+        successLink.hidden = true;
+      }
+      setFeedbackModalMode("success");
+      const title = document.getElementById("feedback-modal-title");
+      if (title) title.textContent = "Thank you";
+      requestAnimationFrame(() => {
+        successCloseBtn?.focus();
+      });
+      trackEvent("feedback_submit", { ok: true, via: "relationship_modal_general" });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRelationshipSubmitBusy(false);
+      setFeedbackStatus(message || "Failed to send feedback. Please try again.", true);
+      trackEvent("feedback_submit", {
+        ok: false,
+        via: "relationship_modal_general",
+        reason: err?.code === "missing_web3forms_key" ? "missing_web3forms_key" : "network_or_api_error",
+      });
+    }
+    return;
+  }
+
+  const url = getRelationshipFeedbackWebhookUrl();
+  if (!url) {
+    setFeedbackStatus("Webhook URL is not configured yet.", true);
+    return;
+  }
+
+  /** Same diagnostics as email “auto-filled context”, plus flattened hops (no full Appendix B matrix — size). */
+  const MAX_REL_FEEDBACK_TECHNICAL_CONTEXT_CHARS = 49000;
+  const fbSnapshot =
+    typeof state.__raw__ === "object" && state.__raw__ != null ? state.__raw__ : state;
+  let technicalContext = "";
+  try {
+    const base = buildFeedbackContextBody({ includeFullAppendixB: false });
+    const pathBlock =
+      "\n\n--- Active route (current results) — flattened hops ---\n" +
+      buildChosenPathFeedbackLines(fbSnapshot).join("\n");
+    technicalContext = base + pathBlock;
+    if (technicalContext.length > MAX_REL_FEEDBACK_TECHNICAL_CONTEXT_CHARS) {
+      technicalContext =
+        technicalContext.slice(0, MAX_REL_FEEDBACK_TECHNICAL_CONTEXT_CHARS - 48) +
+        "\n...[technicalContext truncated for storage limit]";
+    }
+  } catch (err) {
+    try {
+      const href =
+        typeof window !== "undefined" && window.location ? window.location.href : "";
+      const so = typeof getSearchPathOptions === "function" ? getSearchPathOptions() : {};
+      const wps = Array.isArray(fbSnapshot?.waypoints) ? fbSnapshot.waypoints : [];
+      const wpNames = wps.map((w) => w?.element || "—").join(" → ");
+      technicalContext = [
+        `Page: ${href}`,
+        `Rigor preset: ${fbSnapshot?.searchRigorPreset ?? "?"}`,
+        `Relationships: ${fbSnapshot?.includeDerived ? "+ Inferred" : "Explicit only"}`,
+        `Association fallback: ${fbSnapshot?.allowAssociationFallback ? "on" : "off"}`,
+        `Waypoint mode: ${fbSnapshot?.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`,
+        `Waypoints: ${wpNames || "—"}`,
+        `UCS weights (if available): direct=${so?.pathWeightDirect ?? "?"} inferred=${so?.pathWeightDerived ?? "?"} maxDepth=${so?.maxDepth ?? "?"}`,
+        `(technicalContext build failed: ${String(err?.message || err)})`,
+      ].join("\n");
+    } catch (_) {
+      technicalContext = "(technicalContext unavailable)";
+    }
+  }
+
+  const payload = {
+    timestamp: new Date().toISOString(),
+    category: selectedCategory,
+    sourceElementType: edge.source?.type || "",
+    sourceElementName: edge.source?.name || "",
+    targetElementType: edge.target?.type || "",
+    targetElementName: edge.target?.name || "",
+    relationshipType: edge.type || "",
+    relationshipCode: edge.code || "",
+    hopIndex: edge.hopIndex,
+    userComments: comments,
+    technicalContext,
+  };
+
+  setRelationshipSubmitBusy(true);
+  try {
+    const payloadText = JSON.stringify(payload);
+    const response = await fetch(url, {
+      method: "POST",
+      // Use a CORS-simple request to avoid browser preflight against Apps Script web-app endpoints.
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: payloadText,
+    });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          "Webhook denied access (403). Ask an admin to redeploy the Apps Script Web App with access set to 'Anyone'."
+        );
+      }
+      throw new Error(`Failed to send feedback (${response.status}).`);
+    }
+
+    setRelationshipSubmitBusy(false);
+    if (successLead) successLead.textContent = FEEDBACK_SUCCESS_REL_WEBHOOK;
+    const spreadsheetUrl = getRelationshipFeedbackSpreadsheetUrl();
+    if (successLink) {
+      if (spreadsheetUrl) {
+        successLink.href = spreadsheetUrl;
+        successLink.hidden = false;
+      } else {
+        successLink.href = "#";
+        successLink.hidden = true;
+      }
+    }
+    setFeedbackModalMode("success");
+    const title = document.getElementById("feedback-modal-title");
+    if (title) title.textContent = "Thank you";
+    requestAnimationFrame(() => {
+      successCloseBtn?.focus();
+    });
+    trackEvent("relationship_feedback_submit", { ok: true, category: selectedCategory });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    setRelationshipSubmitBusy(false);
+    setFeedbackStatus(message || "Failed to send feedback. Please try again.", true);
+    trackEvent("relationship_feedback_submit", { ok: false, category: selectedCategory });
+  }
+};
+
 window.copyFeedbackReport = async function copyFeedbackReport() {
   const msg = document.getElementById("feedback-message-field")?.value?.trim() ?? "";
   const reply = document.getElementById("feedback-reply-email")?.value?.trim() ?? "";
@@ -4005,14 +4576,56 @@ window.copyFeedbackReport = async function copyFeedbackReport() {
   );
 };
 
-window.submitFeedbackReport = async function submitFeedbackReport() {
+/**
+ * Sends the given plain-text body through Web3Forms (same inbox as the legacy general feedback form).
+ * @param {string} bodyText
+ * @param {string} replyEmail optional address for Web3Forms “email” field
+ */
+async function submitArchitrekFeedbackEmail(bodyText, replyEmail) {
   const key = getFeedbackWeb3AccessKey();
+  if (!key) {
+    const err = new Error(
+      "Email sending is not set up yet. Add your Web3Forms access key in config/feedback-config.js, or use Copy report."
+    );
+    err.code = "missing_web3forms_key";
+    throw err;
+  }
+  const emailField = replyEmail?.trim() ? replyEmail.trim() : "anonymous@example.com";
+  const res = await fetch("https://api.web3forms.com/submit", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      access_key: key,
+      subject: FEEDBACK_MAIL_SUBJECT,
+      from_name: "ArchiTrek feedback",
+      email: emailField,
+      replyto: FEEDBACK_MAIL_TO,
+      message: bodyText,
+      botcheck: false,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const ok =
+    res.ok && (data.success === true || (data.body && data.body.success === true));
+  if (!ok) {
+    const errText =
+      (typeof data.message === "string" && data.message) ||
+      (data.body && typeof data.body.message === "string" && data.body.message) ||
+      `Could not send (${res.status}). Try Copy report.`;
+    throw new Error(errText);
+  }
+}
+
+window.submitFeedbackReport = async function submitFeedbackReport() {
   const msg = document.getElementById("feedback-message-field")?.value?.trim() ?? "";
   const reply = document.getElementById("feedback-reply-email")?.value?.trim() ?? "";
   const sendBtn = document.getElementById("feedback-send-btn");
   const copyBtn = document.getElementById("feedback-copy-btn");
 
-  if (!key) {
+  if (!getFeedbackWeb3AccessKey()) {
     setFeedbackStatus(
       "Email sending is not set up yet. Add your Web3Forms access key in config/feedback-config.js, or use Copy report.",
       true
@@ -4021,8 +4634,11 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
     return;
   }
 
-  const bodyText = buildFullFeedbackReport(msg, reply);
-  const emailField = reply || "anonymous@example.com";
+  const bodyText = buildFullFeedbackReport(
+    msg,
+    reply,
+    relationshipFeedbackState.isToolbarEntry ? { includeFullAppendixB: true } : {}
+  );
   const prevLabel = sendBtn?.textContent;
 
   if (sendBtn) {
@@ -4033,33 +4649,7 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
   if (copyBtn) copyBtn.disabled = true;
 
   try {
-    const res = await fetch("https://api.web3forms.com/submit", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        access_key: key,
-        subject: FEEDBACK_MAIL_SUBJECT,
-        from_name: "ArchiTrek feedback",
-        email: emailField,
-        replyto: FEEDBACK_MAIL_TO,
-        message: bodyText,
-        botcheck: false,
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    const ok =
-      res.ok &&
-      (data.success === true || (data.body && data.body.success === true));
-    if (!ok) {
-      const errText =
-        (typeof data.message === "string" && data.message) ||
-        (data.body && typeof data.body.message === "string" && data.body.message) ||
-        `Could not send (${res.status}). Try Copy report.`;
-      throw new Error(errText);
-    }
+    await submitArchitrekFeedbackEmail(bodyText, reply);
     setFeedbackStatus(
       "Sent. Thank you — if you left a reply address, you may get a follow-up there.",
       false
@@ -4068,7 +4658,10 @@ window.submitFeedbackReport = async function submitFeedbackReport() {
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     setFeedbackStatus(m, true);
-    trackEvent("feedback_submit", { ok: false, reason: "network_or_api_error" });
+    trackEvent("feedback_submit", {
+      ok: false,
+      reason: e?.code === "missing_web3forms_key" ? "missing_web3forms_key" : "network_or_api_error",
+    });
   } finally {
     if (sendBtn) {
       sendBtn.disabled = false;
@@ -10049,6 +10642,69 @@ function flattenSegments(segments, pathIdx) {
   return steps;
 }
 
+function getFlatStepsForFeedback() {
+  if (!Array.isArray(state.segments) || state.segments.length === 0) return [];
+  return flattenSegments(state.segments, state.activePathIdx ?? 0);
+}
+
+/** Same hop metadata as the diagram edge context menu (for header feedback hop picker). */
+function getHopMetaForFeedback(hopIndex) {
+  const ix = Number(hopIndex);
+  if (!Number.isInteger(ix) || ix < 1) return null;
+  const flat = getFlatStepsForFeedback();
+  if (!flat.length || ix >= flat.length) return null;
+  const prev = flat[ix - 1];
+  const curr = flat[ix];
+  const from = String(prev?.element || "").trim();
+  const to = String(curr?.element || "").trim();
+  if (!from || !to || from === to) return null;
+  const codes =
+    typeof window.appendixMatrixCodesForPathHopIndex === "function"
+      ? window.appendixMatrixCodesForPathHopIndex(flat, ix, state.edgeConstraints)
+      : Array.isArray(curr?.codes)
+        ? curr.codes.map((c) => String(c || "").toUpperCase()).filter(Boolean)
+        : [];
+  const pickerCodes =
+    codes.length > 1 && typeof window.relationshipPickerCodesFromMatrixCodes === "function"
+      ? window.relationshipPickerCodesFromMatrixCodes(codes)
+      : codes;
+  const currentCode =
+    typeof window.resolvedRelationshipCodeForHop === "function"
+      ? String(
+          window.resolvedRelationshipCodeForHop(curr, ix, from, state.edgeConstraints) ||
+            pickerCodes[0] ||
+            ""
+        ).toUpperCase()
+      : String(pickerCodes[0] || "").toUpperCase();
+  return {
+    hopIndex: ix,
+    from,
+    to,
+    step: curr,
+    relationshipCodes: pickerCodes.map((c) => String(c || "").toUpperCase()).filter(Boolean),
+    currentCode,
+  };
+}
+
+function buildEdgeFromFeedbackHopMeta(meta) {
+  if (!meta) return null;
+  const source = String(meta.from || "").trim();
+  const target = String(meta.to || "").trim();
+  if (!source || !target) return null;
+  const relCode = String(meta.currentCode || "").trim().toUpperCase();
+  const relName =
+    typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS?.[relCode]?.name
+      ? RELATIONSHIPS[relCode].name
+      : relCode || "Unknown relationship";
+  return {
+    source: { type: source, name: source },
+    target: { type: target, name: target },
+    type: relName,
+    code: relCode,
+    hopIndex: Number(meta.hopIndex),
+  };
+}
+
 /** Drop {@code userChoices[h]} when it is not valid for the active path’s hop {@code h} (stale tab switch / session). */
 function sanitizeUserChoicesForActivePath() {
   if (!state.segments?.length) return;
@@ -10199,6 +10855,29 @@ document.getElementById("header-feedback-btn")?.addEventListener("click", (e) =>
 });
 document.getElementById("feedback-copy-btn")?.addEventListener("click", () => {
   copyFeedbackReport();
+});
+document.getElementById("feedback-relationship-submit")?.addEventListener("click", () => {
+  submitRelationshipFeedback();
+});
+document.querySelectorAll('input[name="feedback-rel-category"]').forEach((input) => {
+  input.addEventListener("change", () => {
+    setRelationshipCategoryWarningVisible(false);
+    syncRelationshipFeedbackReplyEmailRow();
+  });
+});
+document.querySelectorAll('input[name="feedback-toolbar-kind"]').forEach((input) => {
+  input.addEventListener("change", onToolbarFeedbackKindChange);
+});
+document.getElementById("feedback-toolbar-hop-select")?.addEventListener("change", () => {
+  if (!relationshipFeedbackState.isToolbarEntry) return;
+  const sel = document.getElementById("feedback-toolbar-hop-select");
+  const ix = Number(sel?.value);
+  if (!Number.isFinite(ix) || ix < 1) {
+    relationshipFeedbackState.edge = null;
+  } else {
+    relationshipFeedbackState.edge = buildEdgeFromFeedbackHopMeta(getHopMetaForFeedback(ix));
+  }
+  updateToolbarRelationshipSummaryText();
 });
 
 document.getElementById("mobile-reminder-btn")?.addEventListener("click", () => {
@@ -10470,6 +11149,12 @@ function initEdgeContextMenu() {
   flipPanel.hidden = true;
   flipWrap.append(flipBtn, flipPanel);
 
+  const reportBtn = document.createElement("button");
+  reportBtn.type = "button";
+  reportBtn.className = "edge-context-menu-item";
+  reportBtn.setAttribute("role", "menuitem");
+  reportBtn.innerHTML = `<span class="edge-context-menu-label">⚑ Report feedback</span>`;
+
   const pinBtn = document.createElement("button");
   pinBtn.type = "button";
   pinBtn.className = "edge-context-menu-item";
@@ -10482,7 +11167,7 @@ function initEdgeContextMenu() {
   unpinBtn.setAttribute("role", "menuitem");
   unpinBtn.textContent = "Unpin forced direction";
 
-  menu.append(relWrap, flipWrap, pinBtn, unpinBtn);
+  menu.append(relWrap, flipWrap, reportBtn, pinBtn, unpinBtn);
   host.appendChild(menu);
 
   const stateRef = {
@@ -10493,6 +11178,7 @@ function initEdgeContextMenu() {
     relationshipCodes: [],
     reverseRelationshipCodes: [],
     currentCode: "",
+    step: null,
   };
 
   function setItemDisabled(btn, disabled) {
@@ -10534,9 +11220,32 @@ function initEdgeContextMenu() {
     stateRef.relationshipCodes = [];
     stateRef.reverseRelationshipCodes = [];
     stateRef.currentCode = "";
+    stateRef.step = null;
     menu.hidden = true;
     menu.setAttribute("aria-hidden", "true");
     closeSubmenu();
+  }
+
+  function buildRelationshipFeedbackEdgeContext(meta) {
+    if (!meta) return null;
+    const source = String(meta.from || "").trim();
+    const target = String(meta.to || "").trim();
+    if (!source || !target) return null;
+    const relCode = String(meta.currentCode || "").trim().toUpperCase();
+    const relName = relCode ? (RELATIONSHIPS?.[relCode]?.name || relCode) : "Unknown relationship";
+    return {
+      source: {
+        type: source,
+        name: source,
+      },
+      target: {
+        type: target,
+        name: target,
+      },
+      type: relName,
+      code: relCode,
+      hopIndex: Number(meta.hopIndex),
+    };
   }
 
   function getFlatSteps() {
@@ -10691,6 +11400,7 @@ function initEdgeContextMenu() {
     stateRef.relationshipCodes = meta.relationshipCodes;
     stateRef.reverseRelationshipCodes = reverseRelationshipCodesForPair(meta.from, meta.to);
     stateRef.currentCode = meta.currentCode;
+    stateRef.step = meta.step || null;
 
     const relCodes = stateRef.relationshipCodes;
     const relEnabled = relCodes.length > 1;
@@ -10804,6 +11514,23 @@ function initEdgeContextMenu() {
     } else {
       flipPanel.hidden = true;
       flipBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  reportBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const edge = buildRelationshipFeedbackEdgeContext({
+      hopIndex: stateRef.hopIndex,
+      from: stateRef.from,
+      to: stateRef.to,
+      currentCode: stateRef.currentCode,
+      step: stateRef.step,
+    });
+    closeMenu();
+    if (!edge) return;
+    if (typeof window.openFeedbackModal === "function") {
+      window.openFeedbackModal({ relationshipEdge: edge });
     }
   });
 

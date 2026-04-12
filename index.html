@@ -336,6 +336,41 @@
           published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
         </p>
       </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Acknowledgements</div>
+        <div class="help-card-title">External sources</div>
+        <p class="help-text">
+          ArchiTrek builds on published ArchiMate material and related community work. The normative language is owned by
+          The Open Group; community projects publish parallel machine-readable encodings that many tools use for validation
+          or RDF pipelines.
+        </p>
+        <ul class="help-list">
+          <li>
+            <strong>The Open Group — ArchiMate specification:</strong> relationship validity and derivation rules follow the
+            public specification and its normative relationship tables (Appendix&nbsp;B in the same document family as
+            <a href="https://pubs.opengroup.org/architecture/archimate32-doc/" target="_blank" rel="noopener noreferrer">https://pubs.opengroup.org/architecture/archimate32-doc/</a>).
+            Direct link to the normative relationships chapter:
+            <a href="https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html" target="_blank" rel="noopener noreferrer">https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html</a>.
+          </li>
+          <li>
+            <strong>The Open Group — ArchiMate Model Exchange Format:</strong> optional path export to XML uses the published
+            exchange namespace and XSD (see
+            <a href="https://www.opengroup.org/xsd/archimate/3.0/" target="_blank" rel="noopener noreferrer">https://www.opengroup.org/xsd/archimate/3.0/</a>).
+          </li>
+          <li>
+            <strong>Community ontology and validation dataset:</strong>
+            <a href="https://github.com/AlbertoDMendoza/archimate_ontology" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology</a>
+            (AlbertoDMendoza/archimate_ontology) ships a machine-readable type-level relationship encoding, including
+            <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml</a>,
+            and a Turtle ontology at
+            <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl</a>.
+            That work is acknowledged as an important parallel reference in the ecosystem.
+            <strong>On this branch, the in-browser matrix used for path search is still the Appendix&nbsp;B transcription in
+            <code>data/matrix.js</code> — it is not mechanically imported from those repository files.</strong>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>

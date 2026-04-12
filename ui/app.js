@@ -233,8 +233,15 @@ function getPlainAppState() {
 function trackEvent(name, data) {
   try {
     const fn = window.umami && typeof window.umami.track === "function" ? window.umami.track : null;
-    if (!fn) return;
-    fn(name, data && typeof data === "object" ? data : undefined);
+    if (fn) fn(name, data && typeof data === "object" ? data : undefined);
+  } catch (_) {
+    // Analytics must never break the app.
+  }
+  try {
+    const gtag = typeof window.gtag === "function" ? window.gtag : null;
+    if (!gtag) return;
+    const payload = data && typeof data === "object" ? data : {};
+    gtag("event", String(name || "").trim() || "custom", payload);
   } catch (_) {
     // Analytics must never break the app.
   }

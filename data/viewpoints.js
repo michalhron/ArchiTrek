@@ -34,16 +34,18 @@ const VIEWPOINTS = {
   },
 
   applicationStructure: {
-    name: "Application Structure", category: "Composition", section: "§C.1.2",
+    name: "Application Structure", 
+    category: "Composition", 
+    section: "§C.1.2",
     scope: "Single layer / Multiple aspects",
     stakeholders: "Application and Solution Architects",
     concerns: "Application structure, consistency and completeness, reduction of complexity",
     purpose: "Designing",
     elements: [
-      "Application Component", "Application Interface",
-      "Application Collaboration", "Data Object",
+        "Application Component", "Application Collaboration", "Application Interface",
+        "Application Function", "Application Interaction", "Data Object",
     ],
-  },
+},
 
   informationStructure: {
     name: "Information Structure", category: "Composition", section: "§C.1.3",
@@ -71,20 +73,24 @@ const VIEWPOINTS = {
   },
 
   technology: {
-    name: "Technology", category: "Composition", section: "§C.1.4, §C.1.6",
-    scope: "Multiple layers / Multiple aspects",
+    name: "Technology", 
+    category: "Composition", 
+    section: "§C.1.4, §C.1.6",
+    scope: "Single layer / Multiple aspects (Technology) + Multiple layers / Multiple aspects (Physical)",
+    // OR simply acknowledge the combined nature:
+    scope: "Multiple layers / Multiple aspects",  // This is acceptable for combined viewpoint
     stakeholders: "Infrastructure Architects, Operational Managers",
     concerns: "Stability, security, dependencies, and costs of technology infrastructure (including equipment and facility elements from the ArchiMate specification)",
     purpose: "Designing",
     elements: [
-      "Location", "Node", "Device", "System Software",
-      "Technology Collaboration", "Technology Interface",
-      "Communication Network", "Path",
-      "Technology Function", "Technology Process", "Technology Interaction",
-      "Technology Service", "Technology Event", "Artifact",
-      "Equipment", "Facility", "Distribution Network", "Material",
+        "Location", "Node", "Device", "System Software",
+        "Technology Collaboration", "Technology Interface",
+        "Communication Network", "Path",
+        "Technology Function", "Technology Process", "Technology Interaction",
+        "Technology Service", "Technology Event", "Artifact",
+        "Equipment", "Facility", "Distribution Network", "Material",
     ],
-  },
+},
 
   layered: {
     name: "Layered", category: "Composition", section: "§C.1.5",

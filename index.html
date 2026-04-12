@@ -193,10 +193,10 @@
     <div class="help-modal-tabs" role="tablist" aria-label="Help topics">
       <button type="button" class="help-modal-tab help-modal-tab--active" role="tab" id="help-tab-app"
         aria-selected="true" aria-controls="help-pane-app" tabindex="0">About the app</button>
-      <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
-        aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
         aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
+      <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
+        aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
     </div>
 
     <div id="help-pane-app" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-app">
@@ -210,10 +210,14 @@
           ArchiTrek helps you find a valid <strong>relationship chain</strong> (a “route”) — often crossing Business /
           Application / Technology layers.
         </p>
-        <p class="help-note" role="note">
+        <p class="help-note">
           Which relationship symbols are legal between which element types follows the normative <strong>ArchiMate 3.1</strong>
           Appendix&nbsp;B matrix shipped in the app (offline snapshot of the same table family as the public spec).
-          Caveats on encoding and limits are under <strong>Technical notes</strong>.
+          Caveats on encoding and limits are under
+          <button type="button" class="help-note-tab-link" onclick="showHelp('tech')" aria-controls="help-pane-tech">
+            Technical notes
+          </button>
+          (same tab in the bar above).
         </p>
       </div>
 
@@ -285,11 +289,6 @@
       </div>
     </div>
 
-    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
-      <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
-      <div id="help-labels-body" class="path-labels-body"></div>
-    </div>
-
     <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>
       <div class="help-card help-card--primary">
         <div class="help-kicker">Where Appendix B shows up</div>
@@ -337,6 +336,11 @@
           published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
         </p>
       </div>
+    </div>
+
+    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
+      <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
+      <div id="help-labels-body" class="path-labels-body"></div>
     </div>
   </div>
 </div>

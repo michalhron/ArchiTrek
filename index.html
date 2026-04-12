@@ -195,6 +195,8 @@
         aria-selected="true" aria-controls="help-pane-app" tabindex="0">About the app</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
         aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
+      <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
+        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
     </div>
 
     <div id="help-pane-app" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-app">
@@ -207,6 +209,11 @@
           obvious what <em>chain</em> of allowed relationships will get you from one element type to another.
           ArchiTrek helps you find a valid <strong>relationship chain</strong> (a “route”) — often crossing Business /
           Application / Technology layers.
+        </p>
+        <p class="help-note" role="note">
+          Which relationship symbols are legal between which element types follows the normative <strong>ArchiMate 3.1</strong>
+          Appendix&nbsp;B matrix shipped in the app (offline snapshot of the same table family as the public spec).
+          Caveats on encoding and limits are under <strong>Technical notes</strong>.
         </p>
       </div>
 
@@ -281,6 +288,55 @@
     <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
       <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
       <div id="help-labels-body" class="path-labels-body"></div>
+    </div>
+
+    <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>
+      <div class="help-card help-card--primary">
+        <div class="help-kicker">Where Appendix B shows up</div>
+        <div class="help-card-title">Type-to-type validity</div>
+        <p class="help-text">
+          The engine treats the embedded <strong>ArchiMate 3.1</strong> relationship matrix as the contract for “may this
+          relationship kind exist on this directed element-type pair?” That contract is a frozen snapshot of the normative
+          Appendix&nbsp;B tables — letter codes per cell, packaged for offline lookup — not re-derived at runtime from prose
+          in the PDF.
+          <strong>Association</strong> follows the usual “always permitted” rule (section 5.2.4): it is not part of the per-cell
+          letter set in the matrix file; the UI layers it in as a deliberately weak escape hatch with a tunable cost so
+          specific links stay preferable when you want discipline.
+        </p>
+        <p class="help-text">
+          Canonical language definition and diagrams remain with The Open Group; what you get here is an implementation
+          snapshot aligned to that family.
+          <a href="https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html" target="_blank" rel="noopener noreferrer">https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html</a>
+        </p>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Honest limits</div>
+        <div class="help-card-title">Explicit vs + Inferred reflects the encoding</div>
+        <p class="help-text">
+          The frozen matrix answers <em>which</em> relationship symbols appear for a type pair; it does <strong>not</strong>
+          by itself certify each symbol as “printed verbatim as uppercase in the table” versus “only appears after
+          section&nbsp;5.7–style chaining.” The product still exposes two buckets so <strong>Explicit</strong> vs <strong>+ Inferred</strong>
+          affects graph shape and scoring: direct vs derived letters are split according to the data in
+          <code>data/matrix.js</code> plus a few graph rules (for example canonical direction choices on mutual pairs).
+          <strong>Bottom line: legality tracks the embedded Appendix&nbsp;B snapshot; the primary/secondary split is
+          engineering judgement where the spec tables leave ambiguity.</strong>
+        </p>
+        <p class="help-note" role="note">
+          Viewpoint palettes, aspect/metamodel blurbs, and narrative copy are curated for teaching — they should stay
+          consistent with the matrix, but they are not emitted from the same mechanical source as the pairwise rules.
+        </p>
+      </div>
+
+      <div class="help-card">
+        <div class="help-kicker">Upstream</div>
+        <div class="help-card-title">How the matrix was captured</div>
+        <p class="help-text">
+          The <code>MATRIX</code> records in <code>data/matrix.js</code> were transcribed from the normative Appendix&nbsp;B
+          relationship tables (see the file header for the exact chapter link). If you find a mismatch against the
+          published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
+        </p>
+      </div>
     </div>
   </div>
 </div>
@@ -496,6 +552,9 @@
 <div id="welcome-modal" class="feedback-modal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="welcome-modal-title">
   <div class="feedback-modal-backdrop" aria-hidden="true"></div>
   <div class="feedback-modal-card welcome-modal-card">
+    <div class="welcome-modal-brand" aria-hidden="true">
+      <img class="welcome-modal-logo-img" src="./assets/logo-on-light.svg" alt="" width="200" height="40" decoding="async"/>
+    </div>
     <div class="feedback-modal-head">
       <h2 class="feedback-modal-title" id="welcome-modal-title">Welcome to ArchiTrek</h2>
     </div>

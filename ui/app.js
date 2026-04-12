@@ -4952,27 +4952,38 @@ function initResultsSplit() {
 // ── Initialise ──────────────────────────────────────────────────────────────
 
 const HELP_PANE_APP = "app";
+const HELP_PANE_TECH = "tech";
 const HELP_PANE_LABELS = "labels";
 
 function setHelpModalPane(pane) {
-  const isLabels = pane === HELP_PANE_LABELS;
+  const showApp = pane === HELP_PANE_APP;
+  const showTech = pane === HELP_PANE_TECH;
+  const showLabels = pane === HELP_PANE_LABELS;
   const appPane = document.getElementById("help-pane-app");
+  const techPane = document.getElementById("help-pane-tech");
   const labelsPane = document.getElementById("help-pane-labels");
   const tabApp = document.getElementById("help-tab-app");
+  const tabTech = document.getElementById("help-tab-tech");
   const tabLabels = document.getElementById("help-tab-labels");
-  if (appPane) appPane.hidden = isLabels;
-  if (labelsPane) labelsPane.hidden = !isLabels;
+  if (appPane) appPane.hidden = !showApp;
+  if (techPane) techPane.hidden = !showTech;
+  if (labelsPane) labelsPane.hidden = !showLabels;
   if (tabApp) {
-    tabApp.setAttribute("aria-selected", String(!isLabels));
-    tabApp.classList.toggle("help-modal-tab--active", !isLabels);
-    tabApp.tabIndex = !isLabels ? 0 : -1;
+    tabApp.setAttribute("aria-selected", String(showApp));
+    tabApp.classList.toggle("help-modal-tab--active", showApp);
+    tabApp.tabIndex = showApp ? 0 : -1;
+  }
+  if (tabTech) {
+    tabTech.setAttribute("aria-selected", String(showTech));
+    tabTech.classList.toggle("help-modal-tab--active", showTech);
+    tabTech.tabIndex = showTech ? 0 : -1;
   }
   if (tabLabels) {
-    tabLabels.setAttribute("aria-selected", String(isLabels));
-    tabLabels.classList.toggle("help-modal-tab--active", isLabels);
-    tabLabels.tabIndex = isLabels ? 0 : -1;
+    tabLabels.setAttribute("aria-selected", String(showLabels));
+    tabLabels.classList.toggle("help-modal-tab--active", showLabels);
+    tabLabels.tabIndex = showLabels ? 0 : -1;
   }
-  if (isLabels) {
+  if (showLabels) {
     const body = document.getElementById("help-labels-body");
     if (body && typeof buildPathLabelsModalHtml === "function") {
       body.innerHTML = buildPathLabelsModalHtml();
@@ -4988,12 +4999,18 @@ function initHelpModalTabs() {
     const t = e.target.closest(".help-modal-tab");
     if (!t || !list.contains(t)) return;
     if (t.id === "help-tab-app") setHelpModalPane(HELP_PANE_APP);
+    else if (t.id === "help-tab-tech") setHelpModalPane(HELP_PANE_TECH);
     else if (t.id === "help-tab-labels") setHelpModalPane(HELP_PANE_LABELS);
   });
 }
 
 window.showHelp = function (pane) {
-  const p = pane === HELP_PANE_LABELS ? HELP_PANE_LABELS : HELP_PANE_APP;
+  const p =
+    pane === HELP_PANE_LABELS
+      ? HELP_PANE_LABELS
+      : pane === HELP_PANE_TECH
+        ? HELP_PANE_TECH
+        : HELP_PANE_APP;
   const m = document.getElementById("help-modal");
   if (!m) return;
   setHelpModalPane(p);
@@ -6604,8 +6621,8 @@ function removeWaypoint(index, { animate = true, suppressSearch = false, after =
  * renderWaypointChain() mid-mutation (empty/partial #waypoint-chain).
  */
 function cloneWaypointListForReorder() {
-  const wps = state.waypoints;
-  if (!Array.isArray(wps)) return [];
+  const plain = getPlainAppState().waypoints;
+  const wps = Array.isArray(plain) ? plain : [];
   return wps.map((wp) =>
     wp != null && typeof wp === "object" ? { ...wp } : { layer: null, element: null }
   );
@@ -6621,8 +6638,12 @@ function commitWaypointListReplace(nextList) {
 }
 
 function moveWaypoint(index, dir) {
+  const len = (() => {
+    const plain = getPlainAppState().waypoints;
+    return Array.isArray(plain) ? plain.length : 0;
+  })();
   const j = index + dir;
-  if (j < 0 || j >= state.waypoints.length) return;
+  if (j < 0 || j >= len) return;
   const elsBefore = cloneWaypointListForReorder().map((w) => w?.element);
   const next = cloneWaypointListForReorder();
   const tmp = next[index];
@@ -6644,7 +6665,8 @@ function moveWaypointTo(fromIndex, toIndex) {
   const ti = Math.trunc(Number(toIndex));
   if (fi === ti) return;
   if (!Number.isInteger(fi) || !Number.isInteger(ti)) return;
-  const len = state.waypoints.length;
+  const plainWps = getPlainAppState().waypoints;
+  const len = Array.isArray(plainWps) ? plainWps.length : 0;
   if (fi < 0 || fi >= len || ti < 0 || ti >= len) return;
   const next = cloneWaypointListForReorder();
   const [item] = next.splice(fi, 1);
@@ -6662,7 +6684,8 @@ window.swapStartEnd = function() {
   // #region agent log
   fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:swapStartEnd',message:'swapStartEnd called',data:{hypothesisId:'H_swap',len:state.waypoints.length,mode:state.selectionMode,els:(getPlainAppState().waypoints||[]).map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
   // #endregion
-  if (state.waypoints.length !== 2) return;
+  const wps = getPlainAppState().waypoints;
+  if (!Array.isArray(wps) || wps.length !== 2) return;
   moveWaypoint(0, +1);
 };
 
@@ -7041,9 +7064,10 @@ function renderWaypointChain() {
     overlayRoot.classList.add('open');
     overlayRoot.setAttribute('aria-hidden', 'false');
     overlayRoot.innerHTML = '';
-    overlayRoot.onclick = (e) => {
-      if (e.target === overlayRoot) closeOverlay();
-    };
+    const backdrop = document.createElement("div");
+    backdrop.className = "picker-backdrop";
+    backdrop.addEventListener("click", () => closeOverlay());
+    overlayRoot.appendChild(backdrop);
     pickerOverlayEscHandler = onEsc;
     document.addEventListener('keydown', onEsc);
 
@@ -7474,9 +7498,12 @@ function renderWaypointChain() {
     if (restoreTrigger instanceof Element) {
       const restoreLayer = wpsList?.[restoreIndex]?.layer ?? restoreContext.layerId ?? null;
       requestAnimationFrame(() => {
-        if (waypointOpenPicker) {
-          waypointOpenPicker(restoreTrigger, restoreIndex, restoreLayer, { query: restoreContext.query || "" });
-        }
+        if (!waypointOpenPicker) return;
+        const rootAfter = document.getElementById("picker-overlay");
+        // If the user dismissed the picker before this frame, do not reopen (restoreContext is from render start).
+        if (!rootAfter?.classList.contains("open")) return;
+        if (!waypointPickerContext || waypointPickerContext.waypointIdx !== restoreIndex) return;
+        waypointOpenPicker(restoreTrigger, restoreIndex, restoreLayer, { query: restoreContext.query || "" });
       });
     } else {
       closeOverlay();
@@ -7921,7 +7948,11 @@ window.findPath = function(opts = {}) {
         // #region agent log
         fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:findPath-before-sync',message:'set mode before syncWaypointSlots',data:{hypothesisId:'H_sync',findReason,chainPreview:(chainForExplain||[]).slice(0,8)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
         // #endregion
-        syncWaypointSlotsToSolverChainIfPossible();
+        // Manual slot reorder (arrows / drag) must not be overwritten: sync maps slots to the
+        // solver’s ordered chain, which would immediately undo move-waypoint / move-waypoint-to.
+        const skipSlotSync =
+          findReason === "move-waypoint" || findReason === "move-waypoint-to";
+        if (!skipSlotSync) syncWaypointSlotsToSolverChainIfPossible();
       }
     } else {
       const waypointNames = wpsPlain.map((wp) => wp.element);

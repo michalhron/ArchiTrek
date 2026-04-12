@@ -247,6 +247,25 @@ function trackEvent(name, data) {
   }
 }
 
+/** GA4 SPA page views when the app updates the URL via history (see syncUrlFromState). */
+function trackGaVirtualPageView() {
+  try {
+    const gtag = typeof window.gtag === "function" ? window.gtag : null;
+    if (!gtag) return;
+    const mid = String(window.ANALYTICS?.ga4?.measurementId || "").trim();
+    if (!mid) return;
+    let page_path = `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`;
+    if (page_path.length > 2048) page_path = page_path.slice(0, 2048);
+    const page_title = typeof document !== "undefined" ? String(document.title || "") : "";
+    gtag("config", mid, {
+      page_path,
+      page_title,
+    });
+  } catch (_) {
+    // Analytics must never break the app.
+  }
+}
+
 /**
  * Schedule a single renderResults() on the next animation frame.
  * Prevents double-rendering cascades when multiple UI actions update state in one tick.
@@ -972,6 +991,10 @@ window.onDomainContextChange = function onDomainContextChange(nextValue = undefi
   }
   if (prev !== state.domainContext) {
     maybeShowThemeSplash(state.domainContext);
+    trackEvent("select_theme", {
+      domain_context: state.domainContext,
+      previous_domain_context: prev,
+    });
   }
 };
 
@@ -1193,7 +1216,7 @@ function updateMmConnectionStrip(_opts) {}
 window.openMetamodelFromStrip = function openMetamodelFromStrip() {
   const m = state.mmLast;
   if (!m?.fromEl || !m?.toEl) return;
-  openMetamodelModal();
+  openMetamodelModal("strip");
   doHighlight(m.fromKey, m.toKey, m.valid !== false);
   if (typeof annotateMetamodel === "function") {
     annotateMetamodel(m.fromKey, m.toKey, m.fromEl, m.toEl);
@@ -1594,6 +1617,7 @@ function syncUrlFromState(opts = {}) {
   if (push) window.history.pushState({ architrek: true }, "", nextUrl);
   else window.history.replaceState({ architrek: true }, "", nextUrl);
   urlSyncLast = nextUrl;
+  trackGaVirtualPageView();
 }
 
 function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
@@ -6612,6 +6636,10 @@ window.onViewpointChange = function() {
   }
 
   schedulePersistSession();
+  trackEvent("select_viewpoint", {
+    viewpoint_key: key || null,
+    viewpoint_strict: !!(key && VIEWPOINTS[key] && !VIEWPOINTS[key].allElements),
+  });
   syncUrlFromState({ push: true });
 };
 
@@ -6824,9 +6852,6 @@ function moveWaypoint(index, dir) {
   const tmp = next[index];
   next[index] = next[j];
   next[j] = tmp;
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:moveWaypoint',message:'moveWaypoint commit',data:{hypothesisId:'H_move',index,dir,mode:state.selectionMode,elsBefore,elsNext:next.map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   commitWaypointListReplace(next);
   renderWaypointChain();
   if (state.segments) {
@@ -6856,9 +6881,6 @@ function moveWaypointTo(fromIndex, toIndex) {
 }
 
 window.swapStartEnd = function() {
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:swapStartEnd',message:'swapStartEnd called',data:{hypothesisId:'H_swap',len:state.waypoints.length,mode:state.selectionMode,els:(getPlainAppState().waypoints||[]).map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   const wps = getPlainAppState().waypoints;
   if (!Array.isArray(wps) || wps.length !== 2) return;
   moveWaypoint(0, +1);
@@ -6996,9 +7018,6 @@ function ensureWaypointChainInteractionDelegation() {
       const idx = parseWaypointIndexFromNode(moveBtn);
       if (!Number.isFinite(idx)) return;
       const action = String(moveBtn.dataset.action || "");
-      // #region agent log
-      fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:waypoint-move-click',message:'waypoint-move click',data:{hypothesisId:'H_click',idx,action,delta:String(moveBtn.dataset.delta||''),mode:state.selectionMode},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
       if (action === "swap") {
         window.swapStartEnd();
         return;
@@ -7936,9 +7955,6 @@ function syncWaypointSlotsToSolverChainIfPossible() {
   const before = (state.waypoints || []).map((wp) => wp?.element || "");
   reorderWaypointsToMatchLastSolverChainIfPossible();
   const after = (state.waypoints || []).map((wp) => wp?.element || "");
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:syncWaypointSlotsToSolverChainIfPossible',message:'sync solver chain vs panel',data:{hypothesisId:'H_sync',mode:state.selectionMode,before:before.join('|'),after:after.join('|'),changed:before.join('|')!==after.join('|')},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   if (before.join("|") !== after.join("|")) {
     requestWaypointConstraintReorderAnimation();
     renderWaypointChain();
@@ -8120,9 +8136,6 @@ window.findPath = function(opts = {}) {
         };
       }
       if (chainForExplain?.length) {
-        // #region agent log
-        fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:findPath-before-sync',message:'set mode before syncWaypointSlots',data:{hypothesisId:'H_sync',findReason,chainPreview:(chainForExplain||[]).slice(0,8)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-        // #endregion
         // Manual slot reorder (arrows / drag) must not be overwritten: sync maps slots to the
         // solver’s ordered chain, which would immediately undo move-waypoint / move-waypoint-to.
         const skipSlotSync =
@@ -8173,6 +8186,7 @@ window.findPath = function(opts = {}) {
       waypointCount: picked.length,
       isFallback: !hasNoPath && !!pathIsFallback,
       segmentCount: Array.isArray(segs) ? segs.length : 0,
+      search_status: searchStatus,
     });
     if (state._relaxOneShotRestore) {
       const snap = state._relaxOneShotRestore;
@@ -10415,7 +10429,7 @@ window.focusMetamodel = function focusMetamodel(fromEl, toEl) {
       valid: ok,
     };
 
-    openMetamodelModal();
+    openMetamodelModal("hop_link");
 
     doHighlight(fromKey, toKey, ok);
     if (typeof annotateMetamodel === 'function') {
@@ -10442,10 +10456,13 @@ window.focusMetamodel = function focusMetamodel(fromEl, toEl) {
   }
 };
 
-function openMetamodelModal() {
+function openMetamodelModal(openSource = "") {
   closeElementInfoModal();
   const m = document.getElementById('mm-modal');
   if (!m) return;
+  trackEvent("open_metamodel_modal", {
+    source: String(openSource || "unknown").trim() || "unknown",
+  });
   m.setAttribute('aria-hidden', 'false');
   // Lazy render (in case init ran before modal existed)
   const mm = document.getElementById('metamodel-diagram');

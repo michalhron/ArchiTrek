@@ -5138,22 +5138,29 @@ function getRelationVisualSnippet(code, isDirect, hopIndexForIds, opts = {}) {
         ? RELATIONSHIPS[UPPER].name
         : UPPER;
     const label = typeof escPathDiag === "function" ? escPathDiag(relName) : String(relName ?? "");
-    const lineY = 12;
-    const vb = 'viewBox="0 0 80 34" preserveAspectRatio="xMidYMid meet"';
+    /** Line-only SVG (relationship name as HTML below — avoids clipped/hidden SVG &lt;text&gt; in compact rows). */
+    const lineY = 11;
+    const vb = 'viewBox="0 0 80 22" preserveAspectRatio="xMidYMid meet"';
     const w = compact ? 52 : 80;
-    const h = compact ? 28 : 36;
-    return (
-      `<svg class="${cls} explain-edge-connector-svg--dynamic" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">` +
+    const h = compact ? 16 : 22;
+    const lineSvg =
+      `<svg class="${cls} explain-edge-connector-svg--snippet-line" width="${w}" height="${h}" ${vb} style="overflow:visible; margin:0; color: inherit; flex-shrink:0;" aria-hidden="true">` +
       `${defs}` +
-      `<line x1="5" y1="${lineY}" x2="65" y2="${lineY}" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" />` +
-      `<text x="35" y="28" text-anchor="middle" font-size="10" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="500" fill="currentColor">${label}</text>` +
-      `</svg>`
+      `<line x1="10" y1="${lineY}" x2="70" y2="${lineY}" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" />` +
+      `</svg>`;
+    const stackCls =
+      "explain-rel-snippet-stack" + (compact ? " explain-rel-snippet-stack--compact" : "");
+    return (
+      `<span class="${stackCls}">` +
+      lineSvg +
+      `<span class="explain-rel-snippet-stack__name">${label}</span>` +
+      `</span>`
     );
   }
   const w = compact ? 52 : 80;
   const h = compact ? 20 : 30;
   const vb = compact ? 'viewBox="0 0 80 30" preserveAspectRatio="xMidYMid meet"' : "";
-  return `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">${defs}<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" /></svg>`;
+  return `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: inherit; flex-shrink:0;" aria-hidden="true">${defs}<line x1="10" y1="15" x2="70" y2="15" stroke="currentColor" stroke-width="2.5" stroke-dasharray="${isDash ? "5,3" : "none"}" marker-end="${endMarker}" marker-start="${startMarker}" /></svg>`;
 }
 
 /** Neutral connector for hops where no relationship has been chosen yet. */
@@ -5172,7 +5179,7 @@ function getUndecidedRelationSnippet(opts = {}) {
   const dash = solidInSummary ? "none" : "3 5";
   return (
     `<svg class="${cls}" width="${w}" height="${h}" ${vb} style="overflow:visible; margin: ${margin}; color: #8b99af; flex-shrink:0;" aria-hidden="true">` +
-    `<line x1="5" y1="15" x2="65" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="${dash}" stroke-linecap="butt" /></svg>`
+    `<line x1="10" y1="15" x2="70" y2="15" stroke="currentColor" stroke-width="2" stroke-dasharray="${dash}" stroke-linecap="butt" /></svg>`
   );
 }
 
@@ -5741,7 +5748,7 @@ function getRelationSnippet(code, isDirect) {
 
   return `
     <svg width="80" height="30" style="overflow:visible; margin: 0 15px;">
-      <line x1="5" y1="15" x2="65" y2="15" stroke="#334155" stroke-width="2.5" 
+      <line x1="10" y1="15" x2="70" y2="15" stroke="#334155" stroke-width="2.5" 
             stroke-dasharray="${isDash ? '5,3' : 'none'}" 
             marker-end="${endMarker}" marker-start="${startMarker}" />
     </svg>`;

@@ -555,26 +555,50 @@ body {
   margin-top: 0.125rem;
   min-width: 0;
 }
-/* One row: endpoint chips + spec-accurate relationship SVG (replaces text → + duplicate diagram). */
+/* One row: chips at intrinsic width; connector flexes so the arrow+label sit in the real gap between chips. */
 .explain-hop-summary-route--single {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  column-gap: 0.5rem;
+  gap: 0.5rem;
   width: 100%;
   max-width: 100%;
   min-width: 0;
 }
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint.step-el-tip-wrap {
+  width: auto;
+  max-width: min(48%, 100%);
+}
 .explain-hop-summary-route--single > .explain-hop-summary-endpoint:first-of-type {
-  justify-self: end;
+  flex: 0 1 auto;
   min-width: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 .explain-hop-summary-route--single > .explain-hop-summary-endpoint:last-of-type {
-  justify-self: start;
+  flex: 0 1 auto;
   min-width: 0;
+  display: flex;
+  justify-content: flex-start;
 }
-.explain-hop-summary-route--single .explain-hop-summary-connector {
-  justify-self: center;
+.explain-hop-summary-route--single > .explain-hop-summary-connector {
+  flex: 1 1 auto;
+  min-width: min(4.5rem, 22%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+/* Neutral box model so the snippet isn’t nudged by default .explain-edge-connector padding/margins. */
+.explain-hop-summary-route--single > .explain-hop-summary-connector.explain-edge-connector--inline-arrow {
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint:first-of-type .path-node-chip--stacked,
+.explain-hop-summary-route--single > .explain-hop-summary-endpoint:last-of-type .path-node-chip--stacked {
+  width: fit-content;
+  max-width: 100%;
 }
 .explain-hop-summary-endpoint.step-el-tip-wrap {
   /* Stay inside the grid column (max-width:none was letting chips ignore the fr track and overflow the card). */
@@ -626,6 +650,34 @@ body {
 }
 .explain-hop-summary-connector svg.explain-edge-connector-svg line {
   stroke: currentColor;
+}
+/* Triggering / Flow: stroke in SVG, relationship name in HTML (reliable vs. SVG text in narrow flex rows). */
+.explain-rel-snippet-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.15;
+  color: inherit;
+}
+.explain-rel-snippet-stack--compact {
+  margin: 0 4px;
+}
+.explain-rel-snippet-stack:not(.explain-rel-snippet-stack--compact) {
+  margin: 0 15px;
+}
+.explain-rel-snippet-stack__name {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: currentColor;
+  white-space: nowrap;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.explain-hop-summary-connector .explain-rel-snippet-stack svg.explain-edge-connector-svg {
+  margin: 0 !important;
 }
 /* Tier 3 — action / alert */
 .tag.tag-action-required {
@@ -3220,6 +3272,26 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 /* First-visit welcome splash (examples + consent) */
 .welcome-modal-card {
   max-width: 520px;
+}
+
+.welcome-modal-brand {
+  display: flex;
+  justify-content: center;
+  padding: 20px 18px 0;
+}
+
+.welcome-modal-logo-img {
+  display: block;
+  height: 38px;
+  width: auto;
+  max-width: min(200px, 72vw);
+  /* Muted gray mark on the light modal (asset is navy-on-light) */
+  filter: grayscale(1);
+  opacity: 0.58;
+}
+
+.welcome-modal-card .feedback-modal-head {
+  padding-top: 10px;
 }
 
 .welcome-modal-body {
@@ -5938,9 +6010,17 @@ input[type="number"].search-weight-input.viewpoint-select {
 }
 .picker-overlay.open { display: block; }
 
-/* Element picker should not block panel trigger clicks behind the backdrop. */
+/* Root stays non-hit-target; children opt in so the dimmed band can dismiss without blocking the popover. */
 #picker-overlay {
   pointer-events: none;
+}
+/* Full-area layer under the popover: receives clicks on the dimmed region (root itself never does). */
+#picker-overlay > .picker-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: auto;
+  cursor: default;
 }
 #picker-overlay .picker-popover {
   pointer-events: auto;

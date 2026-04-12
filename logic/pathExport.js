@@ -1,8 +1,14 @@
 // === logic/pathExport.js ===
 /**
- * Path export helpers for CSV and ArchiMate 3.1 Exchange XML.
+ * Path export helpers for CSV and ArchiMate Model Exchange XML.
+ * Open Group XSD 3.1 still uses namespace http://www.opengroup.org/xsd/archimate/3.0/
+ * (see archimate3_Model.xsd targetNamespace, not /3.1/).
  * Export model uses one element instance per path node occurrence (no type dedup).
  */
+
+/** Normative exchange namespace (archimate3_Model.xsd targetNamespace). */
+const ARCHIMATE_EXCHANGE_NS = "http://www.opengroup.org/xsd/archimate/3.0/";
+const ARCHIMATE_MODEL_XSD = "https://www.opengroup.org/xsd/archimate/3.1/archimate3_Model.xsd";
 
 export const DERIVED_NOTE =
   "Note: This relationship is derived. Consider modeling intermediate bridging elements.";
@@ -180,9 +186,14 @@ export function buildPathExportXml(exportData) {
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push(
-    '<model xmlns="http://www.opengroup.org/xsd/archimate/3.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" identifier="' +
+    '<model xmlns="' +
+      ARCHIMATE_EXCHANGE_NS +
+      '" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
+      'xsi:schemaLocation="' +
+      xmlEscapeAttr(`${ARCHIMATE_EXCHANGE_NS} ${ARCHIMATE_MODEL_XSD}`) +
+      '" identifier="' +
       xmlEscapeAttr(nextPrefixedId("model")) +
-      '">'
+      '" version="3.1.0">'
   );
   lines.push("  <name>ArchiTrek Path Export</name>");
   if (exportData.hasDerived) {

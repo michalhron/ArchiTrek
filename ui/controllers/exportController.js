@@ -337,6 +337,7 @@
       trackEvent("download_path_csv", {
         hops: output.data?.hopCount,
         derived: !!output.data?.hasDerived,
+        derivedPotential: !!output.data?.hasPotentialDerived,
         mode: state?.mode,
       });
       return;
@@ -345,6 +346,7 @@
       trackEvent("download_path_archimate_xml", {
         hops: output.data?.hopCount,
         derived: !!output.data?.hasDerived,
+        derivedPotential: !!output.data?.hasPotentialDerived,
         mode: state?.mode,
       });
     }

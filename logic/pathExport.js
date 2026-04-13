@@ -14,6 +14,8 @@ const ARCHIMATE_SCHEMA_LOCATION =
 
 export const DERIVED_NOTE =
   "Note: This relationship is derived. Consider modeling intermediate bridging elements.";
+export const POTENTIAL_DERIVED_NOTE =
+  "Note: This relationship is potentially derived (Appendix B.3) and may need modeler validation.";
 
 function flattenSegmentsForExport(segments, pathIndex) {
   const out = [];
@@ -82,9 +84,12 @@ function classifyHopDerivation(step, codeUpper) {
   if (step?.isAssociation === true || code === "O") return "Fallback";
 
   const derived = (step?.matrixDerivedCodes || []).map((c) => String(c).toUpperCase());
+  const potential = (step?.matrixDerivedPotentialCodes || []).map((c) => String(c).toUpperCase());
   const direct = (step?.matrixDirectCodes || []).map((c) => String(c).toUpperCase());
+  if (potential.includes(code)) return "Potential";
   if (derived.includes(code)) return "Derived";
   if (direct.includes(code)) return "Explicit";
+  if (step?.isPotentialDerived) return "Potential";
   if (step?.isDirect === false) return "Derived";
   return "Explicit";
 }
@@ -121,6 +126,7 @@ export function buildPathExportData({
 
   const hops = [];
   let hasDerived = false;
+  let hasPotentialDerived = false;
   for (let i = 1; i < flatSteps.length; i++) {
     const from = elements[i - 1];
     const to = elements[i];
@@ -130,6 +136,7 @@ export function buildPathExportData({
     const relationshipType = relMeta?.name || (code === "O" ? "Association" : code);
     const derivation = classifyHopDerivation(step, code);
     if (derivation === "Derived") hasDerived = true;
+    if (derivation === "Potential") hasPotentialDerived = true;
     hops.push({
       hopNumber: i,
       sourceElementType: from.displayType,
@@ -137,7 +144,12 @@ export function buildPathExportData({
       relationshipCode: code,
       relationshipType,
       relationshipDerivation: derivation,
-      pedagogicalNote: derivation === "Derived" ? DERIVED_NOTE : "",
+      pedagogicalNote:
+        derivation === "Potential"
+          ? POTENTIAL_DERIVED_NOTE
+          : derivation === "Derived"
+            ? DERIVED_NOTE
+            : "",
       sourceId: from.identifier,
       targetId: to.identifier,
       relationshipId: nextPrefixedId("rel"),
@@ -148,6 +160,7 @@ export function buildPathExportData({
     elements,
     hops,
     hasDerived,
+    hasPotentialDerived,
     derivedNote: DERIVED_NOTE,
     startType: elements[0]?.displayType || "Start",
     endType: elements[elements.length - 1]?.displayType || "End",

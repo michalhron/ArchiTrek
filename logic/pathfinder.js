@@ -14,10 +14,10 @@
  * EXPORTS:
  *   findPaths(graph, waypoints, options) → { segments, isFallback }
  *   scorePath(path) → number (lower = better; tie-break after weighted cost)
- *   pathTotalWeight(path, weights?) → number (pedagogical base sum of hop weights; defaults 1 / 5 / 100 / 15)
+ *   pathTotalWeight(path, weights?) → number (pedagogical base sum of hop weights; defaults 1 / 5 / 20 / 100 / 15)
  *   path.ucsRoutingCost — when present on UCS results, internal routing total (exponential cognitive-load depth penalty on relationship hops only); sortPathsByMetric prefers this over base total.
- *   pathCostBreakdown(path, weights?) → per–cost-type weighted subtotals (direct / derived / association / layer-skip / violation); uses base hop weights only
- *   normalizePathWeights(options) → { direct, derived, association, violation, layerSkip }
+ *   pathCostBreakdown(path, weights?) → per–cost-type weighted subtotals (direct / derived / derivedPotential / association / layer-skip / violation); uses base hop weights only
+ *   normalizePathWeights(options) → { direct, derived, derivedPotential, association, violation, layerSkip }
  *   clusterPaths(segments, options?) → perspective/label metadata (precision: Simplified vs Ground-Truth + precisionScore 0–100, precisionFactors)
  *   findBestChainForSet(graph, points, options) → { orderedPoints, segments, totalScore, isFallback }
  *   findNearbyExecutiveElements(startElement, targetElement, graph, options?) → [{ id, name, type, distance }]
@@ -35,7 +35,8 @@
  * @property {boolean|null} isDirect — whether pathfinding used the graph’s direct arc (vs derived)
  *                                     for this hop (scoring); label styling uses matrixDirect/DerivedCodes.
  * @property {string[]=} matrixDirectCodes — Appendix B direct letters for this directed pair
- * @property {string[]=} matrixDerivedCodes — Appendix B derived letters for this directed pair
+ * @property {string[]=} matrixDerivedCodes — Appendix B.2 derived letters for this directed pair
+ * @property {string[]=} matrixDerivedPotentialCodes — Appendix B.3 potential derived letters for this directed pair
  * @property {boolean=} isAssociation — true when this hop used the universal §5.2.4 Association arc
  * @property {{ hopIndex: number, from: string, to: string, rule: string, ruleLabel?: string, primaryCode?: string, violation?: string, violationLabel?: string, violationExplain?: string, layerSkipPenalty?: number }=} semanticHop
  *    per-hop pedagogy trace metadata (mirrors path.ruleTrace[hopIndex-1]) for UI drill-down rendering.
@@ -74,16 +75,17 @@
  * @param {string} fromEl
  * @param {string} toEl
  * @param {boolean} [includeDerived=true] — same meaning as buildGraph({ includeDerived })
- * @returns {{ merged: string[], direct: string[], derived: string[] }}
+ * @returns {{ merged: string[], direct: string[], derived: string[], derivedPotential: string[] }}
  */
 function mergeMatrixRowForPair(fromEl, toEl, includeDerived = true) {
-  if (typeof MATRIX === "undefined") return { merged: [], direct: [], derived: [] };
+  if (typeof MATRIX === "undefined") return { merged: [], direct: [], derived: [], derivedPotential: [] };
   for (const row of MATRIX) {
     if (row.from === fromEl && row.to === toEl) {
       const direct = (row.direct || []).map((c) => String(c).toUpperCase());
       const derived = (row.derived || []).map((c) => String(c).toUpperCase());
+      const derivedPotential = (row.derivedPotential || []).map((c) => String(c).toUpperCase());
       if (!includeDerived) {
-        return { merged: [...direct], direct, derived: [] };
+        return { merged: [...direct], direct, derived: [], derivedPotential: [] };
       }
       const seen = new Set();
       const merged = [];
@@ -99,17 +101,23 @@ function mergeMatrixRowForPair(fromEl, toEl, includeDerived = true) {
           merged.push(c);
         }
       }
-      return { merged, direct, derived };
+      for (const c of derivedPotential) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          merged.push(c);
+        }
+      }
+      return { merged, direct, derived, derivedPotential };
     }
   }
-  return { merged: [], direct: [], derived: [] };
+  return { merged: [], direct: [], derived: [], derivedPotential: [] };
 }
 
 /**
  * @param {{ to: string, codes: string[], isDirect: boolean }} edge
  * @param {string} fromEl — source node of this hop (Appendix B “from”)
- * @param {{ includeDerived?: boolean, matrixRow?: { merged: string[], direct: string[], derived: string[] }|null }} [opts]
- * @returns {{ element: string, codes: string[], isDirect: boolean, matrixDirectCodes: string[], matrixDerivedCodes: string[] }}
+ * @param {{ includeDerived?: boolean, matrixRow?: { merged: string[], direct: string[], derived: string[], derivedPotential: string[] }|null }} [opts]
+ * @returns {{ element: string, codes: string[], isDirect: boolean, matrixDirectCodes: string[], matrixDerivedCodes: string[], matrixDerivedPotentialCodes: string[] }}
  */
 function pathStepFromEdge(edge, fromEl, { includeDerived = true, matrixRow = null } = {}) {
   const { to, codes, isDirect } = edge;
@@ -121,16 +129,19 @@ function pathStepFromEdge(edge, fromEl, { includeDerived = true, matrixRow = nul
   let merged = row.merged;
   let md = row.direct;
   let mder = row.derived;
+  let mpdr = row.derivedPotential || [];
 
   if (merged.length === 0 && edgeCodes.length) {
     if (!includeDerived && !isDirect) {
       merged = [];
       md = [];
       mder = [];
+      mpdr = [];
     } else {
       merged = [...edgeCodes];
       md = isDirect ? edgeCodes : [];
-      mder = isDirect ? [] : edgeCodes;
+      mder = isDirect ? [] : edge.isPotentialDerived ? [] : edgeCodes;
+      mpdr = isDirect ? [] : edge.isPotentialDerived ? edgeCodes : [];
     }
   }
 
@@ -140,8 +151,10 @@ function pathStepFromEdge(edge, fromEl, { includeDerived = true, matrixRow = nul
     isDirect,
     matrixDirectCodes: md,
     matrixDerivedCodes: mder,
+    matrixDerivedPotentialCodes: mpdr,
   };
   if (edge.isAssociation) step.isAssociation = true;
+  if (edge.isPotentialDerived) step.isPotentialDerived = true;
   return step;
 }
 
@@ -151,6 +164,7 @@ function pathStepFromEdge(edge, fromEl, { includeDerived = true, matrixRow = nul
 
 const PATH_DIRECT_WEIGHT = 1;
 const PATH_DERIVED_WEIGHT = 5;
+const PATH_DERIVED_POTENTIAL_WEIGHT = 20;
 const PATH_ASSOCIATION_PENALTY = 100;
 const PATH_VIOLATION_PENALTY = 50;
 const PATH_LAYER_SKIP_PENALTY = 15;
@@ -162,7 +176,8 @@ const CORE_STACK_LAYERS = new Set(["Business", "Application", "Technology"]);
 
 const PEDAGOGY_RULE_LABELS = Object.freeze({
   Direct: "Explicit relationship (Appendix B).",
-  Derived: "Inferred link (§5.7 logical derivation chain).",
+  Derived: "Certain inferred link (Appendix B.2 derivation rules).",
+  DerivedPotential: "Potential inferred link (Appendix B.3 derivation rules).",
   Association: "Generic link (§5.2.4 Association).",
 });
 
@@ -184,13 +199,14 @@ function clampWeight(n, def) {
 }
 
 /**
- * @param {{ pathWeightDirect?: number, pathWeightDerived?: number, pathWeightAssociation?: number, pathWeightLayerSkip?: number }} [o]
- * @returns {{ direct: number, derived: number, association: number, violation: number, layerSkip: number }}
+ * @param {{ pathWeightDirect?: number, pathWeightDerived?: number, pathWeightDerivedPotential?: number, pathWeightAssociation?: number, pathWeightLayerSkip?: number }} [o]
+ * @returns {{ direct: number, derived: number, derivedPotential: number, association: number, violation: number, layerSkip: number }}
  */
 function normalizePathWeights(o = {}) {
   return {
     direct: clampWeight(o.pathWeightDirect, PATH_DIRECT_WEIGHT),
     derived: clampWeight(o.pathWeightDerived, PATH_DERIVED_WEIGHT),
+    derivedPotential: clampWeight(o.pathWeightDerivedPotential, PATH_DERIVED_POTENTIAL_WEIGHT),
     association: clampWeight(o.pathWeightAssociation, PATH_ASSOCIATION_PENALTY),
     violation: clampWeight(o.pathViolationPenalty, PATH_VIOLATION_PENALTY),
     layerSkip: clampWeight(o.pathWeightLayerSkip, PATH_LAYER_SKIP_PENALTY),
@@ -329,6 +345,7 @@ function edgeMatchesAllowedRelationshipCodes(edge, allowedCodes) {
 
 function relationRuleFromEdge(edge) {
   if (edge.isAssociation) return "Association";
+  if (edge.isPotentialDerived) return "DerivedPotential";
   return edge.isDirect === false ? "Derived" : "Direct";
 }
 
@@ -384,7 +401,15 @@ function isResolvedCodeAppendixBDirect(step, codeUpper) {
   const U = String(codeUpper).toUpperCase();
   if (step.matrixDirectCodes?.length && step.matrixDirectCodes.includes(U)) return true;
   if (step.matrixDerivedCodes?.length && step.matrixDerivedCodes.includes(U)) return false;
+  if (step.matrixDerivedPotentialCodes?.length && step.matrixDerivedPotentialCodes.includes(U)) return false;
   return step?.isDirect ?? true;
+}
+
+function isResolvedCodePotential(step, codeUpper) {
+  if (!codeUpper || !step) return !!step?.isPotentialDerived;
+  const U = String(codeUpper).toUpperCase();
+  if (step.matrixDerivedPotentialCodes?.length && step.matrixDerivedPotentialCodes.includes(U)) return true;
+  return !!step?.isPotentialDerived;
 }
 
 /**
@@ -465,9 +490,16 @@ function classifyHopSemanticTier(step, semanticHop, opts) {
     };
   }
   if (!isResolvedCodeAppendixBDirect(step, primaryUpper)) {
+    if (isResolvedCodePotential(step, primaryUpper)) {
+      return {
+        strength: "Informal",
+        title: "Potentially derived via Appendix B.3.",
+        reason: pedagogyRuleLabel("DerivedPotential"),
+      };
+    }
     return {
       strength: "Valid",
-      title: "Strictly derived per §5.7.",
+      title: "Strictly derived per Appendix B.2.",
       reason: pedagogyRuleLabel("Derived"),
     };
   }
@@ -505,13 +537,16 @@ function pathHasAssociationHop(path) {
 }
 
 /**
- * @param {{ isAssociation?: boolean }} edge
+ * @param {{ isAssociation?: boolean, isPotentialDerived?: boolean }} edge
  * @param {string} _toElement — target node of this hop (reserved)
- * @param {{ direct: number, derived: number, association: number }} weights
+ * @param {{ direct: number, derived: number, derivedPotential: number, association: number }} weights
  */
 function hopWeight(edge, _toElement, weights) {
   if (edge.isAssociation) {
     return weights.association;
+  }
+  if (edge.isPotentialDerived) {
+    return weights.derivedPotential;
   }
   if (edge.isDirect === false) {
     return weights.derived;
@@ -522,7 +557,7 @@ function hopWeight(edge, _toElement, weights) {
 /**
  * Sum of hop weights for a completed path (first step has no incoming edge).
  * @param {Path} path
- * @param {{ direct: number, derived: number, association: number, violation: number, layerSkip: number }} [weights] — omit for defaults (1 / 5 / 100 / 15)
+ * @param {{ direct: number, derived: number, derivedPotential: number, association: number, violation: number, layerSkip: number }} [weights] — omit for defaults (1 / 5 / 20 / 100 / 15)
  */
 function pathTotalWeight(path, weights) {
   if (path && Number.isFinite(path.totalWeight)) {
@@ -535,6 +570,8 @@ function pathTotalWeight(path, weights) {
     const step = path[i];
     if (step.isAssociation) {
       w += wcfg.association;
+    } else if (step.isPotentialDerived) {
+      w += wcfg.derivedPotential;
     } else if (step.isDirect === false) {
       w += wcfg.derived;
     } else {
@@ -554,14 +591,15 @@ function pathTotalWeight(path, weights) {
 /**
  * Per–cost-type weighted subtotals for a stitched path (same rules as {@link pathTotalWeight}).
  * @param {Path} path
- * @param {{ direct: number, derived: number, association: number, violation: number, layerSkip: number }} [weights]
- * @returns {{ direct: number, derived: number, association: number, violation: number, layerSkip: number, total: number }}
+ * @param {{ direct: number, derived: number, derivedPotential: number, association: number, violation: number, layerSkip: number }} [weights]
+ * @returns {{ direct: number, derived: number, derivedPotential: number, association: number, violation: number, layerSkip: number, total: number }}
  */
 function pathCostBreakdown(path, weights) {
   const wcfg = weights || normalizePathWeights({});
   const ruleTrace = Array.isArray(path?.ruleTrace) ? path.ruleTrace : [];
   let direct = 0;
   let derived = 0;
+  let derivedPotential = 0;
   let association = 0;
   let violation = 0;
   let layerSkip = 0;
@@ -569,6 +607,8 @@ function pathCostBreakdown(path, weights) {
     const step = path[i];
     if (step.isAssociation) {
       association += wcfg.association;
+    } else if (step.isPotentialDerived) {
+      derivedPotential += wcfg.derivedPotential;
     } else if (step.isDirect === false) {
       derived += wcfg.derived;
     } else {
@@ -582,8 +622,8 @@ function pathCostBreakdown(path, weights) {
       layerSkip += hopMeta.layerSkipPenalty;
     }
   }
-  const total = direct + derived + association + violation + layerSkip;
-  return { direct, derived, association, violation, layerSkip, total };
+  const total = direct + derived + derivedPotential + association + violation + layerSkip;
+  return { direct, derived, derivedPotential, association, violation, layerSkip, total };
 }
 
 function sortPathsByMetric(paths, weights) {
@@ -1310,7 +1350,8 @@ function findBestChainForSet(graph, points, options = {}) {
  * @param {boolean} [options.allowAssociationFallback=false] — allow paths whose cheapest route uses penalized Association
  * @param {boolean} [options.includeDerived=true] — must match buildGraph({ includeDerived })
  * @param {number} [options.pathWeightDirect=1] — UCS cost per direct Appendix B hop
- * @param {number} [options.pathWeightDerived=5] — UCS cost per §5.7 derived hop
+ * @param {number} [options.pathWeightDerived=5] — UCS cost per Appendix B.2 derived hop
+ * @param {number} [options.pathWeightDerivedPotential=20] — UCS cost per Appendix B.3 potential derived hop
  * @param {number} [options.pathWeightAssociation=100] — UCS cost per §5.2.4 Association hop
  * @param {number} [options.pathWeightLayerSkip=15] — UCS surcharge for hops that skip one or more intermediate core layers
  * @param {boolean} [options.cognitiveLoadPenalty=true] — apply exponential depth penalty to relationship hop weight in UCS routing cost only
@@ -1760,6 +1801,7 @@ function classifyPerspective(
  * @param {{
  *   pathWeightDirect?: number,
  *   pathWeightDerived?: number,
+ *   pathWeightDerivedPotential?: number,
  *   pathWeightAssociation?: number,
  *   pathWeightLayerSkip?: number,
  *   perspectiveClassMode?: "exclusive"|"dominant-share",
@@ -1770,7 +1812,7 @@ function classifyPerspective(
  *   byPerspective: { A: any[], B: any[], C: any[] },
  *   byPathIndex: Record<string, any>,
  *   all: any[]
- * }} Each meta includes costDirect, costDerived, costAssociation, costLayerSkip, costViolation (weighted subtotals), ucsRoutingTotal,
+ * }} Each meta includes costDirect, costDerived, costDerivedPotential, costAssociation, costLayerSkip, costViolation (weighted subtotals), ucsRoutingTotal,
  *   precisionScore (0–100), precisionFactors: { semantic, compression, penalty }.
  */
 function clusterPaths(segments, weightOpts = {}) {
@@ -1803,6 +1845,7 @@ function clusterPaths(segments, weightOpts = {}) {
       ucsRoutingTotal,
       costDirect: bd.direct,
       costDerived: bd.derived,
+      costDerivedPotential: bd.derivedPotential,
       costAssociation: bd.association,
       costLayerSkip: bd.layerSkip,
       costViolation: bd.violation,

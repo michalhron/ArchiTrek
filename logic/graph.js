@@ -167,7 +167,7 @@ function getMetamodelRole(elementName) {
 // (same hop cost as Meaning → Constraint) and the walk no longer reads as one
 // consistent directed chain.
 //
-// For mutual pairs with identical direct+derived codes where the only direct code is N,
+// For mutual pairs with identical direct/derived/potential codes where the only direct code is N,
 // we keep a single canonical arc: Motivation element order follows the ELEMENTS registry
 // (top → bottom in the stack), except Meaning ↔ Constraint where Meaning → Constraint
 // is kept (typical “upward” motivation link in layered views).
@@ -204,17 +204,18 @@ function canonicalMutualInfluenceEdge(from, to, motivationOrder) {
 function computeMutualInfluenceEdgeDrops() {
   const drops = new Set();
   const motivationOrder = getMotivationOrderIndex();
-  const sig = (r) => JSON.stringify({ d: r.direct || [], der: r.derived || [] });
+  const sig = (r) => JSON.stringify({ d: r.direct || [], der: r.derived || [], pdr: r.derivedPotential || [] });
   const byKey = new Map();
   for (const r of MATRIX) {
     byKey.set(`${r.from}|${r.to}`, r);
   }
 
   for (const r of MATRIX) {
-    const { from, to, direct, derived } = r;
+    const { from, to, direct, derived, derivedPotential } = r;
     if (from === to) continue;
     if (!direct || direct.length !== 1 || direct[0] !== "N") continue;
     if ((derived || []).length > 0) continue;
+    if ((derivedPotential || []).length > 0) continue;
 
     const rev = byKey.get(`${to}|${from}`);
     if (!rev) continue;
@@ -245,6 +246,8 @@ const MUTUAL_INFLUENCE_EDGE_DROPS = computeMutualInfluenceEdgeDrops();
  * @param {boolean} options.includeDerived
  *   If true, derived (lowercase) edges are included in the graph.
  *   If false, only direct (uppercase) edges are traversable.
+ * @param {boolean} [options.includeDerivedPotential=true]
+ *   If true, include potential derivations (Appendix B.3) when includeDerived is enabled.
  * @param {boolean} [options.includeAssociationBridges=true]
  *   If true, add directed Association (O) arcs for every ordered pair of allowed nodes (§5.2.4 —
  *   always permitted; not listed per-cell in Appendix B). Pathfinder applies a penalty so matrix
@@ -264,7 +267,12 @@ const MUTUAL_INFLUENCE_EDGE_DROPS = computeMutualInfluenceEdgeDrops();
  *   A single matrix entry may yield TWO edges if it has both direct and derived
  *   relationships — the caller can choose which to prefer.
  */
-function buildGraph({ allowedElements = null, includeDerived = false, includeAssociationBridges = true } = {}) {
+function buildGraph({
+  allowedElements = null,
+  includeDerived = false,
+  includeDerivedPotential = true,
+  includeAssociationBridges = true,
+} = {}) {
   const graph = new Map();
 
   /** Ensure a node exists in the graph */
@@ -282,7 +290,7 @@ function buildGraph({ allowedElements = null, includeDerived = false, includeAss
 
   for (const entry of MATRIX) {
     // Appendix B: one directed arc per record — tail `from` → head `to` only.
-    const { from, to, direct, derived } = entry;
+    const { from, to, direct, derived, derivedPotential = [] } = entry;
 
     if (EXCLUDED_APP_ELEMENTS.has(from) || EXCLUDED_APP_ELEMENTS.has(to)) continue;
 
@@ -296,12 +304,23 @@ function buildGraph({ allowedElements = null, includeDerived = false, includeAss
 
     // Add direct edge (omit reverse of canonical mutual Influence — see MUTUAL_INFLUENCE_EDGE_DROPS)
     if (direct.length > 0 && !MUTUAL_INFLUENCE_EDGE_DROPS.has(`${from}|${to}`)) {
-      graph.get(from).push({ to, codes: direct, isDirect: true, isDirected: true });
+      graph.get(from).push({ to, codes: direct, isDirect: true, isDirected: true, derivationTier: "direct" });
     }
 
     // Add derived edge (only if toggle is on)
     if (includeDerived && derived.length > 0) {
-      graph.get(from).push({ to, codes: derived, isDirect: false, isDirected: true });
+      graph.get(from).push({ to, codes: derived, isDirect: false, isDirected: true, derivationTier: "derived" });
+    }
+
+    if (includeDerived && includeDerivedPotential && derivedPotential.length > 0) {
+      graph.get(from).push({
+        to,
+        codes: derivedPotential,
+        isDirect: false,
+        isPotentialDerived: true,
+        isDirected: true,
+        derivationTier: "potential",
+      });
     }
   }
 
@@ -393,6 +412,7 @@ function rankMatrixNeighborRows(el, mode) {
     if (EXCLUDED_APP_ELEMENTS.has(partner)) continue;
     const direct = row.direct || [];
     const derived = row.derived || [];
+    const derivedPotential = row.derivedPotential || [];
     if (direct.length === 0) continue;
     const meta = ELEMENTS[partner] || {};
     rows.push({
@@ -400,9 +420,9 @@ function rankMatrixNeighborRows(el, mode) {
       layer: meta.layer || "Unknown",
       aspect: meta.aspect || "Unknown",
       directCount: direct.length,
-      derivedCount: derived.length,
+      derivedCount: derived.length + derivedPotential.length,
       codesDirect: [...direct].map((c) => String(c).toUpperCase()).sort(),
-      codesDerived: [...derived].map((c) => String(c).toUpperCase()).sort(),
+      codesDerived: [...derived, ...derivedPotential].map((c) => String(c).toUpperCase()).sort(),
     });
   }
   rows.sort((a, b) =>
@@ -434,10 +454,10 @@ function getMatrixConnectivitySummary(elementName) {
   };
 
   for (const row of MATRIX) {
-    const { from, to, direct = [], derived = [] } = row;
+    const { from, to, direct = [], derived = [], derivedPotential = [] } = row;
     if (EXCLUDED_APP_ELEMENTS.has(from) || EXCLUDED_APP_ELEMENTS.has(to)) continue;
     const hasD = direct.length > 0;
-    const hasDer = derived.length > 0;
+    const hasDer = derived.length + derivedPotential.length > 0;
 
     if (from === el) {
       if (hasD) {
@@ -448,6 +468,7 @@ function getMatrixConnectivitySummary(elementName) {
         outDer.add(to);
         if (!hasD) outDerOnly.add(to);
         for (const c of derived) bump(codesOutDer, c);
+        for (const c of derivedPotential) bump(codesOutDer, c);
       }
     }
     if (to === el) {
@@ -459,6 +480,7 @@ function getMatrixConnectivitySummary(elementName) {
         inDer.add(from);
         if (!hasD) inDerOnly.add(from);
         for (const c of derived) bump(codesInDer, c);
+        for (const c of derivedPotential) bump(codesInDer, c);
       }
     }
   }

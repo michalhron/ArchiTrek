@@ -2,7 +2,7 @@
 /**
  * Regenerates data/matrix.js from:
  *   - data/source/relationships.xml (AlbertoDMendoza/archimate_ontology validation matrix)
- *   - data/source/matrix-code-buckets.json (explicit vs §5.7 inferred letter buckets, keyed "from|to" → code → "d"|"der")
+ *   - data/source/matrix-code-buckets.json (explicit / DR / PDR buckets, keyed "from|to" → code → "d"|"der"|"pdr")
  *
  * Run from repo root: node scripts/build-matrix.mjs
  */
@@ -99,17 +99,20 @@ function main() {
     const bucket = buckets[key] || {};
     const direct = [];
     const derived = [];
+    const derivedPotential = [];
 
     for (const code of letters) {
       const b = bucket[code];
       if (b === "der") derived.push(code);
+      else if (b === "pdr") derivedPotential.push(code);
       else direct.push(code);
     }
 
     direct.sort();
     derived.sort();
+    derivedPotential.sort();
 
-    pairMap.set(key, { from, to, direct, derived });
+    pairMap.set(key, { from, to, direct, derived, derivedPotential });
   }
 
   const matrix = [...pairMap.values()].sort((a, b) => {
@@ -125,7 +128,7 @@ function main() {
   lines.push(` * Primary source: machine-readable Appendix B–style table in`);
   lines.push(` * data/source/relationships.xml (from AlbertoDMendoza/archimate_ontology validation).`);
   lines.push(` *`);
-  lines.push(` * Explicit (Appendix B) vs §5.7 inferred letter buckets follow`);
+  lines.push(` * Explicit baseline + Appendix B.2 (DR) + Appendix B.3 (PDR) buckets follow`);
   lines.push(` * data/source/matrix-code-buckets.json (derived from the prior in-repo normative split).`);
   lines.push(` *`);
   lines.push(` * Regenerate: node scripts/build-matrix.mjs`);
@@ -142,7 +145,7 @@ function main() {
   lines.push(` * S C G I R V A N T F as in the spec; O is universally permitted and omitted here.`);
   lines.push(` *`);
   lines.push(` * ── STRUCTURE ────────────────────────────────────────────────────────────────`);
-  lines.push(` * Each entry: { from, to, direct:[codes], derived:[codes] }`);
+  lines.push(` * Each entry: { from, to, direct:[codes], derived:[codes], derivedPotential:[codes] }`);
   lines.push(` */`);
   lines.push(``);
   lines.push(`const MATRIX = [`);
@@ -151,9 +154,9 @@ function main() {
   const fmtArr = (arr) =>
     arr.length ? arr.map((c) => `"${c}"`).join(",") : "";
 
-  for (const { from, to, direct, derived } of matrix) {
+  for (const { from, to, direct, derived, derivedPotential } of matrix) {
     lines.push(
-      `  { from:"${from}", to:"${to}",  direct:[${fmtArr(direct)}],         derived:[${fmtArr(derived)}] },`
+      `  { from:"${from}", to:"${to}",  direct:[${fmtArr(direct)}],         derived:[${fmtArr(derived)}],         derivedPotential:[${fmtArr(derivedPotential)}] },`
     );
   }
 
@@ -163,11 +166,11 @@ function main() {
   lines.push(`/**`);
   lines.push(` * Lookup map for efficient querying.`);
   lines.push(` * Key: "FromElement→ToElement"`);
-  lines.push(` * Value: { direct:[codes], derived:[codes] }`);
+  lines.push(` * Value: { direct:[codes], derived:[codes], derivedPotential:[codes] }`);
   lines.push(` */`);
   lines.push(`const MATRIX_MAP = Object.fromEntries(`);
   lines.push(
-    "  MATRIX.map(e => [`${e.from}→${e.to}`, { direct: e.direct, derived: e.derived }])"
+    "  MATRIX.map(e => [`${e.from}→${e.to}`, { direct: e.direct, derived: e.derived, derivedPotential: e.derivedPotential }])"
   );
   lines.push(`);`);
 

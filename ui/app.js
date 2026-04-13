@@ -43,8 +43,10 @@ window.state = {
   searchEffort: "balanced",
   /** UCS cost per direct Appendix B hop (integer 1–500). */
   searchPathWeightDirect: 1,
-  /** UCS cost per §5.7 derived hop. */
+  /** UCS cost per Appendix B.2 derived hop. */
   searchPathWeightDerived: 5,
+  /** UCS cost per Appendix B.3 potential-derived hop. */
+  searchPathWeightDerivedPotential: 20,
   /** UCS cost per §5.2.4 Association hop. */
   searchPathWeightAssociation: 100,
   /** UCS surcharge for hops that skip intermediate core layers. */
@@ -395,6 +397,7 @@ const SEARCH_EFFORT_MAX_STATES = {
 const DEFAULT_SEARCH_PATH_WEIGHTS = Object.freeze({
   searchPathWeightDirect: 1,
   searchPathWeightDerived: 5,
+  searchPathWeightDerivedPotential: 20,
   searchPathWeightAssociation: 100,
   searchPathWeightLayerSkip: 15,
   searchPathWeightViolation: 50,
@@ -605,14 +608,16 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
     maxStates,
     pathWeightDirect: clampSearchPathWeight(state.searchPathWeightDirect, 1),
     pathWeightDerived: clampSearchPathWeight(state.searchPathWeightDerived, 5),
+    pathWeightDerivedPotential: clampSearchPathWeight(state.searchPathWeightDerivedPotential, 20),
     pathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
     pathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
     pathViolationPenalty: clampSearchPathWeight(state.searchPathWeightViolation, 50),
     cognitiveLoadPenalty: state.searchCognitiveLoadPenalty !== false,
     penaltyGracePeriod: clampSearchPenaltyGracePeriod(state.searchPenaltyGracePeriod),
     penaltyGrowthFactor: clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor),
-    /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
+    /** Must match buildGraph({ includeDerived, includeDerivedPotential }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
+    includeDerivedPotential: !!state.includeDerived,
     allowAssociationFallback: !!state.allowAssociationFallback,
     restrictCoreToCore: !!state.restrictCoreToCore,
     enforceGrammar: !!state.enforceGrammar,
@@ -813,6 +818,7 @@ function applySearchOptionsToUI() {
   const e = document.getElementById("search-effort");
   const wd = document.getElementById("search-weight-direct");
   const wder = document.getElementById("search-weight-derived");
+  const wpdr = document.getElementById("search-weight-derived-potential");
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
@@ -831,6 +837,7 @@ function applySearchOptionsToUI() {
   if (e) e.value = normalizeSearchEffort(state.searchEffort);
   if (wd) wd.value = String(clampSearchPathWeight(state.searchPathWeightDirect, 1));
   if (wder) wder.value = String(clampSearchPathWeight(state.searchPathWeightDerived, 5));
+  if (wpdr) wpdr.value = String(clampSearchPathWeight(state.searchPathWeightDerivedPotential, 20));
   if (wa) wa.value = String(clampSearchPathWeight(state.searchPathWeightAssociation, 100));
   if (wls) wls.value = String(clampSearchPathWeight(state.searchPathWeightLayerSkip, 15));
   if (wv) wv.value = String(clampSearchPathWeight(state.searchPathWeightViolation, 50));
@@ -858,6 +865,7 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   const e = document.getElementById("search-effort");
   const wd = document.getElementById("search-weight-direct");
   const wder = document.getElementById("search-weight-derived");
+  const wpdr = document.getElementById("search-weight-derived-potential");
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
@@ -874,6 +882,7 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   if (e) state.searchEffort = normalizeSearchEffort(e.value);
   if (wd) state.searchPathWeightDirect = clampSearchPathWeight(wd.value, 1);
   if (wder) state.searchPathWeightDerived = clampSearchPathWeight(wder.value, 5);
+  if (wpdr) state.searchPathWeightDerivedPotential = clampSearchPathWeight(wpdr.value, 20);
   if (wa) state.searchPathWeightAssociation = clampSearchPathWeight(wa.value, 100);
   if (wls) state.searchPathWeightLayerSkip = clampSearchPathWeight(wls.value, 15);
   if (wv) state.searchPathWeightViolation = clampSearchPathWeight(wv.value, 50);
@@ -937,6 +946,7 @@ window.onAssociationFallbackChange = function onAssociationFallbackChange() {
 window.restoreHopCostSearchDefaults = function restoreHopCostSearchDefaults() {
   state.searchPathWeightDirect = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDirect;
   state.searchPathWeightDerived = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDerived;
+  state.searchPathWeightDerivedPotential = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDerivedPotential;
   state.searchPathWeightAssociation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightAssociation;
   state.searchPathWeightLayerSkip = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightLayerSkip;
   state.searchPathWeightViolation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightViolation;
@@ -1155,6 +1165,7 @@ function buildPathSearchReportPayload() {
     maxStates: so.maxStates,
     pathWeightDirect: so.pathWeightDirect,
     pathWeightDerived: so.pathWeightDerived,
+    pathWeightDerivedPotential: so.pathWeightDerivedPotential,
     pathWeightAssociation: so.pathWeightAssociation,
     pathWeightLayerSkip: so.pathWeightLayerSkip,
     pathViolationPenalty: so.pathViolationPenalty,
@@ -1873,6 +1884,7 @@ function gatherSessionSnapshot() {
     searchEffort: normalizeSearchEffort(plain.searchEffort),
     searchPathWeightDirect: clampSearchPathWeight(plain.searchPathWeightDirect, 1),
     searchPathWeightDerived: clampSearchPathWeight(plain.searchPathWeightDerived, 5),
+    searchPathWeightDerivedPotential: clampSearchPathWeight(plain.searchPathWeightDerivedPotential, 20),
     searchPathWeightAssociation: clampSearchPathWeight(plain.searchPathWeightAssociation, 100),
     searchPathWeightLayerSkip: clampSearchPathWeight(plain.searchPathWeightLayerSkip, 15),
     searchPathWeightViolation: clampSearchPathWeight(plain.searchPathWeightViolation, 50),
@@ -1994,6 +2006,9 @@ function restoreSessionSnapshot() {
     }
     if (typeof data.searchPathWeightDerived === "number" && Number.isFinite(data.searchPathWeightDerived)) {
       state.searchPathWeightDerived = clampSearchPathWeight(data.searchPathWeightDerived, 5);
+    }
+    if (typeof data.searchPathWeightDerivedPotential === "number" && Number.isFinite(data.searchPathWeightDerivedPotential)) {
+      state.searchPathWeightDerivedPotential = clampSearchPathWeight(data.searchPathWeightDerivedPotential, 20);
     }
     if (typeof data.searchPathWeightAssociation === "number" && Number.isFinite(data.searchPathWeightAssociation)) {
       state.searchPathWeightAssociation = clampSearchPathWeight(data.searchPathWeightAssociation, 100);
@@ -2894,7 +2909,7 @@ function updatePathOptionsTriggerSummary() {
   const rel = state.includeDerived ? "+ Inferred" : "Explicit";
   const mode = state.selectionMode === "set" ? "Connect set" : "Ordered";
   const so = getSearchPathOptions();
-  const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
+  const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightDerivedPotential}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
   const pMode = normalizePerspectiveClassMode(state.perspectiveClassMode);
   const pLabel =
     pMode === "dominant-share"
@@ -3818,7 +3833,7 @@ function buildAppendixBMatrixDumpLines() {
   }
   const lines = [
     `Total directed pairs (non–O-only rows): ${MATRIX.length}`,
-    "Format: from → to · direct · derived (letters as stored; Association O is not listed per cell).",
+    "Format: from → to · direct · derived(B.2) · derivedPotential(B.3) (letters as stored; Association O is not listed per cell).",
     "",
   ];
   for (const row of MATRIX) {
@@ -3826,7 +3841,11 @@ function buildAppendixBMatrixDumpLines() {
     const to = row?.to != null ? String(row.to) : "?";
     const direct = Array.isArray(row.direct) && row.direct.length ? row.direct.join("") : "—";
     const derived = Array.isArray(row.derived) && row.derived.length ? row.derived.join("") : "—";
-    lines.push(`${from} → ${to} · ${direct} · ${derived}`);
+    const derivedPotential =
+      Array.isArray(row.derivedPotential) && row.derivedPotential.length
+        ? row.derivedPotential.join("")
+        : "—";
+    lines.push(`${from} → ${to} · ${direct} · ${derived} · ${derivedPotential}`);
   }
   return lines;
 }
@@ -3987,7 +4006,7 @@ function buildFeedbackContextBody(opts = {}) {
   lines.push(`- Relationships: ${fb.includeDerived ? "+ Inferred" : "Explicit only"}`);
   lines.push(`- Association fallback (§5.2.4 bridges): ${fb.allowAssociationFallback ? "on" : "off"}`);
   lines.push(
-    `- Weighted UCS: explicit=${so.pathWeightDirect} · inferred=${so.pathWeightDerived} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
+    `- Weighted UCS: explicit=${so.pathWeightDirect} · inferred-certain=${so.pathWeightDerived} · inferred-potential=${so.pathWeightDerivedPotential} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
   );
   lines.push(
     `- Semantic rigor: preset=${normalizeSearchRigorPreset(fb.searchRigorPreset)} · corePrune=${so.restrictCoreToCore} · grammar=${so.enforceGrammar} · strictRealization=${so.strictRealization}`
@@ -4679,7 +4698,7 @@ window.submitRelationshipFeedback = async function submitRelationshipFeedback() 
         `Association fallback: ${fbSnapshot?.allowAssociationFallback ? "on" : "off"}`,
         `Waypoint mode: ${fbSnapshot?.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`,
         `Waypoints: ${wpNames || "—"}`,
-        `UCS weights (if available): direct=${so?.pathWeightDirect ?? "?"} inferred=${so?.pathWeightDerived ?? "?"} maxDepth=${so?.maxDepth ?? "?"}`,
+        `UCS weights (if available): direct=${so?.pathWeightDirect ?? "?"} inferredCertain=${so?.pathWeightDerived ?? "?"} inferredPotential=${so?.pathWeightDerivedPotential ?? "?"} maxDepth=${so?.maxDepth ?? "?"}`,
         `(technicalContext build failed: ${String(err?.message || err)})`,
       ].join("\n");
     } catch (_) {
@@ -6292,6 +6311,7 @@ function init() {
       allowAssociationFallback: false,
       pathWeightDirect: 1,
       pathWeightDerived: 5,
+      pathWeightDerivedPotential: 20,
       pathWeightAssociation: 100,
       pathWeightLayerSkip: 15,
     };
@@ -6483,6 +6503,7 @@ function rebuildGraph() {
   state.graph = buildGraph({
     allowedElements: effectiveAllowedElements(),
     includeDerived:  state.includeDerived,
+    includeDerivedPotential: state.includeDerived,
   });
 }
 
@@ -8329,8 +8350,8 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
   const so = getSearchPathOptions();
   const cogOn = so.cognitiveLoadPenalty !== false;
   const wLegend = cogOn
-    ? `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Syntax</strong> columns and <strong>Syntax Σ</strong> are base-weight totals (no depth multiplier). <strong>Total cost</strong> is the UCS objective (sum of per-segment routing costs), including cognitive-load depth penalty on relationship hops when enabled (grace <strong>${so.penaltyGracePeriod}</strong> hops, growth <strong>${so.penaltyGrowthFactor}</strong>× per extra hop).`
-    : `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Total cost</strong> matches <strong>Syntax Σ</strong> when cognitive-load penalty is off.`;
+    ? `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred-certain <strong>${so.pathWeightDerived}</strong>, inferred-potential <strong>${so.pathWeightDerivedPotential}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Syntax</strong> columns and <strong>Syntax Σ</strong> are base-weight totals (no depth multiplier). <strong>Total cost</strong> is the UCS objective (sum of per-segment routing costs), including cognitive-load depth penalty on relationship hops when enabled (grace <strong>${so.penaltyGracePeriod}</strong> hops, growth <strong>${so.penaltyGrowthFactor}</strong>× per extra hop).`
+    : `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred-certain <strong>${so.pathWeightDerived}</strong>, inferred-potential <strong>${so.pathWeightDerivedPotential}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Total cost</strong> matches <strong>Syntax Σ</strong> when cognitive-load penalty is off.`;
 
   const fmtCost = (v) => (Number.isFinite(v) ? String(v) : "—");
   const fmtRouting = (v) => {
@@ -8358,10 +8379,11 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
       const aria = isSel ? ' aria-current="true"' : "";
       const cd = meta.costDirect ?? 0;
       const cder = meta.costDerived ?? 0;
+      const cpdr = meta.costDerivedPotential ?? 0;
       const ca = meta.costAssociation ?? 0;
       const cls = meta.costLayerSkip ?? 0;
       const cv = meta.costViolation ?? 0;
-      const syntaxSum = Number.isFinite(meta.totalWeight) ? meta.totalWeight : cd + cder + ca + cls + cv;
+      const syntaxSum = Number.isFinite(meta.totalWeight) ? meta.totalWeight : cd + cder + cpdr + ca + cls + cv;
       const routeCost = Number.isFinite(meta.ucsRoutingTotal) ? meta.ucsRoutingTotal : syntaxSum;
       return `<tr class="algorithm-path-rank-row${rowCls}"${aria}>
         <td class="algorithm-path-rank-cell--idx">${rank}</td>
@@ -8369,6 +8391,7 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
         <td class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost">${fmtRouting(routeCost)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cd)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cder)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cpdr)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(ca)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cls)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cv)}</td>
@@ -8389,7 +8412,8 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
           <th scope="col" class="algorithm-path-rank-cell--idx">Route</th>
           <th scope="col" class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost" title="UCS routing total (sum of per-segment costs); includes cognitive-load depth penalty on relationship hops when enabled — this is what ranking uses">Total cost</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B explicit (uppercase) hops × explicit weight">${so.pathWeightDirect}× Explicit</th>
-          <th scope="col" class="algorithm-path-rank-cell--num" title="§5.7 inferred (lowercase) hops × inferred weight">${so.pathWeightDerived}× Inferred</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B.2 inferred hops × certain-inferred weight">${so.pathWeightDerived}× Inferred (B.2)</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B.3 potential inferred hops × potential-inferred weight">${so.pathWeightDerivedPotential}× Potential (B.3)</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="§5.2.4 Association bridge hops × association weight">${so.pathWeightAssociation}× Assoc.</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Layer-skipping surcharge (per hop meta)">${so.pathWeightLayerSkip}× Layer-skip</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Semantic / pedagogy violation add-on (per flagged hop)">${so.pathViolationPenalty}× Violation</th>
@@ -8462,7 +8486,7 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
         <span class="connect-set-note-sep" aria-hidden="true">·</span>
         <strong>UCS</strong> · max ${so.maxDepth} hops/segment
       </span>
-      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: explicit = ${so.pathWeightDirect}, inferred = ${so.pathWeightDerived}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
+      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: explicit = ${so.pathWeightDirect}, inferred-certain = ${so.pathWeightDerived}, inferred-potential = ${so.pathWeightDerivedPotential}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
       ${rankingTable}
     </div>
   </div>`;

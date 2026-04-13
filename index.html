@@ -240,7 +240,8 @@
         </p>
         <div class="help-pill-row" role="list" aria-label="Default hop weights">
           <span class="help-pill help-pill--direct" role="listitem"><strong>Explicit</strong> hop weight 1</span>
-          <span class="help-pill help-pill--derived" role="listitem"><strong>Inferred</strong> hop weight 5</span>
+          <span class="help-pill help-pill--derived" role="listitem"><strong>Inferred (B.2)</strong> hop weight 5</span>
+          <span class="help-pill help-pill--derived" role="listitem"><strong>Potential (B.3)</strong> hop weight 20</span>
           <span class="help-pill help-pill--assoc" role="listitem"><strong>Association</strong> weight 100</span>
         </div>
         <p class="help-note">
@@ -263,7 +264,7 @@
           <div class="help-card-title">Explicit, + Inferred, Semantic rigor</div>
           <ul class="help-list">
             <li><strong>Explicit</strong>: only uppercase Appendix B relationships (strictest graph).</li>
-            <li><strong>+ Inferred</strong>: also allow §5.7 inferred links (lowercase in tables) to unlock more routes.</li>
+            <li><strong>+ Inferred</strong>: include Appendix B derivations. B.2 (“certain”) is weighted lower than B.3 (“potential”).</li>
             <li><strong>Semantic rigor</strong> (Academic / Pragmatic / Discovery): bundles grammar gates with whether §5.2.4 Association may be used as a last-resort bridge. Use <strong>Advanced options → Advanced Logic Overrides</strong> for manual control.</li>
             <li><strong>Together:</strong> <strong>Explicit vs +Inferred</strong> decides which edges exist in the graph; <strong>Semantic rigor</strong> judges routes and Association on top. They are separate controls.</li>
           </ul>
@@ -380,7 +381,7 @@
   </div>
 </div>
 
-<!-- Search Depth guide: Explicit (uppercase Appendix B) vs. Inferred (lowercase / §5.7) -->
+<!-- Search Depth guide: Explicit vs inferred derivation tiers (Appendix B) -->
 <div id="search-depth-guide-modal" class="feedback-modal rigor-guide-modal" style="display:none" aria-hidden="true">
   <div class="feedback-modal-backdrop" aria-hidden="true" onclick="closeSearchDepthGuideModal()"></div>
   <div class="feedback-modal-card rigor-guide-modal-card" role="dialog" aria-modal="true" aria-labelledby="search-depth-guide-modal-title" tabindex="-1">
@@ -391,9 +392,9 @@
     <div class="rigor-guide-modal-body">
       <p class="rigor-guide-lead">This setting determines which &quot;tier&quot; of the ArchiMate relationship matrix the engine uses.</p>
       <p><strong>Explicit mode:</strong> The engine only considers <strong>Explicit</strong> relationships (shown as <strong>Uppercase</strong> letters in the Appendix B tables). These are the primary, first-degree connections defined as the core building blocks of the language.</p>
-      <p><strong>+ Inferred mode:</strong> The engine is allowed to calculate <strong>Inferred</strong> relationships (shown as <strong>Lowercase</strong> letters in the Appendix B tables). It uses the Derivation Rules (§5.7) to prove that if A→B and B→C, then a valid logical link exists between A and C across multiple layers.</p>
+      <p><strong>+ Inferred mode:</strong> The engine is allowed to use inferred relationships from Appendix B derivation rules. It distinguishes certain derivations (B.2) and potential derivations (B.3), with potential hops penalized more strongly.</p>
       <h3 class="rigor-guide-section-title rigor-guide-section-title--gates">💡 Why this is different from Semantic Rigor</h3>
-      <p>Think of this as the <strong>Source Material</strong>. It decides whether we use only <strong>Explicit</strong> (<strong>Uppercase</strong>) entries or if we are also allowed <strong>Inferred</strong> (<strong>Lowercase</strong>) entries from §5.7. <strong>Rigor is the Filter</strong>—it decides which of those results are architecturally &quot;Strong&quot; based on grammar.</p>
+      <p>Think of this as the <strong>Source Material</strong>. It decides whether we use only <strong>Explicit</strong> entries or also inferred entries from Appendix B. <strong>Rigor is the Filter</strong>—it decides which of those results are architecturally &quot;Strong&quot; based on grammar.</p>
     </div>
   </div>
 </div>
@@ -461,7 +462,7 @@
       </div>
 
       <h3 class="rigor-guide-section-title rigor-guide-section-title--depth-contrast">💡 Why this is different from Search Depth (Explicit vs. Inferred)</h3>
-      <p><strong>Semantic rigor</strong> is the <strong>Filter</strong>—which routes count as architecturally &quot;Strong&quot; based on grammar and Association rules. <strong>Search Depth</strong> (the <strong>Explicit</strong> / <strong>+ Inferred</strong> toggle) selects the <strong>Source Material</strong>: only <strong>Explicit</strong> (<strong>Uppercase</strong>) Appendix B entries, or also <strong>Inferred</strong> (<strong>Lowercase</strong> / §5.7) entries.</p>
+      <p><strong>Semantic rigor</strong> is the <strong>Filter</strong>—which routes count as architecturally &quot;Strong&quot; based on grammar and Association rules. <strong>Search Depth</strong> (the <strong>Explicit</strong> / <strong>+ Inferred</strong> toggle) selects the <strong>Source Material</strong>: only explicit Appendix B entries, or explicit plus inferred Appendix B derivations (B.2/B.3).</p>
       <p>You can have a short Explicit hop that is still flagged Informal if it breaks a grammar rule, or a longer Inferred chain that is Strong because it follows the rules.</p>
     </div>
   </div>
@@ -678,14 +679,14 @@
                 <div class="search-depth-primary-head">
                   <div class="control-label">Explicit vs inferred</div>
                   <button type="button" class="path-mode-info-btn" onclick="openSearchDepthGuideModal()"
-                    aria-label="Understanding Search Depth: Explicit vs. Inferred (Appendix B uppercase vs lowercase)"
-                    title="Search Depth: Explicit (uppercase Appendix B) vs. Inferred (lowercase / §5.7)">ℹ</button>
+                    aria-label="Understanding Search Depth: Explicit vs. Inferred (Appendix B derivation tiers)"
+                    title="Search Depth: Explicit Appendix B entries vs inferred Appendix B derivations (B.2/B.3)">ℹ</button>
                 </div>
                 <div class="toggle-group sidebar-toggle-group">
                   <button class="toggle-btn" id="btn-direct" onclick="setDerived(false)"
                     title="Explicit only: Appendix B explicit (uppercase) relationships only. Fewer paths but highest spec confidence.">Explicit</button>
                   <button class="toggle-btn active" id="btn-derived" onclick="setDerived(true)"
-                    title="+ Inferred: also include §5.7 inferred (lowercase) relationships. More paths, including cross-layer routes.">+ Inferred</button>
+                    title="+ Inferred: include Appendix B derived relationships (certain B.2 and potential B.3). More paths, including cross-layer routes.">+ Inferred</button>
                 </div>
               </div>
               <div class="control-block control-block-search-rigor">
@@ -705,7 +706,7 @@
                     <option value="custom">Custom</option>
                   </select>
                 </label>
-                <p class="search-rigor-primary-hint">Academic disables §5.2.4 Association bridges; Pragmatic and Discovery allow them as a last resort (penalised in results). Separate from <strong>Explicit vs +Inferred</strong>, which controls whether §5.7 inferred edges are included in the graph.</p>
+                <p class="search-rigor-primary-hint">Academic disables §5.2.4 Association bridges; Pragmatic and Discovery allow them as a last resort (penalised in results). Separate from <strong>Explicit vs +Inferred</strong>, which controls whether Appendix B inferred edges are included in the graph.</p>
               </div>
               <div class="control-block">
                 <details class="path-mode-advanced">
@@ -867,12 +868,13 @@
                         Cost tuning ranks competing legal routes. Lower total cost wins.
                         <br><br>
                         - <strong>Explicit hop cost</strong>: baseline for explicit Appendix B (uppercase) links.<br>
-                        - <strong>Inferred hop cost</strong>: cost for §5.7 inferred (lowercase) links (usually above explicit).<br>
+                        - <strong>Inferred (B.2) hop cost</strong>: cost for certain derivations from Appendix B.2.<br>
+                        - <strong>Potential (B.3) hop cost</strong>: cost for potential derivations from Appendix B.3 (typically higher than B.2).<br>
                         - <strong>Association hop cost</strong>: generic §5.2.4 bridge cost (keep high unless you intentionally want generic links).<br>
                         - <strong>Layer-skip penalty</strong>: extra cost when one hop jumps across an intermediate core layer (for example Business → Technology).<br>
                         - <strong>Violation penalty</strong>: extra cost for Discovery-mode grammar violations.
                         <br><br>
-                        Practical defaults: <strong>1 / 5 / 100 / 15 / 50</strong> (Explicit / Inferred / Association / Layer-skip / Violation).
+                        Practical defaults: <strong>1 / 5 / 20 / 100 / 15 / 50</strong> (Explicit / Inferred B.2 / Potential B.3 / Association / Layer-skip / Violation).
                       </div>
                       <label class="search-field">
                         <span class="search-field-label">Explicit hop cost</span>
@@ -881,10 +883,16 @@
                           title="Uniform-cost weight for each explicit Appendix B (uppercase) hop (lower = preferred).">
                       </label>
                       <label class="search-field">
-                        <span class="search-field-label">Inferred hop cost</span>
+                        <span class="search-field-label">Inferred (B.2) hop cost</span>
                         <input type="number" class="viewpoint-select search-weight-input" id="search-weight-derived" min="1" max="500" step="1" value="5"
                           onchange="onSearchOptionsChange()"
-                          title="Weight for each §5.7 inferred (lowercase) hop (usually higher than explicit).">
+                          title="Weight for each Appendix B.2 inferred hop (usually higher than explicit).">
+                      </label>
+                      <label class="search-field">
+                        <span class="search-field-label">Potential (B.3) hop cost</span>
+                        <input type="number" class="viewpoint-select search-weight-input" id="search-weight-derived-potential" min="1" max="500" step="1" value="20"
+                          onchange="onSearchOptionsChange()"
+                          title="Weight for each Appendix B.3 potential-derived hop (usually higher than Appendix B.2 inferred).">
                       </label>
                       <label class="search-field">
                         <span class="search-field-label">Association hop cost</span>

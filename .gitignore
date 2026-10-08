@@ -24,3 +24,4 @@ Untitled
 
 # Node (dev dependencies — never commit)
 node_modules/
+__pycache__/

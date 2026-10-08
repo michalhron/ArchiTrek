@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
  * Regenerates data/matrix.js from:
- *   - data/source/relationships.xml (AlbertoDMendoza/archimate_ontology validation matrix)
- *   - data/source/matrix-code-buckets.json (explicit / DR / PDR buckets, keyed "from|to" → code → "d"|"der"|"pdr")
+ *   - data/source/relationships.xml (allowed set, AlbertoDMendoza/archimate_ontology)
+ *   - data/source/matrix-code-buckets.json (direct / DR / PDR buckets, keyed "from|to" → code → "d"|"der"|"pdr",
+ *     built by scripts/build-buckets.py from data/source/relationships-cased.xml and upstream's rules)
+ *   - data/source/UPSTREAM.md (upstream commit and dates for the header)
  *
  * Run from repo root: node scripts/build-matrix.mjs
  */
@@ -66,7 +68,19 @@ function relationLetters(rel) {
   return [...out].sort();
 }
 
+/** Commit / dates recorded in data/source/UPSTREAM.md. */
+function readUpstreamInfo() {
+  const md = fs.readFileSync(path.join(root, "data", "source", "UPSTREAM.md"), "utf8");
+  const pick = (re) => (md.match(re) || [])[1] || "unknown";
+  return {
+    commit: pick(/Commit vendored: `([0-9a-f]{40})`/),
+    vendored: pick(/Vendored on: (\d{4}-\d{2}-\d{2})/),
+    bucketsBuilt: pick(/Buckets built on: (\d{4}-\d{2}-\d{2})/),
+  };
+}
+
 function main() {
+  const upstream = readUpstreamInfo();
   const xml = fs.readFileSync(path.join(root, "data", "source", "relationships.xml"), "utf8");
   const buckets = JSON.parse(
     fs.readFileSync(path.join(root, "data", "source", "matrix-code-buckets.json"), "utf8")
@@ -125,13 +139,25 @@ function main() {
   lines.push(`/**`);
   lines.push(` * ArchiMate 3.2 — Relationship Validity Matrix`);
   lines.push(` *`);
-  lines.push(` * Primary source: machine-readable Appendix B–style table in`);
-  lines.push(` * data/source/relationships.xml (from AlbertoDMendoza/archimate_ontology validation).`);
+  lines.push(` * Sources (vendored in data/source/, see data/source/UPSTREAM.md):`);
+  lines.push(` *   relationships.xml        allowed set (Appendix B, case-folded), from`);
+  lines.push(` *                            AlbertoDMendoza/archimate_ontology`);
+  lines.push(` *   relationships-cased.xml  upstream derivation/relationships.xml at commit`);
+  lines.push(` *                            ${upstream.commit} (vendored ${upstream.vendored})`);
+  lines.push(` *   matrix-code-buckets.json per-code bucket, built by scripts/build-buckets.py on ${upstream.bucketsBuilt}`);
   lines.push(` *`);
-  lines.push(` * Explicit baseline + Appendix B.2 (DR) + Appendix B.3 (PDR) buckets follow`);
-  lines.push(` * data/source/matrix-code-buckets.json (derived from the prior in-repo normative split).`);
+  lines.push(` * Buckets:`);
+  lines.push(` *   direct            UPPERCASE in relationships-cased.xml (explicit in the chapter 3-12`);
+  lines.push(` *                     metamodel figures)`);
+  lines.push(` *   derived           lowercase, and produced by upstream's DR1-DR8 rules (Appendix B.2,`);
+  lines.push(` *                     valid derivation) run to a fixed point over conformance/fixture-direct.ttl`);
+  lines.push(` *   derivedPotential  lowercase, and produced only once PDR1-PDR12 (Appendix B.3) also run`);
   lines.push(` *`);
-  lines.push(` * Regenerate: node scripts/build-matrix.mjs`);
+  lines.push(` * ArchiMate(R) 3.2 Appendix B content (C) 2012-2023 The Open Group. ArchiMate is a registered`);
+  lines.push(` * trademark of The Open Group. Upstream encoding: Apache-2.0, (C) Alberto D. Mendoza.`);
+  lines.push(` *`);
+  lines.push(` * Regenerate: python3 scripts/build-buckets.py --upstream <archimate_ontology checkout> --write`);
+  lines.push(` *             node scripts/build-matrix.mjs`);
   lines.push(` *`);
   lines.push(` * Normative human-readable tables:`);
   lines.push(` * https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html`);

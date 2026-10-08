@@ -1,0 +1,713 @@
+{
+ "note": "Lowercase (derived) in relationships-cased.xml, but produced by none of upstream's DR/PDR rules over conformance/fixture-direct.ttl. Self-pairs (X -> X) cannot be produced there because every rule requires ?a != ?c and the fixture has one individual per type. Bucket: previous der/pdr kept; a previous 'd' becomes 'pdr'.",
+ "upstream_commit": "e2135eb0ea09da1e71ad7bc83917f679f6b27d72",
+ "codes": [
+  {
+   "from": "Application Collaboration",
+   "to": "Application Collaboration",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Collaboration",
+   "to": "Application Collaboration",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Collaboration",
+   "to": "Application Collaboration",
+   "code": "V",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Component",
+   "to": "Application Component",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Component",
+   "to": "Application Component",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Component",
+   "to": "Application Component",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Event",
+   "to": "Application Event",
+   "code": "V",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Function",
+   "to": "Application Function",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Interaction",
+   "to": "Application Interaction",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Interface",
+   "to": "Application Interface",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Interface",
+   "to": "Application Interface",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Interface",
+   "to": "Application Interface",
+   "code": "V",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Application Process",
+   "to": "Application Process",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Application Service",
+   "to": "Application Service",
+   "code": "V",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Artifact",
+   "to": "Artifact",
+   "code": "R",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Assessment",
+   "to": "Assessment",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Actor",
+   "to": "Business Actor",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Actor",
+   "to": "Business Actor",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Actor",
+   "to": "Business Actor",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Collaboration",
+   "to": "Business Collaboration",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Collaboration",
+   "to": "Business Collaboration",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Collaboration",
+   "to": "Business Collaboration",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Event",
+   "to": "Business Event",
+   "code": "V",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Function",
+   "to": "Business Function",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Interaction",
+   "to": "Business Interaction",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Interface",
+   "to": "Business Interface",
+   "code": "F",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Interface",
+   "to": "Business Interface",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Interface",
+   "to": "Business Interface",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Process",
+   "to": "Business Process",
+   "code": "V",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Role",
+   "to": "Business Role",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Business Role",
+   "to": "Business Role",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Role",
+   "to": "Business Role",
+   "code": "V",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Business Service",
+   "to": "Business Service",
+   "code": "V",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Communication Network",
+   "to": "Communication Network",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Communication Network",
+   "to": "Communication Network",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Communication Network",
+   "to": "Communication Network",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Constraint",
+   "to": "Constraint",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Device",
+   "to": "Device",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Device",
+   "to": "Device",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Device",
+   "to": "Device",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Driver",
+   "to": "Driver",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Equipment",
+   "to": "Equipment",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Equipment",
+   "to": "Equipment",
+   "code": "R",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Equipment",
+   "to": "Equipment",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Equipment",
+   "to": "Equipment",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Facility",
+   "to": "Facility",
+   "code": "F",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Facility",
+   "to": "Facility",
+   "code": "I",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Facility",
+   "to": "Facility",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Facility",
+   "to": "Facility",
+   "code": "V",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Goal",
+   "to": "Goal",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Location",
+   "code": "C",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Location",
+   "code": "G",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Location",
+   "code": "S",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Plateau",
+   "code": "C",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Plateau",
+   "code": "G",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Grouping",
+   "to": "Plateau",
+   "code": "S",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Location",
+   "to": "Grouping",
+   "code": "S",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Location",
+   "to": "Location",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Location",
+   "to": "Location",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Location",
+   "to": "Location",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Location",
+   "to": "Plateau",
+   "code": "C",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Location",
+   "to": "Plateau",
+   "code": "G",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Material",
+   "to": "Material",
+   "code": "R",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Meaning",
+   "to": "Meaning",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Node",
+   "to": "Node",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Node",
+   "to": "Node",
+   "code": "I",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Node",
+   "to": "Node",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Node",
+   "to": "Node",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Outcome",
+   "to": "Outcome",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Path",
+   "to": "Path",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Path",
+   "to": "Path",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Path",
+   "to": "Path",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Plateau",
+   "to": "Grouping",
+   "code": "I",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Plateau",
+   "to": "Grouping",
+   "code": "S",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Plateau",
+   "to": "Stakeholder",
+   "code": "I",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Principle",
+   "to": "Principle",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Product",
+   "to": "Product",
+   "code": "F",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Product",
+   "to": "Product",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Product",
+   "to": "Product",
+   "code": "V",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Requirement",
+   "to": "Constraint",
+   "code": "S",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Requirement",
+   "to": "Requirement",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Resource",
+   "to": "Resource",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Resource",
+   "to": "Resource",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Resource",
+   "to": "Resource",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Stakeholder",
+   "to": "Stakeholder",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  },
+  {
+   "from": "System Software",
+   "to": "System Software",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "System Software",
+   "to": "System Software",
+   "code": "R",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "System Software",
+   "to": "System Software",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "System Software",
+   "to": "System Software",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Collaboration",
+   "to": "Technology Collaboration",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Collaboration",
+   "to": "Technology Collaboration",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Technology Collaboration",
+   "to": "Technology Collaboration",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Event",
+   "to": "Technology Event",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Function",
+   "to": "Technology Function",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Interaction",
+   "to": "Technology Interaction",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Interface",
+   "to": "Technology Interface",
+   "code": "F",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Interface",
+   "to": "Technology Interface",
+   "code": "T",
+   "previous": "pdr",
+   "assigned": "pdr"
+  },
+  {
+   "from": "Technology Interface",
+   "to": "Technology Interface",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Process",
+   "to": "Technology Process",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Technology Service",
+   "to": "Technology Service",
+   "code": "V",
+   "previous": "der",
+   "assigned": "der"
+  },
+  {
+   "from": "Value",
+   "to": "Value",
+   "code": "N",
+   "previous": "d",
+   "assigned": "pdr"
+  }
+ ]
+}

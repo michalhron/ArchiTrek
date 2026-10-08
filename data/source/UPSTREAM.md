@@ -3,6 +3,7 @@
 - Repository: https://github.com/AlbertoDMendoza/archimate_ontology
 - Commit vendored: `e2135eb0ea09da1e71ad7bc83917f679f6b27d72` (2026-09-11, "Let a profile mark which pointers carry inherited context")
 - Vendored on: 2026-10-08
+- Buckets built on: 2026-10-08 (scripts/build-buckets.py, Apache Jena 6.2.0 `arq`)
 - File: `derivation/relationships.xml` -> `data/source/relationships-cased.xml` (unmodified copy; verify with `cmp`)
 - License: Apache License 2.0, © Alberto D. Mendoza (see `UPSTREAM-LICENSE-Apache-2.0.txt`)
 

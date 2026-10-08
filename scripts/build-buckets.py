@@ -104,7 +104,7 @@ def instance_model(up, n, work):
             continue
         a, p, b = m.groups()
         if p == "a":
-            out += [f"<{INST}{a}__{i}> a <{NS}{b}> ." for i in range(1, n + 1)]
+            out += [f"<{INST}{a}__{i}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{NS}{b}> ." for i in range(1, n + 1)]
         else:
             out += [f"<{INST}{a}__{i}> <{NS}{p[6:]}> <{INST}{b}__{j}> ." for i in range(1, n + 1) for j in range(1, n + 1)]
     f = Path(work) / f"model-x{n}.nt"
@@ -181,6 +181,10 @@ def main():
     ap.add_argument("--upstream", required=True, type=Path)
     ap.add_argument("--write", action="store_true", help="write data/source/matrix-code-buckets.json")
     ap.add_argument("--report", type=Path, help="write a JSON report here")
+    ap.add_argument("--unexplained", choices=["stop", "keep-old"], default="stop",
+                    help="lowercase codes no rule produces: 'stop' (default) refuses to write; 'keep-old' keeps the "
+                         "previous der/pdr bucket and turns a previous 'd' into 'pdr' (derived per upstream, validity "
+                         "not confirmed by the rules). Every such code is listed in data/source/unexplained-codes.json")
     ap.add_argument("--instances", type=int, default=1,
                     help="diagnostic: use N individuals per type instead of upstream's fixture (never with --write)")
     a = ap.parse_args()
@@ -212,7 +216,8 @@ def main():
     der, derall = keyed(dr), keyed(allr)
 
     cased = cased_codes(ex)
-    buckets, unexplained = {}, []
+    previous = json.loads((ROOT / "data/source/matrix-code-buckets.json").read_text())
+    buckets, unexplained, fallback = {}, [], []
     lower, direct = set(), set()
     for key, codes in cased.items():
         for c, case in codes.items():
@@ -226,22 +231,36 @@ def main():
                     buckets.setdefault(key, {})[c] = "pdr"
                 else:
                     unexplained.append(f"{key}|{c}")
+                    if a.unexplained == "keep-old":
+                        prev = previous.get(key, {}).get(c, "d")
+                        buckets.setdefault(key, {})[c] = prev if prev in ("der", "pdr") else "pdr"
+                        fallback.append({"from": key.split("|")[0], "to": key.split("|")[1], "code": c,
+                                         "previous": prev, "assigned": buckets[key][c]})
     # The rules skip conclusions already asserted (FILTER NOT EXISTS), so they never re-produce a
     # direct code; anything produced outside the lowercase set is "permitted nowhere" upstream.
     extra = sorted(f"{k}|{c}" for (k, c) in derall if (k, c) not in lower)
     totals = {b: sum(v == b for m in buckets.values() for v in m.values()) for b in ("d", "der", "pdr")}
     report = {"upstream_commit": commit, "totals": totals, "lowercase": len(lower),
-              "unexplained_lowercase": sorted(unexplained), "produced_outside_lowercase": extra}
-    print(json.dumps({**report, "unexplained_lowercase": len(unexplained), "produced_outside_lowercase": len(extra)}, indent=1))
+              "unexplained_lowercase": sorted(unexplained), "produced_outside_lowercase": extra,
+              "der": sorted(f"{k}|{c}" for (k, c) in der), "der_or_pdr": sorted(f"{k}|{c}" for (k, c) in derall)}
+    print(json.dumps({k: (len(v) if isinstance(v, list) else v) for k, v in report.items()}, indent=1))
     if a.report:
         a.report.write_text(json.dumps(report, indent=1))
-    if unexplained or extra:
+    if extra or (unexplained and a.unexplained == "stop"):
         print("Mismatch between rules and the cased table; buckets not written.", file=sys.stderr)
         return 2
     if a.write:
         out = ROOT / "data/source/matrix-code-buckets.json"
         out.write_text(json.dumps({k: dict(sorted(buckets[k].items())) for k in sorted(buckets)}, separators=(",", ":")))
         print(f"wrote {out.relative_to(ROOT)}")
+        un = ROOT / "data/source/unexplained-codes.json"
+        un.write_text(json.dumps({
+            "note": "Lowercase (derived) in relationships-cased.xml, but produced by none of upstream's DR/PDR rules "
+                    "over conformance/fixture-direct.ttl. Self-pairs (X -> X) cannot be produced there because every "
+                    "rule requires ?a != ?c and the fixture has one individual per type. Bucket: previous der/pdr kept; "
+                    "a previous 'd' becomes 'pdr'.",
+            "upstream_commit": commit, "codes": fallback}, indent=1) + "\n")
+        print(f"wrote {un.relative_to(ROOT)} ({len(fallback)} codes)")
 
 
 if __name__ == "__main__":

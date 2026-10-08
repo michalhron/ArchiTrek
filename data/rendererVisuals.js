@@ -206,7 +206,6 @@ const SHAPES = {
   "Technology Event":         { type: "chevron" },
   /** Plain rectangle + capsule glyph in the corner (ArchiMate 140×60 service body in the badge). */
   "Technology Service":       { type: "rect" },
-  "Technology Object":        { type: "rect" },
   /** Plain rectangle + file glyph (not the folded-corner document shape). */
   "Artifact":                 { type: "rect" },
   // Technology (physical ArchiMate elements)
@@ -441,7 +440,6 @@ const ICONS = {
   // Pill / capsule (140×60 artwork) fitted to 12×12 corner badge.
   "Technology Service": () =>
     `<g transform="translate(0 ${(12 - (60 * 12) / 140) / 2}) scale(${12 / 140})"><rect x="10" y="10" width="120" height="40" rx="20" ry="20" fill="#ccffcc" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`,
-  "Technology Object":        () => `<rect x="1" y="2" width="10" height="9" stroke="currentColor" fill="none" stroke-width="1.1"/><line x1="1" y1="5" x2="11" y2="5" stroke="currentColor" stroke-width="1.1"/>`,
   // 80×100 artwork fitted to 12×12 corner badge — document with folded corner.
   "Artifact": () =>
     `<g transform="translate(0 ${(12 - (100 * 12) / 80) / 2}) scale(${12 / 80})"><rect x="0" y="0" width="80" height="100" fill="#ccffcc"/><path d="M 15 10 L 50 10 L 65 25 L 65 90 L 15 90 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><path d="M 50 10 L 50 25 L 65 25" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></g>`,

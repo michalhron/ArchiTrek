@@ -2174,6 +2174,7 @@ function isActiveCodeDirectInMatrix(step, activeCode) {
   const U = String(activeCode).toUpperCase();
   if (step.matrixDirectCodes?.length && step.matrixDirectCodes.includes(U)) return true;
   if (step.matrixDerivedCodes?.length && step.matrixDerivedCodes.includes(U)) return false;
+  if (step.matrixDerivedPotentialCodes?.length && step.matrixDerivedPotentialCodes.includes(U)) return false;
   return step.isDirect ?? true;
 }
 
@@ -2186,20 +2187,23 @@ function pathStepWithCanonicalMatrixRow(step, fromEl, toEl) {
   const row = mergeMatrixRowForPair(fromEl, toEl, true);
   const md = (row.direct || []).map((c) => String(c).toUpperCase());
   const mder = (row.derived || []).map((c) => String(c).toUpperCase());
-  if (md.length === 0 && mder.length === 0) return step;
-  return { ...step, matrixDirectCodes: md, matrixDerivedCodes: mder };
+  const mpdr = (row.derivedPotential || []).map((c) => String(c).toUpperCase());
+  if (md.length === 0 && mder.length === 0 && mpdr.length === 0) return step;
+  return { ...step, matrixDirectCodes: md, matrixDerivedCodes: mder, matrixDerivedPotentialCodes: mpdr };
 }
 
 /**
  * Short label for relationship-choice buttons: Appendix B explicit vs §5.7 inferred from the matrix row.
  * Association (O) is the universal fallback (§5.2.4), not an Appendix B cell code — show as distinct from Explicit/Inferred.
  */
-function relChoiceMatrixKindLabel(code, matrixDirectCodes, matrixDerivedCodes) {
+function relChoiceMatrixKindLabel(code, matrixDirectCodes, matrixDerivedCodes, matrixDerivedPotentialCodes) {
   const U = String(code || "").toUpperCase();
   if (U === "O") return "Generic";
   const d = (matrixDirectCodes || []).map((c) => String(c).toUpperCase());
   const der = (matrixDerivedCodes || []).map((c) => String(c).toUpperCase());
+  const pder = (matrixDerivedPotentialCodes || []).map((c) => String(c).toUpperCase());
   if (d.includes(U)) return "Explicit";
+  if (pder.includes(U)) return "Potential";
   if (der.includes(U)) return "Inferred";
   return "";
 }
@@ -2514,6 +2518,8 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
   matrixDirectCodes = null,
   /** Appendix B derived letters for this hop */
   matrixDerivedCodes = null,
+  /** Appendix B potential derived letters for this hop */
+  matrixDerivedPotentialCodes = null,
   /**
    * Vertical compact + flanked composite (Communication Network, Path, …): place hop notes west of the spine
    * when entering that row so labels do not sit over the right-hand illustration box.
@@ -2636,10 +2642,12 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     !choiceUndecided && style.startMarker != null && style.startMarker !== "none";
   let rowMd = matrixDirectCodes;
   let rowMder = matrixDerivedCodes;
+  let rowMpder = matrixDerivedPotentialCodes;
   if (reverseLayout && typeof mergeMatrixRowForPair === "function") {
     const row = mergeMatrixRowForPair(semanticTo, semanticFrom, true);
     if (row?.direct?.length) rowMd = row.direct.map((c) => String(c).toUpperCase());
     if (row?.derived?.length) rowMder = row.derived.map((c) => String(c).toUpperCase());
+    if (row?.derivedPotential?.length) rowMpder = row.derivedPotential.map((c) => String(c).toUpperCase());
   }
   const isAssocBridge = !!isAssociationBridge;
   const forcedEnds = forcedDirectionEndpointsForHop(edgeConstraints, semanticFrom, semanticTo);
@@ -2655,11 +2663,13 @@ function drawArrow(x1, y1, x2, y2, codes, isDirect, svg, {
     const row = mergeMatrixRowForPair(forcedEnds.from, forcedEnds.to, true);
     if (row.direct.includes(UPPER)) isDirectForStroke = true;
     else if (row.derived.includes(UPPER)) isDirectForStroke = false;
+    else if ((row.derivedPotential || []).includes(UPPER)) isDirectForStroke = false;
     else isDirectForStroke = isDirect;
   } else {
     isDirectForStroke = (() => {
       if (rowMd && rowMd.includes(UPPER)) return true;
       if (rowMder && rowMder.includes(UPPER)) return false;
+      if (rowMpder && rowMpder.includes(UPPER)) return false;
       return isDirect;
     })();
   }
@@ -3990,6 +4000,7 @@ function renderVerticalCompactDiagram(
         outerArcTrackX: null,
         matrixDirectCodes: step.matrixDirectCodes,
         matrixDerivedCodes: step.matrixDerivedCodes,
+        matrixDerivedPotentialCodes: step.matrixDerivedPotentialCodes,
         labelSpaceRegistry: !strokeOnly && interactiveOnly ? verticalEdgeLabelRegistry : null,
         isAssociationBridge: !!step.isAssociation,
         semanticFrom: prevEl,
@@ -4092,6 +4103,7 @@ function renderCompact(svg, flatSteps, {
       strokeOnly: true,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      matrixDerivedPotentialCodes: step.matrixDerivedPotentialCodes,
       isAssociationBridge: !!step.isAssociation,
       semanticFrom: flatSteps[i - 1].element,
       semanticTo: flatSteps[i].element,
@@ -4114,6 +4126,7 @@ function renderCompact(svg, flatSteps, {
       interactiveOnly: true,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      matrixDerivedPotentialCodes: step.matrixDerivedPotentialCodes,
       isAssociationBridge: !!step.isAssociation,
       semanticFrom: flatSteps[i - 1].element,
       semanticTo: flatSteps[i].element,
@@ -4566,6 +4579,7 @@ function renderSwimlane(svg, flatSteps, {
       disableStraddleLeader: isCompactHorizontal,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      matrixDerivedPotentialCodes: step.matrixDerivedPotentialCodes,
       swimlaneOrthogonalBusX: swimlaneBusXByHop.get(i) ?? null,
       swimlaneOrthoBusMaxX,
       swimlaneLabelObstacles,
@@ -4613,6 +4627,7 @@ function renderSwimlane(svg, flatSteps, {
       disableStraddleLeader: isCompactHorizontal,
       matrixDirectCodes: step.matrixDirectCodes,
       matrixDerivedCodes: step.matrixDerivedCodes,
+      matrixDerivedPotentialCodes: step.matrixDerivedPotentialCodes,
       swimlaneOrthogonalBusX: swimlaneBusXByHop.get(i) ?? null,
       swimlaneOrthoBusMaxX: swimlaneOrthoBusMaxX2,
       swimlaneLabelObstacles,
@@ -5386,13 +5401,16 @@ function formalMetamodelInnerHtmlForPair(fromEl, toEl, activeCode, rigorPreset, 
 
   let matrixDirectForUi = hopStep?.matrixDirectCodes ?? [];
   let matrixDerivedForUi = hopStep?.matrixDerivedCodes ?? [];
+  let matrixDerivedPotentialForUi = hopStep?.matrixDerivedPotentialCodes ?? [];
   if (typeof mergeMatrixRowForPair === "function") {
     const row = mergeMatrixRowForPair(fromEl, toEl, true);
     const md = (row.direct || []).map((c) => String(c).toUpperCase());
     const mder = (row.derived || []).map((c) => String(c).toUpperCase());
-    if (md.length + mder.length > 0) {
+    const mpder = (row.derivedPotential || []).map((c) => String(c).toUpperCase());
+    if (md.length + mder.length + mpder.length > 0) {
       matrixDirectForUi = md;
       matrixDerivedForUi = mder;
+      matrixDerivedPotentialForUi = mpder;
     }
   }
   const hopTier = pathStepWithCanonicalMatrixRow(hopStep, fromEl, toEl);
@@ -5412,8 +5430,11 @@ function formalMetamodelInnerHtmlForPair(fromEl, toEl, activeCode, rigorPreset, 
     !!hopTier &&
     !isActiveCodeDirectInMatrix(hopTier, activeCodeUpper);
   const semanticLogicSentence = (() => {
+    if (semanticHop?.rule === "DerivedPotential") {
+      return derivationInfo?.studentText || "This is a potential inferred relationship from Appendix B.3 derivation rules.";
+    }
     if (semanticHop?.rule === "Derived" || choiceIsMatrixDerived) {
-      return derivationInfo?.studentText || "This is an Inferred relationship allowed by §5.7 derivation rules.";
+      return derivationInfo?.studentText || "This is an inferred relationship allowed by Appendix B derivation rules.";
     }
     if (semanticHop?.rule === "Association" || activeCodeUpper === "O" || hopStep?.isAssociation) {
       const pedagogyOpts = mergeSemanticTierOpts({ resolvedPrimaryCode: activeCodeUpper });
@@ -5455,6 +5476,8 @@ function formalMetamodelInnerHtmlForPair(fromEl, toEl, activeCode, rigorPreset, 
       : "";
   const directCodesText = (matrixDirectForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
   const derivedCodesText = (matrixDerivedForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
+  const derivedPotentialCodesText =
+    (matrixDerivedPotentialForUi || []).map((c) => String(c).toUpperCase()).join(", ") || "—";
   const derivationFormula =
     derivationInfo?.formula
     || (semanticHop?.rule === "Derived" || choiceIsMatrixDerived
@@ -5470,7 +5493,7 @@ function formalMetamodelInnerHtmlForPair(fromEl, toEl, activeCode, rigorPreset, 
       <div class="explain-derivation-logic-body">
         <div><strong>Rule math:</strong> ${escPathDiag(derivationFormula)}</div>
         <div style="margin-top:6px">${escPathDiag(derivationStudentText)}</div>
-        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · explicit: [${escPathDiag(directCodesText)}] · inferred: [${escPathDiag(derivedCodesText)}]</div>
+        <div style="margin-top:8px;color:var(--text-3)">Matrix row snapshot · explicit: [${escPathDiag(directCodesText)}] · inferred(B.2): [${escPathDiag(derivedCodesText)}] · potential(B.3): [${escPathDiag(derivedPotentialCodesText)}]</div>
       </div>
     </details>`;
 
@@ -5522,6 +5545,7 @@ function explainEdge(
   architectNotesHtml = "",
   matrixDirectCodes = null,
   matrixDerivedCodes = null,
+  matrixDerivedPotentialCodes = null,
   semanticHop = null,
   hopStep = null,
   rigorPreset = "academic",
@@ -5570,13 +5594,16 @@ function explainEdge(
   })();
   let matrixDirectForUi = matrixDirectCodes ?? [];
   let matrixDerivedForUi = matrixDerivedCodes ?? [];
+  let matrixDerivedPotentialForUi = matrixDerivedPotentialCodes ?? [];
   if (typeof mergeMatrixRowForPair === "function") {
     const row = mergeMatrixRowForPair(fromEl, toEl, true);
     const md = (row.direct || []).map((c) => String(c).toUpperCase());
     const mder = (row.derived || []).map((c) => String(c).toUpperCase());
-    if (md.length + mder.length > 0) {
+    const mpder = (row.derivedPotential || []).map((c) => String(c).toUpperCase());
+    if (md.length + mder.length + mpder.length > 0) {
       matrixDirectForUi = md;
       matrixDerivedForUi = mder;
+      matrixDerivedPotentialForUi = mpder;
     }
   }
   const hopTier = pathStepWithCanonicalMatrixRow(hopStep, fromEl, toEl);
@@ -5600,7 +5627,12 @@ function explainEdge(
               const title = isAssoc
                 ? "Association (§5.2.4) is the most permissive (generic) relationship. Prefer a specific relationship type when it fits; use Association when it better matches the context."
                 : "";
-              const kindLabel = relChoiceMatrixKindLabel(cStr, matrixDirectForUi, matrixDerivedForUi);
+              const kindLabel = relChoiceMatrixKindLabel(
+                cStr,
+                matrixDirectForUi,
+                matrixDerivedForUi,
+                matrixDerivedPotentialForUi
+              );
               const kindHtml = kindLabel
                 ? `<span class="edge-rel-choice-btn__kind">${escPathDiag(kindLabel)}</span>`
                 : "";
@@ -5642,21 +5674,24 @@ function explainEdge(
   const reverseRow =
     typeof mergeMatrixRowForPair === "function"
       ? mergeMatrixRowForPair(revFrom, revTo, true)
-      : { merged: [], direct: [], derived: [] };
+      : { merged: [], direct: [], derived: [], derivedPotential: [] };
   const revMerged = reverseRow.merged || [];
   const revHasMatrix = revMerged.length > 0;
   const revMd = (reverseRow.direct || []).map((c) => String(c).toUpperCase());
   const revMder = (reverseRow.derived || []).map((c) => String(c).toUpperCase());
+  const revMpder = (reverseRow.derivedPotential || []).map((c) => String(c).toUpperCase());
   const revPrimary = revHasMatrix
-    ? String(revMd[0] || revMder[0] || "O").toUpperCase()
+    ? String(revMd[0] || revMder[0] || revMpder[0] || "O").toUpperCase()
     : "O";
   const revHopStepBase = revHasMatrix
     ? {
         element: revTo,
         codes: revMerged,
         isDirect: revMd.includes(revPrimary),
+        isPotentialDerived: revMpder.includes(revPrimary),
         matrixDirectCodes: revMd,
         matrixDerivedCodes: revMder,
+        matrixDerivedPotentialCodes: revMpder,
       }
     : {
         element: revTo,
@@ -5665,6 +5700,7 @@ function explainEdge(
         isAssociation: true,
         matrixDirectCodes: [],
         matrixDerivedCodes: [],
+        matrixDerivedPotentialCodes: [],
       };
   const revHopStep = pathStepWithCanonicalMatrixRow(revHopStepBase, revFrom, revTo);
   const revSemanticHop = revHasMatrix
@@ -6399,6 +6435,7 @@ function explainPath(
                 architectNotesHtml,
                 hopStepForExplain.matrixDirectCodes,
                 hopStepForExplain.matrixDerivedCodes,
+                hopStepForExplain.matrixDerivedPotentialCodes,
                 curr.semanticHop || null,
                 hopStepForExplain,
                 rigorPreset,
@@ -6946,9 +6983,11 @@ function formatMatrixCodesForHopCell(fromEl, toEl) {
     if (row.from === fromEl && row.to === toEl) {
       const d = (row.direct || []).length ? (row.direct || []).join(", ") : "—";
       const der = (row.derived || []).length ? (row.derived || []).join(", ") : "—";
+      const pder = (row.derivedPotential || []).length ? (row.derivedPotential || []).join(", ") : "—";
       return `<span class="aspect-cell-hop-matrix">
         <span class="aspect-cell-hop-matrix__row"><span class="aspect-cell-hop-matrix__lab">direct</span> ${d}</span>
         <span class="aspect-cell-hop-matrix__row"><span class="aspect-cell-hop-matrix__lab">derived</span> ${der}</span>
+        <span class="aspect-cell-hop-matrix__row"><span class="aspect-cell-hop-matrix__lab">potential</span> ${pder}</span>
       </span>`;
     }
   }

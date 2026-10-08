@@ -43,8 +43,10 @@ window.state = {
   searchEffort: "balanced",
   /** UCS cost per direct Appendix B hop (integer 1–500). */
   searchPathWeightDirect: 1,
-  /** UCS cost per §5.7 derived hop. */
+  /** UCS cost per Appendix B.2 derived hop. */
   searchPathWeightDerived: 5,
+  /** UCS cost per Appendix B.3 potential-derived hop. */
+  searchPathWeightDerivedPotential: 20,
   /** UCS cost per §5.2.4 Association hop. */
   searchPathWeightAssociation: 100,
   /** UCS surcharge for hops that skip intermediate core layers. */
@@ -140,6 +142,24 @@ function parseHydrationFromUrl() {
       const idx = Number(pathRaw);
       if (Number.isFinite(idx) && idx >= 0) out.activePathIdx = Math.floor(idx);
     }
+    const hasFlowParam = sp.has("flow") || sp.has("pathFlow");
+    const flowRaw = String(sp.get("flow") || sp.get("pathFlow") || "").trim().toLowerCase();
+    if (hasFlowParam && (flowRaw === "horizontal" || flowRaw === "vertical" || flowRaw === "compact")) {
+      out.pathFlow = flowRaw;
+    }
+    const hasRoutingParam = sp.has("route") || sp.has("routing");
+    if (hasRoutingParam) {
+      out._hasRoutingParam = true;
+      const routingRaw = String(sp.get("route") || sp.get("routing") || "").trim();
+      const parsedRouting = parseSharedRoutingPayload(routingRaw);
+      if (parsedRouting) {
+        out.edgeConstraints = parsedRouting.edgeConstraints;
+        out.userChoices = parsedRouting.userChoices;
+      } else {
+        out.edgeConstraints = [];
+        out.userChoices = {};
+      }
+    }
     const waypointEntries = [...sp.entries()]
       .map(([k, v]) => {
         const m = /^wp(\d+)$/i.exec(k);
@@ -215,8 +235,34 @@ function getPlainAppState() {
 function trackEvent(name, data) {
   try {
     const fn = window.umami && typeof window.umami.track === "function" ? window.umami.track : null;
-    if (!fn) return;
-    fn(name, data && typeof data === "object" ? data : undefined);
+    if (fn) fn(name, data && typeof data === "object" ? data : undefined);
+  } catch (_) {
+    // Analytics must never break the app.
+  }
+  try {
+    const gtag = typeof window.gtag === "function" ? window.gtag : null;
+    if (!gtag) return;
+    const payload = data && typeof data === "object" ? data : {};
+    gtag("event", String(name || "").trim() || "custom", payload);
+  } catch (_) {
+    // Analytics must never break the app.
+  }
+}
+
+/** GA4 SPA page views when the app updates the URL via history (see syncUrlFromState). */
+function trackGaVirtualPageView() {
+  try {
+    const gtag = typeof window.gtag === "function" ? window.gtag : null;
+    if (!gtag) return;
+    const mid = String(window.ANALYTICS?.ga4?.measurementId || "").trim();
+    if (!mid) return;
+    let page_path = `${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}`;
+    if (page_path.length > 2048) page_path = page_path.slice(0, 2048);
+    const page_title = typeof document !== "undefined" ? String(document.title || "") : "";
+    gtag("config", mid, {
+      page_path,
+      page_title,
+    });
   } catch (_) {
     // Analytics must never break the app.
   }
@@ -351,6 +397,7 @@ const SEARCH_EFFORT_MAX_STATES = {
 const DEFAULT_SEARCH_PATH_WEIGHTS = Object.freeze({
   searchPathWeightDirect: 1,
   searchPathWeightDerived: 5,
+  searchPathWeightDerivedPotential: 20,
   searchPathWeightAssociation: 100,
   searchPathWeightLayerSkip: 15,
   searchPathWeightViolation: 50,
@@ -561,14 +608,16 @@ function getSearchPathOptions({ forceFullMetamodel = false } = {}) {
     maxStates,
     pathWeightDirect: clampSearchPathWeight(state.searchPathWeightDirect, 1),
     pathWeightDerived: clampSearchPathWeight(state.searchPathWeightDerived, 5),
+    pathWeightDerivedPotential: clampSearchPathWeight(state.searchPathWeightDerivedPotential, 20),
     pathWeightAssociation: clampSearchPathWeight(state.searchPathWeightAssociation, 100),
     pathWeightLayerSkip: clampSearchPathWeight(state.searchPathWeightLayerSkip, 15),
     pathViolationPenalty: clampSearchPathWeight(state.searchPathWeightViolation, 50),
     cognitiveLoadPenalty: state.searchCognitiveLoadPenalty !== false,
     penaltyGracePeriod: clampSearchPenaltyGracePeriod(state.searchPenaltyGracePeriod),
     penaltyGrowthFactor: clampSearchPenaltyGrowthFactor(state.searchPenaltyGrowthFactor),
-    /** Must match buildGraph({ includeDerived }) — controls which matrix letters appear on each hop. */
+    /** Must match buildGraph({ includeDerived, includeDerivedPotential }) — controls which matrix letters appear on each hop. */
     includeDerived: !!state.includeDerived,
+    includeDerivedPotential: !!state.includeDerived,
     allowAssociationFallback: !!state.allowAssociationFallback,
     restrictCoreToCore: !!state.restrictCoreToCore,
     enforceGrammar: !!state.enforceGrammar,
@@ -769,6 +818,7 @@ function applySearchOptionsToUI() {
   const e = document.getElementById("search-effort");
   const wd = document.getElementById("search-weight-direct");
   const wder = document.getElementById("search-weight-derived");
+  const wpdr = document.getElementById("search-weight-derived-potential");
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
@@ -787,6 +837,7 @@ function applySearchOptionsToUI() {
   if (e) e.value = normalizeSearchEffort(state.searchEffort);
   if (wd) wd.value = String(clampSearchPathWeight(state.searchPathWeightDirect, 1));
   if (wder) wder.value = String(clampSearchPathWeight(state.searchPathWeightDerived, 5));
+  if (wpdr) wpdr.value = String(clampSearchPathWeight(state.searchPathWeightDerivedPotential, 20));
   if (wa) wa.value = String(clampSearchPathWeight(state.searchPathWeightAssociation, 100));
   if (wls) wls.value = String(clampSearchPathWeight(state.searchPathWeightLayerSkip, 15));
   if (wv) wv.value = String(clampSearchPathWeight(state.searchPathWeightViolation, 50));
@@ -814,6 +865,7 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   const e = document.getElementById("search-effort");
   const wd = document.getElementById("search-weight-direct");
   const wder = document.getElementById("search-weight-derived");
+  const wpdr = document.getElementById("search-weight-derived-potential");
   const wa = document.getElementById("search-weight-association");
   const wls = document.getElementById("search-weight-layer-skip");
   const wv = document.getElementById("search-weight-violation");
@@ -830,6 +882,7 @@ window.onSearchOptionsChange = function onSearchOptionsChange() {
   if (e) state.searchEffort = normalizeSearchEffort(e.value);
   if (wd) state.searchPathWeightDirect = clampSearchPathWeight(wd.value, 1);
   if (wder) state.searchPathWeightDerived = clampSearchPathWeight(wder.value, 5);
+  if (wpdr) state.searchPathWeightDerivedPotential = clampSearchPathWeight(wpdr.value, 20);
   if (wa) state.searchPathWeightAssociation = clampSearchPathWeight(wa.value, 100);
   if (wls) state.searchPathWeightLayerSkip = clampSearchPathWeight(wls.value, 15);
   if (wv) state.searchPathWeightViolation = clampSearchPathWeight(wv.value, 50);
@@ -893,6 +946,7 @@ window.onAssociationFallbackChange = function onAssociationFallbackChange() {
 window.restoreHopCostSearchDefaults = function restoreHopCostSearchDefaults() {
   state.searchPathWeightDirect = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDirect;
   state.searchPathWeightDerived = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDerived;
+  state.searchPathWeightDerivedPotential = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightDerivedPotential;
   state.searchPathWeightAssociation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightAssociation;
   state.searchPathWeightLayerSkip = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightLayerSkip;
   state.searchPathWeightViolation = DEFAULT_SEARCH_PATH_WEIGHTS.searchPathWeightViolation;
@@ -947,6 +1001,10 @@ window.onDomainContextChange = function onDomainContextChange(nextValue = undefi
   }
   if (prev !== state.domainContext) {
     maybeShowThemeSplash(state.domainContext);
+    trackEvent("select_theme", {
+      domain_context: state.domainContext,
+      previous_domain_context: prev,
+    });
   }
 };
 
@@ -1107,6 +1165,7 @@ function buildPathSearchReportPayload() {
     maxStates: so.maxStates,
     pathWeightDirect: so.pathWeightDirect,
     pathWeightDerived: so.pathWeightDerived,
+    pathWeightDerivedPotential: so.pathWeightDerivedPotential,
     pathWeightAssociation: so.pathWeightAssociation,
     pathWeightLayerSkip: so.pathWeightLayerSkip,
     pathViolationPenalty: so.pathViolationPenalty,
@@ -1168,7 +1227,7 @@ function updateMmConnectionStrip(_opts) {}
 window.openMetamodelFromStrip = function openMetamodelFromStrip() {
   const m = state.mmLast;
   if (!m?.fromEl || !m?.toEl) return;
-  openMetamodelModal();
+  openMetamodelModal("strip");
   doHighlight(m.fromKey, m.toKey, m.valid !== false);
   if (typeof annotateMetamodel === "function") {
     annotateMetamodel(m.fromKey, m.toKey, m.fromEl, m.toEl);
@@ -1413,12 +1472,103 @@ let urlSyncBootstrapped = false;
 /** Debounce store-driven URL updates so we do not call history.replaceState on every transient dispatch. */
 let urlSyncStoreDebounceTimer = null;
 const URL_SYNC_FROM_STORE_MS = 320;
+const SHARE_ROUTE_PARAM = "route";
+const SHARE_ROUTE_LEGACY_PARAM = "routing";
+const SHARE_FLOW_PARAM = "flow";
+const SHARE_FLOW_LEGACY_PARAM = "pathFlow";
+const SHARE_URL_SOFT_LIMIT = 1900;
+window.SHARE_URL_SOFT_LIMIT = SHARE_URL_SOFT_LIMIT;
+
+function encodeSharePayloadBase64Url(jsonText) {
+  if (typeof jsonText !== "string" || !jsonText) return "";
+  try {
+    const bytes = new TextEncoder().encode(jsonText);
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } catch (_) {
+    return "";
+  }
+}
+
+function decodeSharePayloadBase64Url(payload) {
+  const raw = String(payload || "").trim();
+  if (!raw) return "";
+  try {
+    const padded = raw + "=".repeat((4 - (raw.length % 4 || 4)) % 4);
+    const b64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch (_) {
+    return "";
+  }
+}
+
+function normalizeUserChoicesForShare(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  const entries = Object.entries(raw);
+  for (const [k, v] of entries) {
+    const idx = Number(k);
+    if (!Number.isFinite(idx) || idx < 1) continue;
+    const code = String(v || "").trim().toUpperCase();
+    if (!code) continue;
+    out[String(Math.floor(idx))] = code;
+  }
+  return out;
+}
+
+function buildSharedRoutingPayload(currentState) {
+  const edgeConstraints = Array.isArray(currentState?.edgeConstraints)
+    ? currentState.edgeConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+    : [];
+  const userChoices = normalizeUserChoicesForShare(currentState?.userChoices);
+  if (!edgeConstraints.length && !Object.keys(userChoices).length) return "";
+  const payload = {};
+  if (edgeConstraints.length) payload.ec = edgeConstraints;
+  if (Object.keys(userChoices).length) payload.uc = userChoices;
+  try {
+    const json = JSON.stringify(payload);
+    return encodeSharePayloadBase64Url(json);
+  } catch (_) {
+    return "";
+  }
+}
+
+function parseSharedRoutingPayload(rawPayload) {
+  const raw = String(rawPayload || "").trim();
+  if (!raw) return null;
+  let parsed = null;
+  try {
+    const candidate = raw.startsWith("{") ? raw : decodeSharePayloadBase64Url(raw);
+    if (!candidate) return null;
+    parsed = JSON.parse(candidate);
+  } catch (_) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const edgeConstraints = Array.isArray(parsed.ec)
+    ? parsed.ec.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+    : [];
+  const userChoices = normalizeUserChoicesForShare(parsed.uc);
+  return { edgeConstraints, userChoices };
+}
+
+function shareUrlHasSoftLengthWarning(url) {
+  return typeof url === "string" && url.length > SHARE_URL_SOFT_LIMIT;
+}
 
 function stateToSearchParams(currentState) {
   const params = new URLSearchParams(window.location.search || "");
   params.delete("viewpoint");
   params.delete("mode");
   params.delete("path");
+  params.delete(SHARE_FLOW_PARAM);
+  params.delete(SHARE_FLOW_LEGACY_PARAM);
+  params.delete(SHARE_ROUTE_PARAM);
+  params.delete(SHARE_ROUTE_LEGACY_PARAM);
   [...params.keys()].forEach((k) => {
     if (/^wp\d+$/i.test(k)) params.delete(k);
   });
@@ -1434,6 +1584,12 @@ function stateToSearchParams(currentState) {
     .map((w) => w?.element)
     .filter((el) => typeof el === "string" && el.trim() !== "");
   waypointElements.forEach((el, idx) => params.set(`wp${idx}`, el));
+  const flow = String(currentState?.pathFlow || "").trim().toLowerCase();
+  if (flow && flow !== "horizontal" && PATH_FLOW_ORDER.includes(flow)) {
+    params.set(SHARE_FLOW_PARAM, flow);
+  }
+  const routingPayload = buildSharedRoutingPayload(currentState);
+  if (routingPayload) params.set(SHARE_ROUTE_PARAM, routingPayload);
   return params;
 }
 
@@ -1442,7 +1598,15 @@ function getShareableDiagramUrl() {
   const params = stateToSearchParams(getPlainAppState());
   const u = new URL(window.location.href);
   u.search = params.toString();
-  return u.toString();
+  const nextUrl = u.toString();
+  window.__lastShareUrlWarning = shareUrlHasSoftLengthWarning(nextUrl);
+  if (window.__lastShareUrlWarning) {
+    console.warn("[share-link] URL may be too long for some apps", {
+      length: nextUrl.length,
+      softLimit: SHARE_URL_SOFT_LIMIT,
+    });
+  }
+  return nextUrl;
 }
 
 window.getShareableDiagramUrl = getShareableDiagramUrl;
@@ -1464,11 +1628,20 @@ function syncUrlFromState(opts = {}) {
   if (push) window.history.pushState({ architrek: true }, "", nextUrl);
   else window.history.replaceState({ architrek: true }, "", nextUrl);
   urlSyncLast = nextUrl;
+  trackGaVirtualPageView();
 }
 
 function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
   const route = parseHydrationFromUrl();
-  const hasRoute = !!(route.viewpoint || (Array.isArray(route.waypoints) && route.waypoints.length >= 2));
+  const hasRoute = !!(
+    route.viewpoint ||
+    route.selectionMode ||
+    Number.isFinite(route.activePathIdx) ||
+    route.pathFlow ||
+    (Array.isArray(route.waypoints) && route.waypoints.length >= 2) ||
+    (Array.isArray(route.edgeConstraints) && route.edgeConstraints.length > 0) ||
+    (route.userChoices && Object.keys(route.userChoices).length > 0)
+  );
   if (!hasRoute) return false;
   urlSyncSuspend = true;
   try {
@@ -1493,9 +1666,41 @@ function applyUrlStateFromLocation({ triggerFindPath = false } = {}) {
     if (Number.isFinite(route.activePathIdx)) {
       state.activePathIdx = Math.max(0, Math.floor(route.activePathIdx));
     }
+    if (route.pathFlow === "horizontal" || route.pathFlow === "vertical" || route.pathFlow === "compact") {
+      state.pathFlow = route.pathFlow;
+      try {
+        localStorage.setItem(getPathFlowStorageKey(), route.pathFlow);
+      } catch (_) {}
+      updatePathFlowButton();
+    }
+    if (route._hasRoutingParam) {
+      const nextConstraints = Array.isArray(route.edgeConstraints) ? route.edgeConstraints : [];
+      if (window.store && typeof window.store.dispatch === "function") {
+        window.store.dispatch("SET_EDGE_CONSTRAINTS", nextConstraints);
+      } else {
+        state.edgeConstraints = nextConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean);
+      }
+    }
+    const routeUserChoices =
+      route._hasRoutingParam && route.userChoices && typeof route.userChoices === "object"
+        ? normalizeUserChoicesForShare(route.userChoices)
+        : {};
+    const pendingExtras = {};
+    if (route._hasRoutingParam) {
+      state.userChoices = { ...routeUserChoices };
+      if (Object.keys(routeUserChoices).length) {
+        pendingExtras.userChoices = routeUserChoices;
+      }
+    }
+    if (Number.isFinite(route.activePathIdx)) {
+      pendingExtras.activePathIdx = Math.max(0, Math.floor(route.activePathIdx));
+    }
     if (triggerFindPath) {
       const picked = state.waypoints.map((wp) => wp.element).filter(Boolean);
       if (picked.length >= 2) {
+        if (Object.keys(pendingExtras).length) {
+          window.__pendingSessionExtras = pendingExtras;
+        }
         window.dispatch({ type: "FIND_PATH", reason: "url-popstate" });
       }
     }
@@ -1520,6 +1725,11 @@ function initUrlSync() {
           mode: s?.selectionMode ?? "set",
           path: s?.activePathIdx ?? 0,
           waypoints: (s?.waypoints || []).map((w) => w?.element || null),
+          flow: s?.pathFlow ?? "horizontal",
+          edgeConstraints: Array.isArray(s?.edgeConstraints)
+            ? s.edgeConstraints.map((entry) => normalizeEdgeConstraintEntry(entry)).filter(Boolean)
+            : [],
+          userChoices: normalizeUserChoicesForShare(s?.userChoices),
         }),
       () => {
         if (urlSyncStoreDebounceTimer) clearTimeout(urlSyncStoreDebounceTimer);
@@ -1674,6 +1884,7 @@ function gatherSessionSnapshot() {
     searchEffort: normalizeSearchEffort(plain.searchEffort),
     searchPathWeightDirect: clampSearchPathWeight(plain.searchPathWeightDirect, 1),
     searchPathWeightDerived: clampSearchPathWeight(plain.searchPathWeightDerived, 5),
+    searchPathWeightDerivedPotential: clampSearchPathWeight(plain.searchPathWeightDerivedPotential, 20),
     searchPathWeightAssociation: clampSearchPathWeight(plain.searchPathWeightAssociation, 100),
     searchPathWeightLayerSkip: clampSearchPathWeight(plain.searchPathWeightLayerSkip, 15),
     searchPathWeightViolation: clampSearchPathWeight(plain.searchPathWeightViolation, 50),
@@ -1795,6 +2006,9 @@ function restoreSessionSnapshot() {
     }
     if (typeof data.searchPathWeightDerived === "number" && Number.isFinite(data.searchPathWeightDerived)) {
       state.searchPathWeightDerived = clampSearchPathWeight(data.searchPathWeightDerived, 5);
+    }
+    if (typeof data.searchPathWeightDerivedPotential === "number" && Number.isFinite(data.searchPathWeightDerivedPotential)) {
+      state.searchPathWeightDerivedPotential = clampSearchPathWeight(data.searchPathWeightDerivedPotential, 20);
     }
     if (typeof data.searchPathWeightAssociation === "number" && Number.isFinite(data.searchPathWeightAssociation)) {
       state.searchPathWeightAssociation = clampSearchPathWeight(data.searchPathWeightAssociation, 100);
@@ -2695,7 +2909,7 @@ function updatePathOptionsTriggerSummary() {
   const rel = state.includeDerived ? "+ Inferred" : "Explicit";
   const mode = state.selectionMode === "set" ? "Connect set" : "Ordered";
   const so = getSearchPathOptions();
-  const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
+  const costs = `costs ${so.pathWeightDirect}/${so.pathWeightDerived}/${so.pathWeightDerivedPotential}/${so.pathWeightAssociation}/${so.pathWeightLayerSkip}/${so.pathViolationPenalty}`;
   const pMode = normalizePerspectiveClassMode(state.perspectiveClassMode);
   const pLabel =
     pMode === "dominant-share"
@@ -3619,7 +3833,7 @@ function buildAppendixBMatrixDumpLines() {
   }
   const lines = [
     `Total directed pairs (non–O-only rows): ${MATRIX.length}`,
-    "Format: from → to · direct · derived (letters as stored; Association O is not listed per cell).",
+    "Format: from → to · direct · derived(B.2) · derivedPotential(B.3) (letters as stored; Association O is not listed per cell).",
     "",
   ];
   for (const row of MATRIX) {
@@ -3627,7 +3841,11 @@ function buildAppendixBMatrixDumpLines() {
     const to = row?.to != null ? String(row.to) : "?";
     const direct = Array.isArray(row.direct) && row.direct.length ? row.direct.join("") : "—";
     const derived = Array.isArray(row.derived) && row.derived.length ? row.derived.join("") : "—";
-    lines.push(`${from} → ${to} · ${direct} · ${derived}`);
+    const derivedPotential =
+      Array.isArray(row.derivedPotential) && row.derivedPotential.length
+        ? row.derivedPotential.join("")
+        : "—";
+    lines.push(`${from} → ${to} · ${direct} · ${derived} · ${derivedPotential}`);
   }
   return lines;
 }
@@ -3788,7 +4006,7 @@ function buildFeedbackContextBody(opts = {}) {
   lines.push(`- Relationships: ${fb.includeDerived ? "+ Inferred" : "Explicit only"}`);
   lines.push(`- Association fallback (§5.2.4 bridges): ${fb.allowAssociationFallback ? "on" : "off"}`);
   lines.push(
-    `- Weighted UCS: explicit=${so.pathWeightDirect} · inferred=${so.pathWeightDerived} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
+    `- Weighted UCS: explicit=${so.pathWeightDirect} · inferred-certain=${so.pathWeightDerived} · inferred-potential=${so.pathWeightDerivedPotential} · association=${so.pathWeightAssociation} · layerSkip=${so.pathWeightLayerSkip} · violation=${so.pathViolationPenalty}`
   );
   lines.push(
     `- Semantic rigor: preset=${normalizeSearchRigorPreset(fb.searchRigorPreset)} · corePrune=${so.restrictCoreToCore} · grammar=${so.enforceGrammar} · strictRealization=${so.strictRealization}`
@@ -4480,7 +4698,7 @@ window.submitRelationshipFeedback = async function submitRelationshipFeedback() 
         `Association fallback: ${fbSnapshot?.allowAssociationFallback ? "on" : "off"}`,
         `Waypoint mode: ${fbSnapshot?.selectionMode === "set" ? "Connect set" : "Ordered waypoints"}`,
         `Waypoints: ${wpNames || "—"}`,
-        `UCS weights (if available): direct=${so?.pathWeightDirect ?? "?"} inferred=${so?.pathWeightDerived ?? "?"} maxDepth=${so?.maxDepth ?? "?"}`,
+        `UCS weights (if available): direct=${so?.pathWeightDirect ?? "?"} inferredCertain=${so?.pathWeightDerived ?? "?"} inferredPotential=${so?.pathWeightDerivedPotential ?? "?"} maxDepth=${so?.maxDepth ?? "?"}`,
         `(technicalContext build failed: ${String(err?.message || err)})`,
       ].join("\n");
     } catch (_) {
@@ -5473,7 +5691,7 @@ window.showElementDetails = function showElementDetails(elementName) {
   const subParts = [];
   if (meta) subParts.push(`${meta.layer} · ${meta.aspect}`);
   if (def?.section) subParts.push(def.section);
-  subEl.textContent = subParts.join(" · ") || "ArchiMate 3.1";
+  subEl.textContent = subParts.join(" · ") || "ArchiMate 3.2";
 
   fillElementInfoHero(name, meta);
 
@@ -6093,6 +6311,7 @@ function init() {
       allowAssociationFallback: false,
       pathWeightDirect: 1,
       pathWeightDerived: 5,
+      pathWeightDerivedPotential: 20,
       pathWeightAssociation: 100,
       pathWeightLayerSkip: 15,
     };
@@ -6284,6 +6503,7 @@ function rebuildGraph() {
   state.graph = buildGraph({
     allowedElements: effectiveAllowedElements(),
     includeDerived:  state.includeDerived,
+    includeDerivedPotential: state.includeDerived,
   });
 }
 
@@ -6437,6 +6657,10 @@ window.onViewpointChange = function() {
   }
 
   schedulePersistSession();
+  trackEvent("select_viewpoint", {
+    viewpoint_key: key || null,
+    viewpoint_strict: !!(key && VIEWPOINTS[key] && !VIEWPOINTS[key].allElements),
+  });
   syncUrlFromState({ push: true });
 };
 
@@ -6649,9 +6873,6 @@ function moveWaypoint(index, dir) {
   const tmp = next[index];
   next[index] = next[j];
   next[j] = tmp;
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:moveWaypoint',message:'moveWaypoint commit',data:{hypothesisId:'H_move',index,dir,mode:state.selectionMode,elsBefore,elsNext:next.map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   commitWaypointListReplace(next);
   renderWaypointChain();
   if (state.segments) {
@@ -6681,9 +6902,6 @@ function moveWaypointTo(fromIndex, toIndex) {
 }
 
 window.swapStartEnd = function() {
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:swapStartEnd',message:'swapStartEnd called',data:{hypothesisId:'H_swap',len:state.waypoints.length,mode:state.selectionMode,els:(getPlainAppState().waypoints||[]).map((w)=>w?.element)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   const wps = getPlainAppState().waypoints;
   if (!Array.isArray(wps) || wps.length !== 2) return;
   moveWaypoint(0, +1);
@@ -6821,9 +7039,6 @@ function ensureWaypointChainInteractionDelegation() {
       const idx = parseWaypointIndexFromNode(moveBtn);
       if (!Number.isFinite(idx)) return;
       const action = String(moveBtn.dataset.action || "");
-      // #region agent log
-      fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:waypoint-move-click',message:'waypoint-move click',data:{hypothesisId:'H_click',idx,action,delta:String(moveBtn.dataset.delta||''),mode:state.selectionMode},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
       if (action === "swap") {
         window.swapStartEnd();
         return;
@@ -7761,9 +7976,6 @@ function syncWaypointSlotsToSolverChainIfPossible() {
   const before = (state.waypoints || []).map((wp) => wp?.element || "");
   reorderWaypointsToMatchLastSolverChainIfPossible();
   const after = (state.waypoints || []).map((wp) => wp?.element || "");
-  // #region agent log
-  fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:syncWaypointSlotsToSolverChainIfPossible',message:'sync solver chain vs panel',data:{hypothesisId:'H_sync',mode:state.selectionMode,before:before.join('|'),after:after.join('|'),changed:before.join('|')!==after.join('|')},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-  // #endregion
   if (before.join("|") !== after.join("|")) {
     requestWaypointConstraintReorderAnimation();
     renderWaypointChain();
@@ -7945,9 +8157,6 @@ window.findPath = function(opts = {}) {
         };
       }
       if (chainForExplain?.length) {
-        // #region agent log
-        fetch('http://127.0.0.1:7740/ingest/657e0ba7-c505-4241-8c90-51207a13e493',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b73c26'},body:JSON.stringify({sessionId:'b73c26',location:'app.js:findPath-before-sync',message:'set mode before syncWaypointSlots',data:{hypothesisId:'H_sync',findReason,chainPreview:(chainForExplain||[]).slice(0,8)},timestamp:Date.now(),runId:'pre-fix'})}).catch(()=>{});
-        // #endregion
         // Manual slot reorder (arrows / drag) must not be overwritten: sync maps slots to the
         // solver’s ordered chain, which would immediately undo move-waypoint / move-waypoint-to.
         const skipSlotSync =
@@ -7998,6 +8207,7 @@ window.findPath = function(opts = {}) {
       waypointCount: picked.length,
       isFallback: !hasNoPath && !!pathIsFallback,
       segmentCount: Array.isArray(segs) ? segs.length : 0,
+      search_status: searchStatus,
     });
     if (state._relaxOneShotRestore) {
       const snap = state._relaxOneShotRestore;
@@ -8140,8 +8350,8 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
   const so = getSearchPathOptions();
   const cogOn = so.cognitiveLoadPenalty !== false;
   const wLegend = cogOn
-    ? `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Syntax</strong> columns and <strong>Syntax Σ</strong> are base-weight totals (no depth multiplier). <strong>Total cost</strong> is the UCS objective (sum of per-segment routing costs), including cognitive-load depth penalty on relationship hops when enabled (grace <strong>${so.penaltyGracePeriod}</strong> hops, growth <strong>${so.penaltyGrowthFactor}</strong>× per extra hop).`
-    : `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred <strong>${so.pathWeightDerived}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Total cost</strong> matches <strong>Syntax Σ</strong> when cognitive-load penalty is off.`;
+    ? `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred-certain <strong>${so.pathWeightDerived}</strong>, inferred-potential <strong>${so.pathWeightDerivedPotential}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Syntax</strong> columns and <strong>Syntax Σ</strong> are base-weight totals (no depth multiplier). <strong>Total cost</strong> is the UCS objective (sum of per-segment routing costs), including cognitive-load depth penalty on relationship hops when enabled (grace <strong>${so.penaltyGracePeriod}</strong> hops, growth <strong>${so.penaltyGrowthFactor}</strong>× per extra hop).`
+    : `Per-hop weights: explicit <strong>${so.pathWeightDirect}</strong>, inferred-certain <strong>${so.pathWeightDerived}</strong>, inferred-potential <strong>${so.pathWeightDerivedPotential}</strong>, Association <strong>${so.pathWeightAssociation}</strong>, layer-skip <strong>${so.pathWeightLayerSkip}</strong>, violation <strong>${so.pathViolationPenalty}</strong>. <strong>Total cost</strong> matches <strong>Syntax Σ</strong> when cognitive-load penalty is off.`;
 
   const fmtCost = (v) => (Number.isFinite(v) ? String(v) : "—");
   const fmtRouting = (v) => {
@@ -8169,10 +8379,11 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
       const aria = isSel ? ' aria-current="true"' : "";
       const cd = meta.costDirect ?? 0;
       const cder = meta.costDerived ?? 0;
+      const cpdr = meta.costDerivedPotential ?? 0;
       const ca = meta.costAssociation ?? 0;
       const cls = meta.costLayerSkip ?? 0;
       const cv = meta.costViolation ?? 0;
-      const syntaxSum = Number.isFinite(meta.totalWeight) ? meta.totalWeight : cd + cder + ca + cls + cv;
+      const syntaxSum = Number.isFinite(meta.totalWeight) ? meta.totalWeight : cd + cder + cpdr + ca + cls + cv;
       const routeCost = Number.isFinite(meta.ucsRoutingTotal) ? meta.ucsRoutingTotal : syntaxSum;
       return `<tr class="algorithm-path-rank-row${rowCls}"${aria}>
         <td class="algorithm-path-rank-cell--idx">${rank}</td>
@@ -8180,6 +8391,7 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
         <td class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost">${fmtRouting(routeCost)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cd)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cder)}</td>
+        <td class="algorithm-path-rank-cell--num">${fmtCost(cpdr)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(ca)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cls)}</td>
         <td class="algorithm-path-rank-cell--num">${fmtCost(cv)}</td>
@@ -8200,7 +8412,8 @@ function buildPathAlternativesRankingTableHtml(segments, activePathIdx, groupedP
           <th scope="col" class="algorithm-path-rank-cell--idx">Route</th>
           <th scope="col" class="algorithm-path-rank-cell--num algorithm-path-rank-cell--total-cost" title="UCS routing total (sum of per-segment costs); includes cognitive-load depth penalty on relationship hops when enabled — this is what ranking uses">Total cost</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B explicit (uppercase) hops × explicit weight">${so.pathWeightDirect}× Explicit</th>
-          <th scope="col" class="algorithm-path-rank-cell--num" title="§5.7 inferred (lowercase) hops × inferred weight">${so.pathWeightDerived}× Inferred</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B.2 inferred hops × certain-inferred weight">${so.pathWeightDerived}× Inferred (B.2)</th>
+          <th scope="col" class="algorithm-path-rank-cell--num" title="Appendix B.3 potential inferred hops × potential-inferred weight">${so.pathWeightDerivedPotential}× Potential (B.3)</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="§5.2.4 Association bridge hops × association weight">${so.pathWeightAssociation}× Assoc.</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Layer-skipping surcharge (per hop meta)">${so.pathWeightLayerSkip}× Layer-skip</th>
           <th scope="col" class="algorithm-path-rank-cell--num" title="Semantic / pedagogy violation add-on (per flagged hop)">${so.pathViolationPenalty}× Violation</th>
@@ -8273,7 +8486,7 @@ function buildConnectSetTechHtml(metrics, segments, pathIdx, orderedChain) {
         <span class="connect-set-note-sep" aria-hidden="true">·</span>
         <strong>UCS</strong> · max ${so.maxDepth} hops/segment
       </span>
-      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: explicit = ${so.pathWeightDirect}, inferred = ${so.pathWeightDerived}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
+      <span class="connect-set-note-tech-hint">Strongest Legal Chain ranking uses weighted syntax cost: explicit = ${so.pathWeightDirect}, inferred-certain = ${so.pathWeightDerived}, inferred-potential = ${so.pathWeightDerivedPotential}, Association = ${so.pathWeightAssociation}, layer-skip = ${so.pathWeightLayerSkip}.</span>
       ${rankingTable}
     </div>
   </div>`;
@@ -10240,7 +10453,7 @@ window.focusMetamodel = function focusMetamodel(fromEl, toEl) {
       valid: ok,
     };
 
-    openMetamodelModal();
+    openMetamodelModal("hop_link");
 
     doHighlight(fromKey, toKey, ok);
     if (typeof annotateMetamodel === 'function') {
@@ -10267,10 +10480,13 @@ window.focusMetamodel = function focusMetamodel(fromEl, toEl) {
   }
 };
 
-function openMetamodelModal() {
+function openMetamodelModal(openSource = "") {
   closeElementInfoModal();
   const m = document.getElementById('mm-modal');
   if (!m) return;
+  trackEvent("open_metamodel_modal", {
+    source: String(openSource || "unknown").trim() || "unknown",
+  });
   m.setAttribute('aria-hidden', 'false');
   // Lazy render (in case init ran before modal existed)
   const mm = document.getElementById('metamodel-diagram');

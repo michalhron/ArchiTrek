@@ -337,6 +337,7 @@
       trackEvent("download_path_csv", {
         hops: output.data?.hopCount,
         derived: !!output.data?.hasDerived,
+        derivedPotential: !!output.data?.hasPotentialDerived,
         mode: state?.mode,
       });
       return;
@@ -345,6 +346,7 @@
       trackEvent("download_path_archimate_xml", {
         hops: output.data?.hopCount,
         derived: !!output.data?.hasDerived,
+        derivedPotential: !!output.data?.hasPotentialDerived,
         mode: state?.mode,
       });
     }
@@ -361,6 +363,11 @@
       alert("Could not build a share link for the current view.");
       return;
     }
+    const softLimit =
+      Number.isFinite(Number(window.SHARE_URL_SOFT_LIMIT)) && Number(window.SHARE_URL_SOFT_LIMIT) > 0
+        ? Number(window.SHARE_URL_SOFT_LIMIT)
+        : 1900;
+    const urlTooLong = url.length > softLimit;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
@@ -382,7 +389,14 @@
     }
     trackEvent("copy_share_link", {
       waypointCount: (getState()?.waypoints || []).map((w) => w && w.element).filter(Boolean).length,
+      longUrl: urlTooLong,
+      urlLength: url.length,
     });
+    if (urlTooLong) {
+      alert(
+        `Link copied, but it is ${url.length} characters long and may break in some chat/email apps.`
+      );
+    }
   }
 
   async function downloadDiagramFormat(format) {

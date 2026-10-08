@@ -34,16 +34,18 @@ const VIEWPOINTS = {
   },
 
   applicationStructure: {
-    name: "Application Structure", category: "Composition", section: "§C.1.2",
+    name: "Application Structure", 
+    category: "Composition", 
+    section: "§C.1.2",
     scope: "Single layer / Multiple aspects",
     stakeholders: "Application and Solution Architects",
     concerns: "Application structure, consistency and completeness, reduction of complexity",
     purpose: "Designing",
     elements: [
-      "Application Component", "Application Interface",
-      "Application Collaboration", "Data Object",
+        "Application Component", "Application Collaboration", "Application Interface",
+        "Application Function", "Application Interaction", "Data Object",
     ],
-  },
+},
 
   informationStructure: {
     name: "Information Structure", category: "Composition", section: "§C.1.3",
@@ -71,49 +73,58 @@ const VIEWPOINTS = {
   },
 
   technology: {
-    name: "Technology", category: "Composition", section: "§C.1.4, §C.1.6",
-    scope: "Multiple layers / Multiple aspects",
+    name: "Technology", 
+    category: "Composition", 
+    section: "§C.1.4, §C.1.6",
+    scope: "Single layer / Multiple aspects (Technology) + Multiple layers / Multiple aspects (Physical)",
+    // OR simply acknowledge the combined nature:
+    scope: "Multiple layers / Multiple aspects",  // This is acceptable for combined viewpoint
     stakeholders: "Infrastructure Architects, Operational Managers",
     concerns: "Stability, security, dependencies, and costs of technology infrastructure (including equipment and facility elements from the ArchiMate specification)",
     purpose: "Designing",
     elements: [
-      "Location", "Node", "Device", "System Software",
-      "Technology Collaboration", "Technology Interface",
-      "Communication Network", "Path",
-      "Technology Function", "Technology Process", "Technology Interaction",
-      "Technology Service", "Technology Event", "Artifact",
-      "Equipment", "Facility", "Distribution Network", "Material",
+        "Location", "Node", "Device", "System Software",
+        "Technology Collaboration", "Technology Interface",
+        "Communication Network", "Path",
+        "Technology Function", "Technology Process", "Technology Interaction",
+        "Technology Service", "Technology Event", "Artifact",
+        "Equipment", "Facility", "Distribution Network", "Material",
     ],
-  },
+},
 
-  layered: {
-    name: "Layered", category: "Composition", section: "§C.1.5",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "All architects",
-    concerns: "Overview of the full architecture across all layers",
-    purpose: "Designing, informing",
-    elements: [],       // empty = ALL core elements permitted
-    allElements: true,  // flag used by the UI to skip filtering
-  },
+layered: {
+  name: "Layered", 
+  category: "Composition", 
+  section: "§C.1.5",
+  scope: "Multiple layers / Multiple aspects",
+  stakeholders: "Enterprise, process, application, infrastructure, and domain architects",
+  concerns: "Consistency, reduction of complexity, impact of change, flexibility",
+  purpose: "Designing, deciding, informing",
+  elements: [],       // empty = ALL core elements permitted
+  allElements: true,  // flag used by the UI to skip filtering
+},
 
   // ── SUPPORT ───────────────────────────────────────────────────────────────
 
   product: {
-    name: "Product", category: "Support", section: "§C.1.7",
+    name: "Product", 
+    category: "Support", 
+    section: "§C.1.7",
     scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Product Managers, Business Architects",
-    concerns: "Value of products for customers, product composition",
+    stakeholders: "Product developers, product managers, process and domain architects",
+    concerns: "Product development, value offered by the products of the enterprise",
     purpose: "Designing, deciding",
     elements: [
-      "Business Actor", "Business Role", "Business Collaboration",
-      "Business Interface", "Business Process", "Business Function",
-      "Business Interaction", "Business Event", "Business Service",
-      "Business Object", "Product", "Contract",
-      "Application Component", "Application Collaboration",
-      "Application Interface", "Application Process", "Application Function",
-      "Application Interaction", "Application Event", "Application Service",
+        "Business Actor", "Business Role", "Business Collaboration",
+        "Business Interface", "Business Process", "Business Function",
+        "Business Interaction", "Business Event", "Business Service",
+        "Business Object", "Product", "Contract",
+        "Application Component", "Application Collaboration",
+        "Application Interface", "Application Process", "Application Function",
+        "Application Interaction", "Application Event", "Application Service",
+        "Data Object", "Technology Service", "Artifact", "Material", "Value",
     ],
-  },
+},
 
   applicationUsage: {
     name: "Application Usage", category: "Support", section: "§C.1.8",
@@ -170,234 +181,237 @@ const VIEWPOINTS = {
   },
 
   applicationCooperation: {
-    name: "Application Cooperation", category: "Cooperation", section: "§C.1.11",
-    scope: "Application layer / Multiple aspects",
+    name: "Application Cooperation", 
+    category: "Cooperation", 
+    section: "§C.1.11",
+    scope: "Multiple layers / Multiple aspects",
     stakeholders: "Enterprise, Process, Application, and Domain Architects",
-    concerns: "Relationships and dependencies between applications, orchestration/choreography of services",
+    concerns: "Relationships and dependencies between applications, orchestration/choreography of services, consistency and completeness, reduction of complexity",
     purpose: "Designing",
     elements: [
-      "Location",
-      "Application Component", "Application Collaboration",
-      "Application Interface", "Application Process", "Application Function",
-      "Application Interaction", "Application Event", "Application Service",
-      "Data Object",
+        "Location",
+        "Application Component", "Application Collaboration",
+        "Application Interface", "Application Process", "Application Function",
+        "Application Interaction", "Application Event", "Application Service",
+        "Data Object",
     ],
-  },
+},
 
   // ── REALIZATION ───────────────────────────────────────────────────────────
 
-  serviceRealization: {
-    name: "Service Realization", category: "Realization", section: "§C.1.12",
+serviceRealization: {
+    name: "Service Realization", 
+    category: "Realization", 
+    section: "§C.1.12",
     scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Business and Application Architects, Operational Managers",
-    concerns: "How business services are realized by underlying processes and applications",
-    purpose: "Designing",
+    stakeholders: "Process and domain architects, product and operational managers",
+    concerns: "Added-value of business processes, consistency and completeness, responsibilities",
+    purpose: "Designing, deciding",
     elements: [
-      "Business Actor", "Business Role", "Business Collaboration",
-      "Business Interface", "Business Process", "Business Function",
-      "Business Interaction", "Business Event", "Business Service",
-      "Business Object", "Representation",
+        "Business Actor", "Business Role", "Business Collaboration",
+        "Business Interface", "Business Process", "Business Function",
+        "Business Interaction", "Business Event", "Business Service",
+        "Business Object", "Representation",
+        "Application Component", "Application Collaboration",
+        "Application Interface", "Application Process", "Application Function",
+        "Application Interaction", "Application Event", "Application Service",
+        "Data Object",
+    ],
+},
+
+implementationAndDeployment: {
+  name: "Implementation and Deployment", 
+  category: "Realization", 
+  section: "§C.1.13",
+  scope: "Multiple layers / Multiple aspects",
+  stakeholders: "Application and domain architects",
+  concerns: "Structure of application platforms and how they relate to supporting technology",
+  purpose: "Designing, deciding",
+  elements: [
       "Application Component", "Application Collaboration",
       "Application Interface", "Application Process", "Application Function",
       "Application Interaction", "Application Event", "Application Service",
       "Data Object",
-    ],
-  },
+      "System Software", "Technology Interface", "Path",
+      "Technology Process", "Technology Function", "Technology Interaction",
+      "Technology Service", "Artifact",
+  ],
+},
 
-  implementationAndDeployment: {
-    name: "Implementation and Deployment", category: "Realization", section: "§C.1.13",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Application and Infrastructure Architects",
-    concerns: "How applications are mapped onto the underlying technology",
-    purpose: "Designing",
-    elements: [
-      "Application Component", "Application Collaboration",
-      "Application Interface", "Application Process", "Application Function",
-      "Application Interaction", "Application Event", "Application Service",
-      "Data Object",
-      "Node", "Device", "System Software",
-      "Technology Collaboration", "Technology Interface",
-      "Technology Process", "Technology Function",
-      "Technology Interaction", "Technology Event", "Technology Service",
-      "Artifact",
-      "Path", "Communication Network",
-    ],
-  },
-
-  implementationAndMigration: {
-    name: "Implementation and Migration", category: "Strategy and Motivation", section: "§C.1.14",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Enterprise Architects, Process Architects, Application Architects, Infrastructure Architects, Domain Architects, Employees, Shareholders",
-    concerns: "Architecture vision and policies, motivation; Project portfolio management; Architecture landscape; Migration planning",
-    purpose: "Deciding, Planning",
-    elements: [
+implementationAndMigration: {
+  name: "Implementation and Migration", 
+  category: "Implementation and Migration", 
+  section: "§C.4.3",
+  scope: "Multiple layers / Multiple aspects",
+  stakeholders: "(Operational) managers, enterprise and ICT architects, employees, shareholders",
+  concerns: "Architecture vision and policies, motivation",
+  purpose: "Deciding, informing",
+  elements: [
+      "Goal", "Requirement", "Constraint",
       "Work Package", "Deliverable", "Implementation Event",
       "Plateau", "Gap",
-      "Location",
-    ],
-  },
+      "Business Actor", "Business Role", "Location",
+  ],
+  allowsCoreElements: true,  // spec says "Core element" indicating other core elements may be added
+},
 
   // ── MOTIVATION (Appendix C.2) ─────────────────────────────────────────────
 
   stakeholder: {
-    name: "Stakeholder", category: "Motivation", section: "§C.2.1",
-    scope: "Motivation layer / Multiple aspects",
-    stakeholders: "Stakeholders, business managers, enterprise and ICT architects, business analysts, requirements engineers",
-    concerns: "Architecture mission and strategy; motivation",
+    name: "Stakeholder", 
+    category: "Motivation", 
+    section: "§C.2.1",
+    scope: "Motivation",
+    stakeholders: "Stakeholders, business managers, enterprise and ICT architects, business analysts, requirements managers",
+    concerns: "Architecture mission and strategy, motivation",
     purpose: "Designing, deciding, informing",
     elements: [
-      "Stakeholder", "Driver", "Assessment", "Goal",
-      "Location",
+        "Stakeholder", "Driver", "Assessment", "Goal", "Outcome",
     ],
-  },
+},
 
-  goalRealization: {
-    name: "Goal Realization", category: "Motivation", section: "§C.2.2",
-    scope: "Motivation layer / Multiple aspects",
-    stakeholders: "Enterprise and ICT architects, business analysts, requirements engineers",
-    concerns: "Architecture mission and strategy; motivation",
-    purpose: "Designing, deciding, informing",
-    elements: [
+goalRealization: {
+  name: "Goal Realization", 
+  category: "Motivation", 
+  section: "§C.2.2",
+  scope: "Motivation",
+  stakeholders: "Stakeholders, business managers, enterprise and ICT architects, business analysts, requirements managers",
+  concerns: "Architecture mission, strategy and tactics, motivation",
+  purpose: "Designing, deciding",
+  elements: [
+      "Goal", "Principle", "Requirement", "Constraint", "Outcome",
+  ],
+},
+
+requirementsRealization: {
+  name: "Requirements Realization", 
+  category: "Motivation", 
+  section: "§C.2.3",
+  scope: "Motivation",
+  stakeholders: "Enterprise and ICT architects, business analysts, requirements managers",
+  concerns: "Architecture strategy and tactics, motivation",
+  purpose: "Designing, deciding, informing",
+  elements: [
+      // Motivation elements (explicit)
+      "Goal", "Outcome", "Requirement", "Constraint", "Meaning", "Value",
+      // Core elements (spec allows any)
+  ],
+  allowsCoreElements: true,
+},
+
+motivationViewpoint: {
+  name: "Motivation", 
+  category: "Motivation", 
+  section: "§C.2.4",
+  scope: "Motivation",
+  stakeholders: "Enterprise and ICT architects, business analysts, requirements managers",
+  concerns: "Architecture strategy and tactics, motivation",
+  purpose: "Designing, deciding, informing",
+  elements: [
       "Stakeholder", "Driver", "Assessment",
       "Goal", "Outcome", "Principle", "Requirement", "Constraint",
       "Meaning", "Value",
-      "Location",
-    ],
-  },
-
-  requirementsRealization: {
-    name: "Requirements Realization", category: "Motivation", section: "§C.2.3",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Enterprise and ICT architects, business analysts, requirements engineers",
-    concerns: "Architecture mission and strategy; motivation",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Stakeholder", "Driver", "Assessment",
-      "Goal", "Outcome", "Principle", "Requirement", "Constraint",
-      "Meaning", "Value",
-      "Business Service", "Application Service", "Technology Service",
-      "Business Process", "Application Process",
-      "Business Function", "Application Function",
-      "Business Role", "Application Component",
-      "Node", "Device",
-      "Product", "Contract",
-      // Work Package, Deliverable, Plateau: realization / aggregation links to Requirement (Appendix B).
-      "Work Package", "Deliverable", "Plateau",
-      "Location",
-    ],
-  },
-
-  motivationViewpoint: {
-    name: "Motivation", category: "Motivation", section: "§C.2.4",
-    scope: "Motivation layer / Multiple aspects",
-    stakeholders: "Enterprise and ICT architects, business analysts, requirements engineers",
-    concerns: "Architecture mission and strategy; motivation",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Stakeholder", "Driver", "Assessment",
-      "Goal", "Outcome", "Principle", "Requirement", "Constraint",
-      "Meaning", "Value",
-      "Location",
-    ],
-  },
+  ],
+},
 
   // ── STRATEGY (Appendix C.3) ───────────────────────────────────────────────
 
   strategy: {
-    name: "Strategy", category: "Strategy", section: "§C.3.1",
-    scope: "Strategy layer / Multiple aspects",
-    stakeholders: "CIO, CTO, enterprise and business architects",
-    concerns: "Developing a viable business strategy; Strategic direction and choices",
-    purpose: "Designing, deciding, informing",
+    name: "Strategy", 
+    category: "Strategy", 
+    section: "§C.3.1",
+    scope: "Strategy",
+    stakeholders: "CxOs, business managers, enterprise and business architects",
+    concerns: "Strategy development",
+    purpose: "Designing, deciding",
     elements: [
-      "Resource", "Capability", "Value Stream", "Course of Action",
-      "Stakeholder", "Driver", "Assessment",
-      "Goal", "Outcome",
-      "Location",
+        "Resource", "Capability", "Course of Action", "Outcome",
     ],
-  },
+},
 
-  capabilityMap: {
-    name: "Capability Map", category: "Strategy", section: "§C.3.2",
-    scope: "Strategy layer / Multiple aspects",
-    stakeholders: "CIO, CTO, enterprise and business architects",
-    concerns: "Architecture strategy and motivation; Capability-based planning",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Capability", "Resource", "Value Stream", "Course of Action",
-      "Goal", "Outcome",
-      "Location",
-    ],
-  },
+capabilityMap: {
+  name: "Capability Map", 
+  category: "Strategy", 
+  section: "§C.3.2",
+  scope: "Strategy",
+  stakeholders: "Business managers, enterprise and business architects",
+  concerns: "Architecture strategy and tactics, motivation",
+  purpose: "Designing, deciding",
+  elements: [
+      "Capability", "Resource", "Outcome",
+  ],
+},
 
-  valueStreamViewpoint: {
-    name: "Value Stream", category: "Strategy", section: "§C.3.3",
-    scope: "Strategy layer / Multiple aspects",
-    stakeholders: "CIO, CTO, enterprise and business architects",
-    concerns: "Value creation for stakeholders; End-to-end value delivery",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Value Stream", "Capability", "Resource", "Course of Action",
-      "Goal", "Outcome",
-      "Location",
-    ],
-  },
+valueStreamViewpoint: {
+  name: "Value Stream", 
+  category: "Strategy", 
+  section: "§C.3.3",
+  scope: "Strategy",
+  stakeholders: "Business managers, enterprise and business architects",
+  concerns: "Value creation, stakeholder involvement",
+  purpose: "Designing, deciding",
+  elements: [
+      "Value Stream", "Capability", "Resource", "Outcome",
+      "Value", "Stakeholder",
+  ],
+},
 
-  outcomeRealization: {
-    name: "Outcome Realization", category: "Strategy", section: "§C.3.4",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "CIO, CTO, enterprise and business architects",
-    concerns: "Architecture strategy and motivation; Business outcomes",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Outcome", "Goal",
-      "Capability", "Resource", "Value Stream", "Course of Action",
-      "Business Service", "Application Service",
-      "Business Process", "Application Process",
-      "Location",
-    ],
-  },
+outcomeRealization: {
+  name: "Outcome Realization", 
+  category: "Strategy", 
+  section: "§C.3.4",
+  scope: "Strategy",
+  stakeholders: "Business managers, enterprise and business architects",
+  concerns: "Business-oriented results",
+  purpose: "Designing, deciding",
+  elements: [
+      "Capability", "Resource", "Outcome", "Value", "Meaning",
+  ],
+  allowsCoreElements: true,  // spec says "Core element" - any core element may be added
+},
 
-  resourceMap: {
-    name: "Resource Map", category: "Strategy", section: "§C.3.5",
-    scope: "Strategy layer / Multiple aspects",
-    stakeholders: "CIO, CTO, enterprise and business architects",
-    concerns: "Architecture strategy and motivation; Resource portfolio",
-    purpose: "Designing, deciding, informing",
-    elements: [
-      "Resource", "Capability", "Value Stream", "Course of Action",
-      "Location",
-    ],
-  },
+resourceMap: {
+  name: "Resource Map", 
+  category: "Strategy", 
+  section: "§C.3.5",
+  scope: "Strategy",
+  stakeholders: "Business managers, enterprise and business architects",
+  concerns: "Architecture strategy and tactics, motivation",
+  purpose: "Designing, deciding",
+  elements: [
+      "Resource", "Capability", "Work Package",
+  ],
+},
 
   // ── IMPLEMENTATION & MIGRATION (Appendix C.4) ────────────────────────────
 
   project: {
-    name: "Project", category: "Implementation and Migration", section: "§C.4.1",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Operational managers, enterprise and ICT architects, employees, shareholders",
-    concerns: "Project portfolio management; Architecture implementation",
-    purpose: "Deciding, planning",
+    name: "Project", 
+    category: "Implementation and Migration", 
+    section: "§C.4.1",
+    scope: "Implementation and Migration",
+    stakeholders: "(Operational) managers, enterprise and ICT architects, employees, shareholders",
+    concerns: "Architecture vision and policies, motivation",
+    purpose: "Deciding, informing",
     elements: [
-      "Work Package", "Deliverable", "Implementation Event",
-      "Plateau",
-      "Business Actor", "Business Role",
-      "Location",
+        "Goal",
+        "Work Package", "Deliverable", "Implementation Event",
+        "Business Actor", "Business Role",
     ],
-  },
+},
 
-  migrationViewpoint: {
-    name: "Migration", category: "Implementation and Migration", section: "§C.4.2",
-    scope: "Multiple layers / Multiple aspects",
-    stakeholders: "Enterprise architects, operational managers, ICT architects, employees, shareholders",
-    concerns: "Migration planning; Architecture landscape",
-    purpose: "Deciding, planning",
-    elements: [
+migrationViewpoint: {
+  name: "Migration", 
+  category: "Implementation and Migration", 
+  section: "§C.4.2",
+  scope: "Implementation and Migration",
+  stakeholders: "Enterprise architects, process architects, application architects, infrastructure architects and domain architects, employees, shareholders",
+  concerns: "History of models",
+  purpose: "Designing, deciding, informing",
+  elements: [
       "Plateau", "Gap",
-      "Work Package", "Deliverable", "Implementation Event",
-      "Location",
-    ],
-  },
+  ],
+},
 
 };
 

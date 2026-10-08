@@ -8,10 +8,14 @@
 
 /** Normative exchange namespace (archimate3_Model.xsd targetNamespace). */
 const ARCHIMATE_EXCHANGE_NS = "http://www.opengroup.org/xsd/archimate/3.0/";
-const ARCHIMATE_MODEL_XSD = "https://www.opengroup.org/xsd/archimate/3.1/archimate3_Model.xsd";
+/** Same entry as OpenGroupXMLExchange test models (Diagram.xsd pulls in Model + View). */
+const ARCHIMATE_SCHEMA_LOCATION =
+  ARCHIMATE_EXCHANGE_NS + " http://www.opengroup.org/xsd/archimate/3.0/archimate3_Diagram.xsd";
 
 export const DERIVED_NOTE =
   "Note: This relationship is derived. Consider modeling intermediate bridging elements.";
+export const POTENTIAL_DERIVED_NOTE =
+  "Note: This relationship is potentially derived (Appendix B.3) and may need modeler validation.";
 
 function flattenSegmentsForExport(segments, pathIndex) {
   const out = [];
@@ -80,9 +84,12 @@ function classifyHopDerivation(step, codeUpper) {
   if (step?.isAssociation === true || code === "O") return "Fallback";
 
   const derived = (step?.matrixDerivedCodes || []).map((c) => String(c).toUpperCase());
+  const potential = (step?.matrixDerivedPotentialCodes || []).map((c) => String(c).toUpperCase());
   const direct = (step?.matrixDirectCodes || []).map((c) => String(c).toUpperCase());
+  if (potential.includes(code)) return "Potential";
   if (derived.includes(code)) return "Derived";
   if (direct.includes(code)) return "Explicit";
+  if (step?.isPotentialDerived) return "Potential";
   if (step?.isDirect === false) return "Derived";
   return "Explicit";
 }
@@ -119,6 +126,7 @@ export function buildPathExportData({
 
   const hops = [];
   let hasDerived = false;
+  let hasPotentialDerived = false;
   for (let i = 1; i < flatSteps.length; i++) {
     const from = elements[i - 1];
     const to = elements[i];
@@ -128,6 +136,7 @@ export function buildPathExportData({
     const relationshipType = relMeta?.name || (code === "O" ? "Association" : code);
     const derivation = classifyHopDerivation(step, code);
     if (derivation === "Derived") hasDerived = true;
+    if (derivation === "Potential") hasPotentialDerived = true;
     hops.push({
       hopNumber: i,
       sourceElementType: from.displayType,
@@ -135,7 +144,12 @@ export function buildPathExportData({
       relationshipCode: code,
       relationshipType,
       relationshipDerivation: derivation,
-      pedagogicalNote: derivation === "Derived" ? DERIVED_NOTE : "",
+      pedagogicalNote:
+        derivation === "Potential"
+          ? POTENTIAL_DERIVED_NOTE
+          : derivation === "Derived"
+            ? DERIVED_NOTE
+            : "",
       sourceId: from.identifier,
       targetId: to.identifier,
       relationshipId: nextPrefixedId("rel"),
@@ -146,6 +160,7 @@ export function buildPathExportData({
     elements,
     hops,
     hasDerived,
+    hasPotentialDerived,
     derivedNote: DERIVED_NOTE,
     startType: elements[0]?.displayType || "Start",
     endType: elements[elements.length - 1]?.displayType || "End",
@@ -190,12 +205,12 @@ export function buildPathExportXml(exportData) {
       ARCHIMATE_EXCHANGE_NS +
       '" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
       'xsi:schemaLocation="' +
-      xmlEscapeAttr(`${ARCHIMATE_EXCHANGE_NS} ${ARCHIMATE_MODEL_XSD}`) +
+      xmlEscapeAttr(ARCHIMATE_SCHEMA_LOCATION) +
       '" identifier="' +
       xmlEscapeAttr(nextPrefixedId("model")) +
       '" version="3.1.0">'
   );
-  lines.push("  <name>ArchiTrek Path Export</name>");
+  lines.push('  <name xml:lang="en">ArchiTrek Path Export</name>');
   if (exportData.hasDerived) {
     lines.push(`  <!-- ${xmlEscapeText(DERIVED_NOTE)} -->`);
   }
@@ -204,7 +219,7 @@ export function buildPathExportXml(exportData) {
     lines.push(
       `    <element identifier="${xmlEscapeAttr(el.identifier)}" xsi:type="${xmlEscapeAttr(el.xsiType)}">`
     );
-    lines.push(`      <name>${xmlEscapeText(el.placeholderName)}</name>`);
+    lines.push(`      <name xml:lang="en">${xmlEscapeText(el.placeholderName)}</name>`);
     lines.push("    </element>");
   }
   lines.push("  </elements>");

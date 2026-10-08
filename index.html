@@ -337,9 +337,14 @@
         <div class="help-kicker">Upstream</div>
         <div class="help-card-title">How the matrix was captured</div>
         <p class="help-text">
-          The <code>MATRIX</code> records in <code>data/matrix.js</code> are produced by <code>scripts/build-matrix.mjs</code>
-          from the vendored machine-readable table in <code>data/source/relationships.xml</code> (AlbertoDMendoza/archimate_ontology),
-          aligned to the same Appendix&nbsp;B family as the public spec (see <code>data/matrix.js</code> for the chapter link).
+          The <code>MATRIX</code> records in <code>data/matrix.js</code> are produced by <code>scripts/build-matrix.mjs</code>.
+          The allowed codes for each pair come from the Appendix&nbsp;B table in <code>data/source/relationships.xml</code>
+          (AlbertoDMendoza/archimate_ontology). Whether a code is <strong>direct</strong> or <strong>derived</strong> comes from
+          upstream&rsquo;s case-significant copy of the same table (<code>data/source/relationships-cased.xml</code>: UPPERCASE = drawn
+          in the chapter&nbsp;3&ndash;12 metamodel figures, lowercase = derived). A derived code is <strong>valid</strong> when
+          upstream&rsquo;s DR1&ndash;DR8 rules (Appendix&nbsp;B.2) produce it from the direct relationships, and
+          <strong>potential</strong> when it only appears once PDR1&ndash;PDR12 (Appendix&nbsp;B.3) also run. The upstream commit
+          and the date are in the header of <code>data/matrix.js</code>.
           If you find a mismatch against the published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
         </p>
       </div>
@@ -372,8 +377,12 @@
             <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/validation/relationships.xml</a>,
             and a Turtle ontology at
             <a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl" target="_blank" rel="noopener noreferrer">https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/ontology/archimate.ttl</a>.
-            ArchiTrek’s pathfinding matrix is generated from the ontology project’s <code>relationships.xml</code> snapshot under
-            <code>data/source/</code> (see the generator and headers in <code>data/matrix.js</code>).
+            ArchiTrek&rsquo;s pathfinding matrix is generated from snapshots of the project&rsquo;s Appendix&nbsp;B tables
+            (<a href="https://github.com/AlbertoDMendoza/archimate_ontology/blob/main/derivation/relationships.xml" target="_blank" rel="noopener noreferrer">derivation/relationships.xml</a>,
+            where letter case marks direct versus derived) under <code>data/source/</code>, and its valid-versus-potential split
+            comes from running the project&rsquo;s SPARQL derivation rules (DR1&ndash;DR8, PDR1&ndash;PDR12). Encoding and rules
+            &copy; Alberto D. Mendoza, Apache-2.0; the underlying tables are from Appendix&nbsp;B of the ArchiMate&reg; 3.2
+            Specification, &copy; The Open Group.
           </li>
         </ul>
       </div>

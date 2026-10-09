@@ -1,116 +1,81 @@
-# ArchiTrek (ArchiMate Navigator)
+<p align="center"><img src="docs/assets/banner.svg" alt="ArchiTrek: how can I connect these boxes? An ArchiMate 3.2 study tool." width="100%"></p>
 
-**ArchiTrek** is a browser-based **ArchiMate study engine**: an interactive workspace for exploring the ArchiMate metamodel, checking relationship validity, reasoning about derivation rules (including Appendix B style routing), and visualizing **step-by-step pathfinding** between concepts you select.
+<p align="center">
+  <a href="https://architrek.hronmichal.net"><b>Open ArchiTrek</b></a>
+  &nbsp;·&nbsp; <a href="docs/getting-started.md">Getting started</a>
+  &nbsp;·&nbsp; <a href="docs/features.md">Features</a>
+  &nbsp;·&nbsp; <a href="docs/teaching.md">For teachers</a>
+</p>
 
-The UI is optimized for **desktop** screen space (a mobile gate explains why and offers a reminder link).
+ArchiTrek shows you how two ArchiMate element types can be connected, and why. Pick a start and an end, for example a Node and a Business Function. ArchiTrek searches the relationship tables in Appendix B of the ArchiMate 3.2 specification and returns the legal routes between them. It draws each route as a diagram and explains every hop: which relationship, whether the tables list it directly or only as a derivation, and which rule licenses it.
 
-## Highlights
+The relationship table tells you what is allowed. It does not tell you through what. ArchiTrek fills that gap. It runs in the browser, needs no account, and keeps your work in your browser.
 
-- **Pathfinding** across the metamodel with tunable search depth, alternative routes, effort presets, and semantic rigor options (academic / pragmatic / discovery / custom).
-- **Viewpoints** and allowed-element filtering to study the model from standard ArchiMate lenses.
-- **Diagram rendering** with configurable overlays (hops, flips, relationship names, lock/unpin hints, composite sub-components).
-- **Export** to PDF (via bundled [jsPDF](https://github.com/parallax/jsPDF) + [svg2pdf.js](https://github.com/yWorks/svg2pdf.js)); see `assets/vendor/README.vendor.md` for vendor notes.
-- **Thematic scenarios** and perspective storytelling helpers driven by data in `data/scenarios.js`.
-- **Optional analytics**: self-hosted [Umami](https://umami.is/) when `config/analytics-config.js` is configured.
-- **Feedback / reminders**: optional [Web3Forms](https://web3forms.com/) access key in `config/feedback-config.js` (domain-restrict in their dashboard; treat the key as public-in-page).
+<p align="center"><img src="docs/assets/screenshots/route.png" alt="ArchiTrek showing Route 1 from Node to Business Function: Node realizes Application Component, which is assigned to Application Function, which serves Business Function. The results panel lists five routes with their badges." width="100%"></p>
 
-## Tech stack
+## What you get
 
-- **Plain static site** — no bundler, no build step. Scripts are loaded in order from `index.html`.
-- **Vanilla JavaScript**, HTML, and CSS (`ui/styles.css`).
-- Deploy anywhere that can serve static files (object storage + CDN, Apache with `.htaccess`, nginx, GitHub Pages in a subpath, etc.).
+<table>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-route.svg" width="48" height="48" alt="" align="left"><b>Pathfinding</b><br>Every legal route between two or more element types, ranked so that direct relationships come before shortcuts.</td><td width="50%" valign="top"><img src="docs/assets/icon-explain.svg" width="48" height="48" alt="" align="left"><b>Hop by hop</b><br>Each hop explained in phases, with the relationship, the specification section and the rule behind it.</td></tr>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-evidence.svg" width="48" height="48" alt="" align="left"><b>Evidence labels</b><br>Ground-Truth when the route reads as step-by-step structure. Simplified when it leans on derived shortcuts.</td><td width="50%" valign="top"><img src="docs/assets/icon-rigor.svg" width="48" height="48" alt="" align="left"><b>Semantic rigor</b><br>Academic, Pragmatic or Discovery. Choose how much the search may accept as an answer.</td></tr>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-waypoint.svg" width="48" height="48" alt="" align="left"><b>Waypoints</b><br>Pin an element in the middle. The search has to go through it.</td><td width="50%" valign="top"><img src="docs/assets/icon-flip.svg" width="48" height="48" alt="" align="left"><b>Relationship type and flip</b><br>Right-click an arrow to pick its relationship or turn it around.</td></tr>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-viewpoint.svg" width="48" height="48" alt="" align="left"><b>Viewpoints</b><br>Pick a standard viewpoint and the search drops elements that do not belong in it.</td><td width="50%" valign="top"><img src="docs/assets/icon-spec.svg" width="48" height="48" alt="" align="left"><b>Spec excerpts</b><br>Every element on the route comes with its definition, aspect and section number.</td></tr>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-export.svg" width="48" height="48" alt="" align="left"><b>Export</b><br>PNG, SVG, PDF, CSV, or Open Exchange XML that opens in Archi.</td><td width="50%" valign="top"><img src="docs/assets/icon-share.svg" width="48" height="48" alt="" align="left"><b>Share link</b><br>Every search is a link. Send the route instead of describing it.</td></tr>
+<tr><td width="50%" valign="top"><img src="docs/assets/icon-theme.svg" width="48" height="48" alt="" align="left"><b>Story themes</b><br>The same rules retold in a hospital, a university, a Formula One team or on the Death Star.</td><td width="50%" valign="top"><img src="docs/assets/icon-report.svg" width="48" height="48" alt="" align="left"><b>Report feedback</b><br>Found a link that is legal and still reads backward? Right-click it and report it.</td></tr>
+</table>
 
-## Repository layout
+The full list, with every menu and setting, is in [docs/features.md](docs/features.md).
 
-| Path | Role |
-|------|------|
-| `index.html` | Application shell, script includes, base-URL handling for subdirectory deploys |
-| `ui/` | Main app (`app.js`), styles, renderer modules, components, export controller |
-| `logic/` | Graph model, pathfinder, layout engine, lightweight store, path export helpers |
-| `data/` | Metamodel: elements, relationships, matrix, viewpoints, derivation logic, scenarios, renderer visuals |
-| `config/` | Analytics, feedback, renderer tuning |
-| `assets/` | Favicon, vendor libraries |
-| `.htaccess` | Example Apache rules (adjust for your host) |
+## How it works
 
-## Relationship data
+<p align="center"><img src="docs/assets/flow.svg" alt="Five steps: pick element types, search the Appendix B tables, rank routes by evidence, explain every hop, export." width="100%"></p>
 
-`data/matrix.js` is generated. Do not edit it by hand. It holds one record per ordered element pair with three code lists: `direct`, `derived` (valid) and `derivedPotential`. Association (O) is always permitted (§5.2.4), so the matrix leaves it out. Junction is not a concept pair, so it is left out too.
+ArchiTrek treats the metamodel as a graph. Element types are the nodes. A relationship that Appendix B allows between two types is an edge. The search is a uniform-cost search, so it returns the cheapest routes first. Each hop has a cost that reflects how sure the specification is about it:
 
-**Where the allowed set comes from.** `data/source/relationships.xml` is the Appendix B relationship table of the ArchiMate® 3.2 Specification, as encoded by [AlbertoDMendoza/archimate_ontology](https://github.com/AlbertoDMendoza/archimate_ontology). It decides which codes a pair may have at all. Its letters match upstream's current table on every pair. The only difference is a Junction row, which ArchiTrek does not use.
+<p align="center"><img src="docs/assets/evidence.svg" alt="Four kinds of link with their hop costs: direct 1, derived 5, potential 20, association 100." width="100%"></p>
 
-**Where direct versus derived comes from.** `data/source/relationships-cased.xml` is upstream's `derivation/relationships.xml`, copied unmodified. In that file the case is significant:
+A route that leans on derived hops is still legal, and the results panel marks it as Simplified. [Reading the results](docs/reading-results.md) explains every badge and label.
 
-- UPPERCASE = direct: drawn explicitly in the chapter 3–12 metamodel figures.
-- lowercase = derived.
+## Start in two minutes
 
-Upstream checked it cell by cell against all ten Appendix B table figures. The vendored commit, licence and attribution are in `data/source/UPSTREAM.md`.
+1. Open [architrek.hronmichal.net](https://architrek.hronmichal.net) on a laptop or desktop. The diagrams need the room, so phones get a reminder link.
+2. Pick one of the examples in the welcome window, or choose your own start and end element.
+3. Click Find Path, then click a route to read its explanation.
 
-**How valid versus potential is computed.** The table marks a code as derived but not which kind. `scripts/build-buckets.py` (dev-only, never deployed) decides this with upstream's own rules:
+Or open a ready-made question:
 
-1. Load upstream's files in its documented load order: `ontology/archimate.ttl`, derivation axioms, strengths, provenance, the rules, then `conformance/fixture-direct.ttl` (every direct relationship at type level) as the model.
-2. Run the SPARQL CONSTRUCT rules unmodified with Apache Jena `arq`. Before the rules run, `rdf:type` is closed over `rdfs:subClassOf`, because the rules test domain membership through it.
-3. Run DR1–DR8 (Appendix B.2) to a fixed point. Every lowercase code they produce is **derived** (valid).
-4. Run DR1–DR8 and PDR1–PDR12 (Appendix B.3) together to a fixed point. A lowercase code produced only then is **derivedPotential**.
-5. Cross-check: the derived and potential codes together should equal the lowercase set. If a rule produces anything outside it, the script refuses to write. If some lowercase code is produced by no rule, it also refuses by default; with `--unexplained keep-old` (used for the current data) it keeps that code's previous derived/potential bucket, turns a previous "direct" into potential, and lists the code in `data/source/unexplained-codes.json`.
+| Question | Link |
+|---|---|
+| Can a Node reach a Business Function? | [Node → Business Function](https://architrek.hronmichal.net/?mode=ordered&path=2&wp0=Node&wp1=Business+Function) |
+| The same, through the application layer | [Node → Application Component → Business Function](https://architrek.hronmichal.net/?mode=ordered&path=3&wp0=Node&wp1=Application+Component&wp2=Business+Function) |
+| A pair that is legal and still reads backward | [Value Stream → Capability](https://architrek.hronmichal.net/?mode=ordered&path=2&wp0=Value+Stream&wp1=Capability) |
 
-Result at upstream commit `e2135eb`: 2,066 direct, 4,158 valid derived and 345 potential codes. 4,117 valid and 285 potential come straight from the rules. The other 101 lowercase codes are produced by no rule over upstream's fixture: 88 are self-pairs such as Node -> Node (every rule requires two distinct elements, and the fixture has one per type), and 13 are cross-type codes involving Grouping, Location, Plateau, Stakeholder and Constraint (reported upstream as AlbertoDMendoza/archimate_ontology#11). They keep their previous valid/potential bucket, and any that were previously marked direct become potential. They are listed in `data/source/unexplained-codes.json`. Compared with the previous buckets, 2,596 codes changed.
+The step-by-step walk-through with screenshots is in [docs/getting-started.md](docs/getting-started.md).
 
-**How to regenerate.**
+## Documentation
 
-```bash
-brew install jena                     # Apache Jena (arq, riot); needs a JDK
-git clone https://github.com/AlbertoDMendoza/archimate_ontology ../archimate_ontology
-git -C ../archimate_ontology checkout e2135eb0ea09da1e71ad7bc83917f679f6b27d72
-python3 scripts/build-buckets.py --upstream ../archimate_ontology --unexplained keep-old --write   # about 15 min
-node scripts/build-matrix.mjs
-node --test scripts/test-matrix-buckets.mjs
-```
+Using ArchiTrek:
 
-To move to a newer upstream commit:
+- [Getting started](docs/getting-started.md): your first route, step by step.
+- [Features](docs/features.md): every control, menu and setting.
+- [Reading the results](docs/reading-results.md): route groups, badges, the four kinds of link, semantic rigor, and what to do when no path is found.
+- [Derivation rules](docs/derivation-rules.md): the twenty rules of Appendix B, each with an example from a car insurance case.
+- [For teachers](docs/teaching.md): a classroom session plan, ready-made links and exercises.
 
-1. Copy its `derivation/relationships.xml` over `data/source/relationships-cased.xml`.
-2. Update the commit and dates in `data/source/UPSTREAM.md`.
-3. Run the commands above.
+Behind the scenes:
 
-`node scripts/compare-buckets.mjs` lists every code whose direct/derived side differs between the cased table and the current buckets.
+- [Relationship data](docs/relationship-data.md): where the tables come from, how direct, derived and potential are decided, and how to regenerate them.
+- [Running and hosting](docs/self-hosting.md): run locally, deploy, configure analytics and feedback.
+- [Roadmap](docs/ROADMAP.md): what comes next, starting with expanding and contracting derived arrows on the diagram.
 
-**Credit.** The relationship tables and derivation rules are from The Open Group's ArchiMate® 3.2 Specification, Appendix B (© 2012–2023 The Open Group; ArchiMate is a registered trademark of The Open Group). The machine-readable encoding and the SPARQL rules are by Alberto D. Mendoza ([archimate_ontology](https://github.com/AlbertoDMendoza/archimate_ontology), Apache-2.0). ArchiTrek is not affiliated with or endorsed by The Open Group.
+## Credits
 
-## Run locally
+The relationship tables and derivation rules come from The Open Group's ArchiMate® 3.2 Specification, Appendix B (© 2012–2023 The Open Group). The machine-readable encoding and the SPARQL derivation rules are by Alberto D. Mendoza in [archimate_ontology](https://github.com/AlbertoDMendoza/archimate_ontology) (Apache-2.0). PDF export uses [jsPDF](https://github.com/parallax/jsPDF) and [svg2pdf.js](https://github.com/yWorks/svg2pdf.js).
 
-From the repository root, serve the folder over HTTP (file URLs will break module loading assumptions in many browsers):
+ArchiTrek is an unofficial study tool. ArchiMate is a registered trademark of The Open Group. ArchiTrek is not affiliated with or endorsed by The Open Group.
 
-```bash
-python3 -m http.server 8080
-```
-
-Then open `http://localhost:8080/` (or `http://127.0.0.1:8080/`).
-
-Any static file server works (for example `npx --yes serve -p 8080`).
-
-## Deploying
-
-- **Subdirectory hosting**: `index.html` injects a `<base href>` so assets resolve correctly when the app is not at the site root (for example `/ArchiTrek/`). Keep trailing-slash behavior of your host in mind.
-- **Apache**: review `.htaccess` and adapt paths and directives to your environment.
-- **Secrets**: do **not** commit FTP credentials, API keys for private backends, or personal deploy configs. Prefer environment-specific files that stay local or use your CI/CD secret store. (This repo’s `.gitignore` already ignores common local env patterns.)
-
-## Configuration (no build)
-
-Edit the checked-in `config/*.js` files as needed:
-
-- **`config/analytics-config.js`** — optional Umami `host` + `websiteId`.
-- **`config/feedback-config.js`** — optional Web3Forms access key for contact / reminder forms.
-- **`config/renderer-config.js`** — renderer-related defaults.
-
-## Development notes
-
-- **`node_modules/`** may exist locally for editor tooling or optional dev scripts; the shipped app does not require Node to run in the browser.
-- **`assets/vendor/README.vendor.md`** documents third-party bundles and how to update them.
+Made by [Michal Hron](https://www.hronmichal.net). Found a bug or a relationship that looks wrong? Use Feedback in the app, or open an issue here.
 
 ## License
 
-Add a `LICENSE` file to this repository if you intend to open-source the project under explicit terms.
-
-## Name
-
-The product name in the UI is **ArchiTrek**. This GitHub repository is named **archimate-navigator**; you can align naming in the repo settings or keep both names as you prefer.
+No license file yet. Add a `LICENSE` file before you reuse the code under explicit terms.

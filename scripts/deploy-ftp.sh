@@ -51,6 +51,8 @@ EXCLUDE_ARGS=(
   -X 'blob-report/'
   -X 'coverage/'
   -X '.vite/'
+  # Documentation and its images (GitHub only)
+  -X 'docs/'
 )
 
 if [[ "$FTP_USE_TLS" == "1" ]]; then

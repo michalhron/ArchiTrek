@@ -1,0 +1,50 @@
+{
+  "provider": "kokoro",
+  "speed": "1.0",
+  "lines": [
+    {
+      "id": "01",
+      "text": "Every ArchiMate student hits this question. How do these two boxes connect?"
+    },
+    {
+      "id": "02",
+      "text": "The relationship table tells you what is allowed. It does not tell you through what."
+    },
+    {
+      "id": "03",
+      "text": "ArchiTrek finds the route."
+    },
+    {
+      "id": "04",
+      "text": "Pick a start and an end. Add a stop in between if you want one. Then click Find Path."
+    },
+    {
+      "id": "05",
+      "text": "ArchiTrek searches the Appendix B tables and ranks every legal route. Direct relationships come first."
+    },
+    {
+      "id": "06",
+      "text": "You decide each hop. Right-click an arrow to choose its relationship."
+    },
+    {
+      "id": "07",
+      "text": "Then read why. Every hop comes with its rule and its section in the specification."
+    },
+    {
+      "id": "08",
+      "text": "Keep the search strict for your assignments, or loosen it to explore."
+    },
+    {
+      "id": "09",
+      "text": "Take the route with you, as a picture, a share link, or a model that opens in Archi."
+    },
+    {
+      "id": "10",
+      "text": "ArchiTrek. Free, and it runs in your browser."
+    }
+  ],
+  "bgm": {
+    "mode": "none"
+  },
+  "voice": "af_heart"
+}

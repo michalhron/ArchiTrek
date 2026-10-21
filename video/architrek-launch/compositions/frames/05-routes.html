@@ -1,0 +1,163 @@
+<template id="f05-routes-template">
+<script src="assets/vendor/gsap.min.js"></script>
+<style>
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_500.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_700.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: block; }
+
+  #root {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', sans-serif;
+    color: #1a2432;
+  }
+  #root .clip { position: absolute; }
+
+  #f05-routes-bg {
+    left: 0; top: 0; width: 1920px; height: 1080px;
+    background: #f7f7f7;
+  }
+
+  /* Kicker: 12px orange square + uppercase tracked label */
+  #f05-routes-kicker {
+    left: 288px; top: 54px;
+    display: flex; align-items: center; gap: 14px;
+    font-size: 22px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #4a5568;
+    line-height: 1;
+  }
+  .r05-kicker-sq { width: 12px; height: 12px; background: #ff4500; flex: none; }
+
+  /* Window: 1344x756 (16:9), view area y 120-876, above the caption keep-out */
+  #f05-routes-window {
+    left: 288px; top: 120px; width: 1344px; height: 756px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 24px 60px rgba(26,36,50,0.18);
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  /* Virtual camera: screenshot at 1920x1080 CSS px + overlays in viewport space */
+  .r05-world {
+    position: absolute; left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: 0 0;
+  }
+  .r05-shot { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; display: block; }
+
+  .r05-tick {
+    position: absolute; left: 31px; width: 4px; height: 22px;
+    background: #ff4500;
+    transform-origin: 50% 50%;
+  }
+  .r05-hl {
+    position: absolute; left: 35px; top: 666px; width: 637px; height: 34px;
+    border: 2.2px solid #ff4500;
+    box-sizing: border-box;
+    transform-origin: 50% 50%;
+  }
+  .r05-label {
+    position: absolute; left: 690px; top: 652px;
+    background: #ffffff;
+    border: 1px solid #1a2432;
+    padding: 7px 11px 8px;
+    font-size: 17px; font-weight: 600; line-height: 1.35; color: #1a2432;
+    white-space: nowrap;
+  }
+  .r05-label .r05-muted { font-weight: 500; color: #4a5568; }
+</style>
+
+<div id="root" data-composition-id="05-routes" data-start="0" data-duration="7.348" data-width="1920" data-height="1080">
+  <div id="f05-routes-bg" class="clip" data-start="0" data-duration="7.348" data-track-index="0"></div>
+
+  <div id="f05-routes-kicker" class="clip" data-start="0" data-duration="7.348" data-track-index="2">
+    <span class="r05-kicker-sq"></span><span>2 · Search</span>
+  </div>
+
+  <div id="f05-routes-window" class="clip" data-start="0" data-duration="7.348" data-track-index="1">
+    <div id="f05-routes-world" class="r05-world" data-layout-allow-overflow>
+      <img class="r05-shot" src="assets/s03-route-undecided.png" alt="">
+      <!-- route row ticks (viewport px; rows at y 669/703/736/769/802, 28px tall) -->
+      <div class="r05-tick" id="f05-routes-tick1" style="top:672px"></div>
+      <div class="r05-tick" id="f05-routes-tick2" style="top:705px"></div>
+      <div class="r05-tick" id="f05-routes-tick3" style="top:738px"></div>
+      <div class="r05-tick" id="f05-routes-tick4" style="top:771px"></div>
+      <div class="r05-tick" id="f05-routes-tick5" style="top:805px"></div>
+      <div class="r05-hl" id="f05-routes-hl"></div>
+      <div class="r05-label" id="f05-routes-label">cost 1 per direct hop<br><span class="r05-muted">· 5 per derived hop</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
+  const CUES = {
+    architrek: 0.0,
+    searches: 0.611,
+    the: 1.04,
+    appendix: 1.287,
+    b: 1.898,
+    tables: 2.145,
+    and: 2.573,
+    ranks: 2.82,
+    every: 3.066,
+    legal: 3.678,
+    route: 4.107,
+    direct: 4.918,
+    relationships: 5.4,
+    come: 6.294,
+    first: 6.571
+  };
+  const END = 6.848;
+  // Clamp: start no later than END - 0.35, and finish before the frame ends.
+  function at(t) { return Math.max(0, Math.min(t, END - 0.35)); }
+  function dur(t, d) { return Math.max(0.1, Math.min(d, END - 0.05 - at(t))); }
+
+  const q = (id) => document.getElementById(id);
+  const world = q("f05-routes-world");
+
+  // Camera: window is 1344x756; world is 1920x1080 at scale S, offset (x, y).
+  const WIN_W = 1344, WIN_H = 756;
+  function frame(cx, cy, S) {
+    let x = WIN_W / 2 - cx * S;
+    let y = WIN_H / 2 - cy * S;
+    x = Math.min(0, Math.max(WIN_W - 1920 * S, x));
+    y = Math.min(0, Math.max(WIN_H - 1080 * S, y));
+    return { x: x, y: y, scale: S };
+  }
+  const FIT = { x: 0, y: 0, scale: WIN_W / 1920 };          // full screenshot (0.7)
+  const DIAGRAM = frame(950, 175, FIT.scale * 1.8);          // diagram row x540-1360, y120-230
+  const ROUTES = frame(365, 748, FIT.scale * 2.0);           // route list x30-700, y665-830
+  const ROUTES_SETTLE = { x: ROUTES.x, y: ROUTES.y - 10, scale: ROUTES.scale };
+
+  const tl = gsap.timeline({ paused: true });
+
+  // Scene 1 — establish: window settles in, kicker reveals, slow push to the diagram row.
+  tl.fromTo(q("f05-routes-window"), { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, at(CUES.architrek));
+  tl.fromTo(q("f05-routes-kicker"), { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.45, ease: "power2.out" }, at(CUES.architrek) + 0.1);
+  tl.fromTo(world, FIT, Object.assign({ duration: dur(CUES.searches, CUES.tables + 0.3 - CUES.searches), ease: "power2.inOut" }, DIAGRAM), at(CUES.searches));
+
+  // Scene 2 — on "ranks", tilt down to the route list; ticks stagger top to bottom.
+  tl.fromTo(world, DIAGRAM, Object.assign({ duration: dur(CUES.ranks, 0.85), ease: "power3.inOut", immediateRender: false }, ROUTES), at(CUES.ranks));
+  const tickStart = CUES.every;
+  const tickStep = (CUES.route - CUES.every) / 4;
+  for (let i = 1; i <= 5; i++) {
+    const t = at(tickStart + (i - 1) * tickStep);
+    tl.fromTo(q("f05-routes-tick" + i), { scaleY: 0, opacity: 0 }, { scaleY: 1, opacity: 1, duration: dur(t, 0.3), ease: "back.out(2)" }, t);
+  }
+
+  // Scene 3 — on "Direct", highlight box settles on Route 1; label on "relationships". Hold.
+  tl.fromTo(q("f05-routes-hl"), { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: dur(CUES.direct, 0.45), ease: "power3.out" }, at(CUES.direct));
+  tl.fromTo(q("f05-routes-label"), { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: dur(CUES.relationships, 0.4), ease: "power2.out" }, at(CUES.relationships));
+  // quiet camera settle under the hold
+  tl.fromTo(world, ROUTES, Object.assign({ duration: dur(CUES.direct, END - CUES.direct), ease: "sine.inOut", immediateRender: false }, ROUTES_SETTLE), at(CUES.direct));
+
+  window.__timelines = window.__timelines || {};
+  window.__timelines["05-routes"] = tl;
+})();
+</script>
+</template>

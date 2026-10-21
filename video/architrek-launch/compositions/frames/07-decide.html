@@ -1,5 +1,5 @@
-<template id="f06-decide-template">
-<div id="root" data-composition-id="06-decide" data-width="1920" data-height="1080" data-start="0" data-duration="4.297">
+<template id="f07-decide-template">
+<div id="root" data-composition-id="07-decide" data-width="1920" data-height="1080" data-start="0" data-duration="2.875">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -80,9 +80,9 @@
   }
 </style>
 
-<div id="decide-06-bg" class="clip" data-start="0" data-duration="4.297" data-track-index="0"></div>
+<div id="decide-06-bg" class="clip" data-start="0" data-duration="2.875" data-track-index="0"></div>
 
-<div id="decide-06-window" class="clip" data-start="0" data-duration="4.297" data-track-index="1">
+<div id="decide-06-window" class="clip" data-start="0" data-duration="2.875" data-track-index="1">
   <div id="decide-06-world" data-layout-allow-overflow>
     <img id="decide-06-shot-menu" src="assets/s04-ctx-menu.png" alt="">
     <img id="decide-06-shot-route" src="assets/s05-route.png" alt="">
@@ -90,8 +90,8 @@
   </div>
 </div>
 
-<div id="decide-06-kicker" class="clip" data-start="0" data-duration="4.297" data-track-index="2">
-  <span class="decide-06-sq"></span><span>3 · Decide</span>
+<div id="decide-06-kicker" class="clip" data-start="0" data-duration="2.875" data-track-index="2">
+  <span class="decide-06-sq"></span><span>4 · Decide</span>
 </div>
 
 <script>
@@ -99,18 +99,18 @@
   // Voice cue times (s from frame start). Re-time the frame by editing this object only.
   const CUES = {
     you: 0.0,
-    decide: 0.244,
-    each: 0.668,
-    hop: 0.912,
-    rightClick: 1.557,
-    an: 1.921,
-    arrow: 2.13,
-    to: 2.495,
-    choose: 2.704,
-    its: 2.913,
-    relationship: 3.123
+    decide: 0.0,
+    each: 0.2,
+    hop: 0.4,
+    rightClick: 0.416,
+    an: 0.5,
+    arrow: 0.655,
+    to: 0.893,
+    choose: 1.132,
+    its: 1.371,
+    relationship: 1.61
   };
-  const DURATION = 3.797;
+  const DURATION = 2.875;
   const MIN_LEAD = 0.35;
 
   // Start a move at `t` but make sure it finishes before the frame ends.
@@ -155,7 +155,7 @@
 
   // full-span anchor
   tl.to({}, { duration: DURATION }, 0);
-  window.__timelines["06-decide"] = tl;
+  window.__timelines["07-decide"] = tl;
 })();
 </script>
 </div>

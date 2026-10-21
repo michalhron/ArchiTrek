@@ -1,5 +1,5 @@
-<template id="f10-end-card-template">
-  <div id="root" data-composition-id="10-end-card" data-width="1920" data-height="1080" data-start="0" data-duration="2.965">
+<template id="f11-end-card-template">
+  <div id="root" data-composition-id="11-end-card" data-width="1920" data-height="1080" data-start="0" data-duration="3">
     <style>
       @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
       @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_600.woff2") format("woff2"); font-weight: 600; font-style: normal; }
@@ -60,9 +60,9 @@
       }
     </style>
 
-    <div id="ec10-bg" class="clip ec10-bg" data-start="0" data-duration="2.965" data-track-index="0"></div>
+    <div id="ec10-bg" class="clip ec10-bg" data-start="0" data-duration="3" data-track-index="0"></div>
 
-    <div id="ec10-stage" class="clip ec10-stage" data-start="0" data-duration="2.965" data-track-index="1">
+    <div id="ec10-stage" class="clip ec10-stage" data-start="0" data-duration="3" data-track-index="1">
       <img id="ec10-logo" class="ec10-logo" src="assets/logo.svg" alt="ArchiTrek" />
       <div id="ec10-rule" class="ec10-rule"></div>
       <div id="ec10-url" class="ec10-url">architrek.hronmichal.net</div>
@@ -75,14 +75,14 @@
         // Voice cue times, seconds from frame start. Re-time the frame by editing only this object.
         const CUES = {
           archiTrek: 0.0,
-          free: 1.07,
-          and: 1.651,
-          it: 1.846,
-          runs: 2.041,
-          in: 2.236,
-          your: 2.431,
-          browser: 2.626,
-          end: 2.965
+          free: 0.9,
+          and: 1.3,
+          it: 1.45,
+          runs: 1.6,
+          in: 1.8,
+          your: 1.95,
+          browser: 2.1,
+          end: 3
         };
         // Everything is revealed by roughly the "in" cue, then holds still.
         const REVEAL_DONE = CUES.in - 0.03;
@@ -116,7 +116,7 @@
         // Hold still to the end of the frame.
         tl.set({}, {}, CUES.end);
 
-        window.__timelines["10-end-card"] = tl;
+        window.__timelines["11-end-card"] = tl;
       })();
     </script>
   </div>

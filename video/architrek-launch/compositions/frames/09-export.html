@@ -1,4 +1,4 @@
-<template id="f09-take-it-template">
+<template id="f09-export-template">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -110,25 +110,23 @@
   #take09-label svg { display: block; flex: none; }
 </style>
 
-<div id="root" data-composition-id="09-take-it" data-width="1920" data-height="1080" data-duration="5.72">
-  <div id="take09-bg" class="clip" data-start="0" data-duration="5.72" data-track-index="0"></div>
+<div id="root" data-composition-id="09-export" data-width="1920" data-height="1080" data-duration="3.259">
+  <div id="take09-bg" class="clip" data-start="0" data-duration="3.259" data-track-index="0"></div>
 
-  <div id="take09-view" class="clip" data-start="0" data-duration="5.72" data-track-index="1">
+  <div id="take09-view" class="clip" data-start="0" data-duration="3.259" data-track-index="1">
     <div id="take09-world" data-layout-allow-overflow>
       <div id="take09-shot">
         <img src="assets/s08-download.png" alt="" />
       </div>
-      <div id="take09-hl-png" class="take09-hl"></div>
-      <div id="take09-hl-link" class="take09-hl"></div>
       <div id="take09-hl-xml" class="take09-hl"></div>
     </div>
   </div>
 
-  <div id="take09-kicker" class="clip" data-start="0" data-duration="5.72" data-track-index="2">
-    <span class="take09-sq"></span><span>6 · Take it with you</span>
+  <div id="take09-kicker" class="clip" data-start="0" data-duration="3.259" data-track-index="2">
+    <span class="take09-sq"></span><span>6 · Take it to Archi</span>
   </div>
 
-  <div id="take09-label-row" class="clip" data-start="0" data-duration="5.72" data-track-index="3">
+  <div id="take09-label-row" class="clip" data-start="0" data-duration="3.259" data-track-index="3">
     <div id="take09-label">
       <span>Open Exchange <span class="take09-strong">XML</span></span>
       <svg width="40" height="20" viewBox="0 0 40 20" aria-hidden="true">
@@ -144,11 +142,11 @@
     // Every voice cue, seconds from frame start. Re-time the frame by editing this object only.
     const CUES = {
       take: 0.0,
-      picture: 1.677,   // PNG chip highlight
-      share: 2.383,     // highlight moves to Copy share link
-      model: 3.58,      // highlight moves to XML
-      opens: 4.165,     // label sets in below the popover
-      end: 5.12         // frame duration
+      picture: 0.86,   // PNG chip highlight
+      share: 0.86,     // highlight moves to Copy share link
+      model: 0.9,      // highlight moves to XML
+      opens: 1.322,     // label sets in below the popover
+      end: 3.259         // frame duration
     };
     const END = CUES.end;
     // Clamp a move so it completes before the frame ends (>= 0.35 s runway).
@@ -175,17 +173,8 @@
     // slow creep through the rest of the shot keeps the camera alive
     tl.fromTo("#take09-world", cam(2.4), Object.assign({ duration: END - pushEnd, ease: "none", immediateRender: false }, cam(2.48)), pushEnd);
 
-    const pic = slot(CUES.picture, 0.3);
-    tl.fromTo("#take09-hl-png", { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: pic.dur, ease: "back.out(2)" }, pic.at);
-
-    // Scene 2 — highlight moves to Copy share link on "share".
-    const sh = slot(CUES.share, 0.3);
-    tl.to("#take09-hl-png", { opacity: 0, duration: 0.12, ease: "power1.in" }, sh.at);
-    tl.fromTo("#take09-hl-link", { opacity: 0, scaleX: 0.3, scaleY: 1, transformOrigin: "0% 50%" }, { opacity: 1, scaleX: 1, duration: sh.dur, ease: "power3.out" }, sh.at);
-
-    // Scene 3 — highlight moves to XML on "model"; label sets in on "opens"; hold.
+    // Scene 2 — XML lights once the push lands ("model" cue); the Archi label sets in on "opens"; hold.
     const md = slot(CUES.model, 0.3);
-    tl.to("#take09-hl-link", { opacity: 0, duration: 0.12, ease: "power1.in" }, md.at);
     tl.fromTo("#take09-hl-xml", { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: md.dur, ease: "back.out(2)" }, md.at);
 
     const op = slot(CUES.opens, 0.45);
@@ -195,7 +184,7 @@
     tl.to({}, { duration: END }, 0);
 
     window.__timelines = window.__timelines || {};
-    window.__timelines["09-take-it"] = tl;
+    window.__timelines["09-export"] = tl;
   })();
 </script>
 </template>

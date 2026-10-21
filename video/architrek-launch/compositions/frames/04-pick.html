@@ -1,5 +1,5 @@
-<template id="f04-pick-template">
-<div id="root" data-composition-id="04-pick" data-width="1920" data-height="1080" data-start="0" data-duration="5.577">
+<template id="pick04-template">
+<div id="root" data-composition-id="04-pick" data-width="1920" data-height="1080" data-start="0" data-duration="3.493">
   <script src="assets/vendor/gsap.min.js"></script>
   <style>
     @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
@@ -65,7 +65,7 @@
       overflow: hidden;
       box-sizing: border-box;
     }
-    /* the world: screenshot at 1920x1080 CSS px + highlight box, moved together */
+    /* the world: screenshot at 1920x1080 CSS px + highlight box, moved together by the camera */
     .pick04-world {
       position: absolute;
       left: 0;
@@ -88,16 +88,17 @@
       top: 0;
       width: 248px;
       height: 116px;
-      border: 1.5px solid #ff4500;
+      border: 1.25px solid #ff4500;
       border-radius: 0;
       box-sizing: border-box;
       transform-origin: 50% 50%;
+      opacity: 1;
     }
   </style>
 
-  <div id="pick04-bg" class="clip pick04-bg" data-start="0" data-duration="5.577" data-track-index="0"></div>
+  <div id="pick04-bg" class="clip pick04-bg" data-start="0" data-duration="3.493" data-track-index="0"></div>
 
-  <div id="pick04-stage" class="clip pick04-stage" data-start="0" data-duration="5.577" data-track-index="1">
+  <div id="pick04-stage" class="clip pick04-stage" data-start="0" data-duration="3.493" data-track-index="1">
     <div class="pick04-kicker" id="pick04-kicker">
       <span class="pick04-kicker-sq" id="pick04-kicker-sq"></span>
       <span class="pick04-kicker-text" id="pick04-kicker-text">1 · Pick</span>
@@ -105,7 +106,7 @@
 
     <div class="pick04-window" id="pick04-window">
       <div class="pick04-world" id="pick04-world" data-layout-allow-overflow>
-        <img class="pick04-shot" src="assets/s02-edit.png" alt="ArchiTrek waypoint editor" width="1920" height="1080" />
+        <img class="pick04-shot" src="assets/c01-edit-2wp.png" alt="ArchiTrek waypoint editor with Node and Business Function" width="1920" height="1080" />
         <div class="pick04-hl" id="pick04-hl"></div>
       </div>
     </div>
@@ -113,24 +114,25 @@
 
   <script>
     (function () {
-      // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
+      // Voice cue times (seconds from frame start) + frame length.
+      // Re-time the frame by editing this object only.
       const CUES = {
         pick: 0.0,
-        start: 0.421,
-        end: 1.052,
-        add: 1.655,
-        stop: 1.994,
-        between: 2.334,
-        then: 3.697,
-        click: 4.042,
-        find: 4.387,
-        path: 4.732
+        node: 0.218,
+        and: 0.436,
+        business: 0.654,
+        function: 1.195,
+        then: 1.869,
+        click: 2.152,
+        find: 2.434,
+        path: 2.717,
+        END: 3.493
       };
-      const DUR = 5.077;
-      // Clamp a move starting on a cue so it completes before the frame ends.
-      const at = (cue, d) => Math.max(0, Math.min(cue, DUR - 0.05 - d));
+      const END = CUES.END;
+      // Start a move on its cue, but clamp so a move of length d completes before the frame ends.
+      const at = (cue, d) => Math.max(0, Math.min(cue, END - 0.05 - d));
 
-      // Window view size (inside 1px border) and target framings in 1920x1080 viewport space.
+      // Window view size (inside the 1px border); framings in 1920x1080 viewport space.
       const VW = 1726, VH = 738;
       const fit = (s, cx, cy) => {
         // centre (cx, cy) at scale s, clamped so the view never leaves the screenshot
@@ -139,45 +141,50 @@
         y = Math.min(0, Math.max(VH - 1080 * s, y));
         return { scale: s, x: x, y: y };
       };
-      const CAM_FULL = { scale: VW / 1920, x: 0, y: 0 };      // full width
-      const CAM_CARDS = fit(2.08, 410, 160);                     // waypoint cards row x 14-806, y 99-207
-      const CAM_CARDS_DRIFT = fit(2.13, 410, 160);               // slow settle while held
-      const CAM_FIND = fit(2.4, 1858, 196);                      // Find Path button x 1801-1916, y 174-218
+      const CAM_FULL = { scale: VW / 1920, x: 0, y: 0 };   // whole editor
+      const CAM_CARDS = fit(2.9, 272, 153);                  // cards A+B: x 14-530, y 99-207
+      const CAM_CARDS_DRIFT = fit(2.98, 272, 153);           // slow settle while held
+      const CAM_FIND = fit(2.4, 1858, 196);                  // Find Path: x 1801-1916, y 174-218
 
-      // Highlight boxes (padded 4px around each region)
+      // Highlight boxes (4px padding around each region)
       const HL_A = { x: 10, y: 95, width: 248, height: 116 };
       const HL_B = { x: 286, y: 95, width: 248, height: 116 };
-      const HL_C = { x: 562, y: 95, width: 248, height: 116 };
       const HL_FIND = { x: 1797, y: 170, width: 123, height: 52 };
+
+      const PUSH_IN = 0.55, HL_IN = 0.28, HL_MOVE = 0.4, TRAVEL = 0.5, PRESS = 0.22;
 
       const tl = gsap.timeline({ paused: true });
 
-      // Scene 1 — kicker + window establish, push-in to cards
+      // Scene 1 — kicker + window establish, push-in to the two cards
       tl.fromTo("#pick04-kicker-sq", { scale: 0 }, { scale: 1, duration: 0.3, ease: "back.out(2)" }, CUES.pick);
       tl.fromTo("#pick04-kicker-text", { x: -16, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, CUES.pick + 0.06);
-      tl.fromTo("#pick04-window", { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, CUES.pick);
-      tl.fromTo("#pick04-world", CAM_FULL, Object.assign({ duration: 0.65, ease: "power2.inOut" }, CAM_CARDS), CUES.pick + 0.3);
-      tl.fromTo("#pick04-world", CAM_CARDS, Object.assign({ duration: Math.max(0.1, CUES.click - (CUES.pick + 0.95)), ease: "none", immediateRender: false }, CAM_CARDS_DRIFT), CUES.pick + 0.95);
+      tl.fromTo("#pick04-window", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, CUES.pick);
+      tl.fromTo("#pick04-world", CAM_FULL,
+        Object.assign({ duration: PUSH_IN, ease: "power2.inOut" }, CAM_CARDS),
+        at(CUES.pick + 0.08, PUSH_IN));
+      const driftStart = CUES.pick + 0.08 + PUSH_IN;
+      tl.fromTo("#pick04-world", CAM_CARDS,
+        Object.assign({ duration: Math.max(0.1, at(CUES.click, TRAVEL) - driftStart), ease: "none", immediateRender: false }, CAM_CARDS_DRIFT),
+        driftStart);
 
-      // "a start" — highlight card A
+      // "Node" — highlight card A
       tl.fromTo("#pick04-hl",
         Object.assign({ opacity: 0, scale: 1.12 }, HL_A),
-        Object.assign({ opacity: 1, scale: 1, duration: 0.3, ease: "power3.out" }, HL_A),
-        at(CUES.start, 0.3));
-      // "and an end" — move to card C
-      tl.to("#pick04-hl", Object.assign({ duration: 0.42, ease: "power3.inOut" }, HL_C), at(CUES.end, 0.42));
+        Object.assign({ opacity: 1, scale: 1, duration: HL_IN, ease: "power3.out" }, HL_A),
+        at(CUES.node, HL_IN));
+      // "Business Function" — highlight slides to card B
+      tl.to("#pick04-hl", Object.assign({ duration: HL_MOVE, ease: "power3.inOut" }, HL_B), at(CUES.business, HL_MOVE));
 
-      // Scene 2 — "a stop in between" — move to card B
-      tl.to("#pick04-hl", Object.assign({ duration: 0.4, ease: "power3.inOut" }, HL_B), at(CUES.stop, 0.4));
+      // Scene 2 — "click Find Path": camera travels right, box lands on the button, one press, hold
+      tl.fromTo("#pick04-world", CAM_CARDS_DRIFT,
+        Object.assign({ duration: TRAVEL, ease: "power3.inOut", immediateRender: false }, CAM_FIND),
+        at(CUES.click, TRAVEL));
+      tl.to("#pick04-hl", Object.assign({ duration: TRAVEL, ease: "power3.inOut" }, HL_FIND), at(CUES.click, TRAVEL));
+      tl.to("#pick04-hl", { scale: 0.94, duration: 0.08, ease: "power2.in" }, at(CUES.path, PRESS));
+      tl.to("#pick04-hl", { scale: 1, duration: PRESS - 0.08, ease: "back.out(3)" }, at(CUES.path, PRESS) + 0.08);
 
-      // Scene 3 — "click Find Path": camera travels right, box lands on the button, single press
-      tl.fromTo("#pick04-world", CAM_CARDS_DRIFT, Object.assign({ duration: 0.5, ease: "power3.inOut", immediateRender: false }, CAM_FIND), at(CUES.click, 0.5));
-      tl.to("#pick04-hl", Object.assign({ duration: 0.5, ease: "power3.inOut" }, HL_FIND), at(CUES.click, 0.5));
-      tl.to("#pick04-hl", { scale: 0.96, duration: 0.08, ease: "power2.in" }, at(CUES.path, 0.22));
-      tl.to("#pick04-hl", { scale: 1, duration: 0.14, ease: "back.out(3)" }, at(CUES.path, 0.22) + 0.08);
-
-      // pad the timeline to the full frame length (hold)
-      tl.set({}, {}, DUR);
+      // pad the timeline to the full frame length (hold on Find Path)
+      tl.set({}, {}, END);
 
       window.__timelines = window.__timelines || {};
       window.__timelines["04-pick"] = tl;

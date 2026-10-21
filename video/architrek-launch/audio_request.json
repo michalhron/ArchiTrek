@@ -4,43 +4,43 @@
   "lines": [
     {
       "id": "01",
-      "text": "Every ArchiMate student hits this question. How do these two boxes connect?"
+      "text": "An insurance company does its bookkeeping on an old mainframe. Its architects must show how that machine supports the finance department's work."
     },
     {
       "id": "02",
-      "text": "The relationship table tells you what is allowed. It does not tell you through what."
+      "text": "In ArchiMate, the mainframe is a Node, and the finance work is a Business Function. The relationship table says they can connect. It does not say through what."
     },
     {
       "id": "03",
-      "text": "ArchiTrek finds the route."
+      "text": "Archie Trek finds the route."
     },
     {
       "id": "04",
-      "text": "Pick a start and an end. Add a stop in between if you want one. Then click Find Path."
+      "text": "Pick Node and Business Function, then click Find Path."
     },
     {
       "id": "05",
-      "text": "ArchiTrek searches the Appendix B tables and ranks every legal route. Direct relationships come first."
+      "text": "Every route it finds is legal. But none of them passes through the application layer the case describes."
     },
     {
       "id": "06",
-      "text": "You decide each hop. Right-click an arrow to choose its relationship."
+      "text": "So pin the layer you mean. Add Application Component in the middle, and the route runs through the software."
     },
     {
       "id": "07",
-      "text": "Then read why. Every hop comes with its rule and its section in the specification."
+      "text": "Right-click each hop to choose its relationship."
     },
     {
       "id": "08",
-      "text": "Keep the search strict for your assignments, or loosen it to explore."
+      "text": "Every hop comes with its rule and its section of the specification."
     },
     {
       "id": "09",
-      "text": "Take the route with you, as a picture, a share link, or a model that opens in Archi."
+      "text": "Then export the route to Archi and keep modelling."
     },
     {
       "id": "10",
-      "text": "ArchiTrek. Free, and it runs in your browser."
+      "text": "Next, the company wants to replace the mainframe with a cloud server. Which elements change? Which arrows? Model it with Archie Trek."
     }
   ],
   "bgm": {

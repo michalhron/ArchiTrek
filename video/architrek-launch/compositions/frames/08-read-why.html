@@ -1,5 +1,5 @@
-<template id="f07-read-why-template">
-<div id="root" data-composition-id="07-read-why" data-width="1920" data-height="1080" data-start="0" data-duration="5.385">
+<template id="f08-read-why-template">
+<div id="root" data-composition-id="08-read-why" data-width="1920" data-height="1080" data-start="0" data-duration="4.091">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -12,18 +12,18 @@
     font-family: 'IBM Plex Sans', sans-serif;
   }
   #root .clip { position: absolute; }
-  #f07-read-why-bg {
+  #f08-read-why-bg {
     left: 0; top: 0; width: 1920px; height: 1080px;
     background: #f7f7f7;
   }
-  #f07-read-why-kicker {
+  #f08-read-why-kicker {
     left: 96px; top: 66px; height: 40px;
     display: flex; align-items: center; gap: 16px;
     font-size: 22px; font-weight: 600; letter-spacing: 0.16em;
     text-transform: uppercase; color: #4a5568; white-space: nowrap;
   }
   .rw07-kicker-sq { width: 12px; height: 12px; background: #ff4500; flex: none; }
-  #f07-read-why-window {
+  #f08-read-why-window {
     left: 96px; top: 136px; width: 1728px; height: 740px;
     background: #ffffff;
     border: 1px solid #e5e7eb;
@@ -49,17 +49,17 @@
   }
 </style>
 
-<div id="f07-read-why-bg" class="clip" data-start="0" data-duration="5.385" data-track-index="0"></div>
+<div id="f08-read-why-bg" class="clip" data-start="0" data-duration="4.091" data-track-index="0"></div>
 
-<div id="f07-read-why-window" class="clip" data-start="0" data-duration="5.385" data-track-index="1">
-  <div class="rw07-world" id="f07-read-why-world" data-layout-allow-overflow>
+<div id="f08-read-why-window" class="clip" data-start="0" data-duration="4.091" data-track-index="1">
+  <div class="rw07-world" id="f08-read-why-world" data-layout-allow-overflow>
     <img class="rw07-shot" src="assets/s06-explain.png" alt="">
-    <div class="rw07-hl" id="f07-read-why-hl"></div>
+    <div class="rw07-hl" id="f08-read-why-hl"></div>
   </div>
 </div>
 
-<div id="f07-read-why-kicker" class="clip" data-start="0" data-duration="5.385" data-track-index="2">
-  <span class="rw07-kicker-sq"></span><span>4 · Understand</span>
+<div id="f08-read-why-kicker" class="clip" data-start="0" data-duration="4.091" data-track-index="2">
+  <span class="rw07-kicker-sq"></span><span>5 · Understand</span>
 </div>
 
 <script>
@@ -67,22 +67,22 @@
   // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
   const CUES = {
     then: 0.0,
-    read: 0.299,
-    why: 0.598,
-    every: 1.354,
-    hop: 1.823,
-    comes: 2.012,
-    with: 2.342,
-    its1: 2.531,
-    rule: 2.72,
-    and: 3.049,
-    its2: 3.239,
-    section: 3.428,
-    in: 3.757,
-    the: 3.946,
-    specification: 4.135
+    read: 0.05,
+    why: 0.3,
+    every: 0.0,
+    hop: 0.477,
+    comes: 0.669,
+    with: 1.003,
+    its1: 1.195,
+    rule: 1.387,
+    and: 1.722,
+    its2: 1.914,
+    section: 2.106,
+    in: 2.44,
+    the: 2.632,
+    specification: 2.824
   };
-  const DURATION = 4.885;
+  const DURATION = 4.091;
   const MIN_TAIL = 0.35;
   // Clamp a move so it completes before the frame ends.
   function span(start, dur) {
@@ -99,9 +99,9 @@
   const SHOT_PHASE1     = cam(1302, 694, 1.5);    // Phase 1 hop block
 
   const tl = gsap.timeline({ paused: true });
-  const world = '#f07-read-why-world';
-  const hl = '#f07-read-why-hl';
-  const kicker = '#f07-read-why-kicker';
+  const world = '#f08-read-why-world';
+  const hl = '#f08-read-why-hl';
+  const kicker = '#f08-read-why-kicker';
 
   // Scene 1 — kicker + window establish, then push toward the panel on "read why".
   tl.fromTo(kicker, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: 'power3.out' }, CUES.then);
@@ -127,7 +127,7 @@
   tl.set({}, {}, DURATION);
 
   window.__timelines = window.__timelines || {};
-  window.__timelines["07-read-why"] = tl;
+  window.__timelines["08-read-why"] = tl;
 })();
 </script>
 </div>

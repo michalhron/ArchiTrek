@@ -47,6 +47,13 @@ for v in meta["voices"]:
     dur = v["duration_s"]
     segs = speech_segments(root / v["path"], dur)
     phrases = [p.strip() for p in re.split(r"(?<=[.,?!:])\s+", text) if p.strip()]
+    # a one-word phrase ("Next,") rarely has its own pause: join it to the next phrase
+    i = 0
+    while i < len(phrases) - 1:
+        if len(phrases[i].split()) == 1:
+            phrases[i] = phrases[i] + " " + phrases.pop(i + 1)
+        else:
+            i += 1
     # merge segments down to the phrase count (join the closest gaps), or merge phrases up
     while len(segs) > len(phrases):
         gaps = [segs[i + 1][0] - segs[i][1] for i in range(len(segs) - 1)]
@@ -69,6 +76,14 @@ for v in meta["voices"]:
             d = (b - a) * wt / total
             words.append({"text": w, "start": round(t, 3), "end": round(t + d * 0.92, 3)})
             t += d
+    # display names: the script spells the product phonetically for TTS
+    merged = []
+    for w in words:
+        if merged and merged[-1]["text"].lower() == "archie" and w["text"].lower().startswith("trek"):
+            merged[-1] = {"text": "ArchiTrek" + w["text"][4:], "start": merged[-1]["start"], "end": w["end"]}
+        else:
+            merged.append(w)
+    words = merged
     v["words"] = words
     v["words_source"] = "approximate: silencedetect + syllable weighting"
     print(f"frame {v['frame']}: {len(segs)} segments, {len(words)} words")

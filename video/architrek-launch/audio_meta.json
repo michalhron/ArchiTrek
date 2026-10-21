@@ -5,67 +5,117 @@
     {
       "frame": 1,
       "path": "assets/voice/01.wav",
-      "duration_s": 4.651,
+      "duration_s": 8.827,
       "words": [
         {
-          "text": "Every",
+          "text": "An",
           "start": 0.0,
-          "end": 0.553
+          "end": 0.214
         },
         {
-          "text": "ArchiMate",
-          "start": 0.601,
-          "end": 1.154
+          "text": "insurance",
+          "start": 0.232,
+          "end": 0.763
         },
         {
-          "text": "student",
-          "start": 1.202,
-          "end": 1.589
+          "text": "company",
+          "start": 0.809,
+          "end": 1.34
         },
         {
-          "text": "hits",
-          "start": 1.623,
-          "end": 1.846
+          "text": "does",
+          "start": 1.386,
+          "end": 1.6
         },
         {
-          "text": "this",
-          "start": 1.865,
-          "end": 2.088
+          "text": "its",
+          "start": 1.619,
+          "end": 1.833
         },
         {
-          "text": "question.",
-          "start": 2.107,
-          "end": 2.495
+          "text": "bookkeeping",
+          "start": 1.851,
+          "end": 2.382
         },
         {
-          "text": "How",
-          "start": 2.979,
-          "end": 3.184
+          "text": "on",
+          "start": 2.428,
+          "end": 2.642
         },
         {
-          "text": "do",
-          "start": 3.202,
-          "end": 3.408
+          "text": "an",
+          "start": 2.661,
+          "end": 2.874
         },
         {
-          "text": "these",
-          "start": 3.426,
-          "end": 3.631
+          "text": "old",
+          "start": 2.893,
+          "end": 3.107
         },
         {
-          "text": "two",
-          "start": 3.649,
-          "end": 3.855
+          "text": "mainframe.",
+          "start": 3.126,
+          "end": 3.498
         },
         {
-          "text": "boxes",
-          "start": 3.873,
-          "end": 4.231
+          "text": "Its",
+          "start": 4.133,
+          "end": 4.358
         },
         {
-          "text": "connect?",
-          "start": 4.262,
-          "end": 4.62
+          "text": "architects",
+          "start": 4.377,
+          "end": 4.936
+        },
+        {
+          "text": "must",
+          "start": 4.984,
+          "end": 5.209
+        },
+        {
+          "text": "show",
+          "start": 5.229,
+          "end": 5.454
+        },
+        {
+          "text": "how",
+          "start": 5.474,
+          "end": 5.699
+        },
+        {
+          "text": "that",
+          "start": 5.718,
+          "end": 5.943
+        },
+        {
+          "text": "machine",
+          "start": 5.963,
+          "end": 6.355
+        },
+        {
+          "text": "supports",
+          "start": 6.389,
+          "end": 6.781
+        },
+        {
+          "text": "the",
+          "start": 6.815,
+          "end": 7.04
+        },
+        {
+          "text": "finance",
+          "start": 7.059,
+          "end": 7.451
+        },
+        {
+          "text": "department's",
+          "start": 7.485,
+          "end": 8.044
+        },
+        {
+          "text": "work.",
+          "start": 8.092,
+          "end": 8.317
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -73,82 +123,147 @@
     {
       "frame": 2,
       "path": "assets/voice/02.wav",
-      "duration_s": 4.459,
+      "duration_s": 10.171,
       "words": [
         {
-          "text": "The",
+          "text": "In",
           "start": 0.0,
-          "end": 0.182
+          "end": 0.244
         },
         {
-          "text": "relationship",
-          "start": 0.198,
-          "end": 0.785
+          "text": "ArchiMate,",
+          "start": 0.266,
+          "end": 0.872
         },
         {
-          "text": "table",
-          "start": 0.836,
-          "end": 1.153
+          "text": "the",
+          "start": 1.223,
+          "end": 1.445
         },
         {
-          "text": "tells",
-          "start": 1.18,
-          "end": 1.362
-        },
-        {
-          "text": "you",
-          "start": 1.378,
-          "end": 1.56
-        },
-        {
-          "text": "what",
-          "start": 1.576,
-          "end": 1.758
+          "text": "mainframe",
+          "start": 1.464,
+          "end": 1.85
         },
         {
           "text": "is",
-          "start": 1.774,
-          "end": 1.956
+          "start": 1.883,
+          "end": 2.105
         },
         {
-          "text": "allowed.",
-          "start": 1.972,
-          "end": 2.424
+          "text": "a",
+          "start": 2.124,
+          "end": 2.346
+        },
+        {
+          "text": "Node,",
+          "start": 2.365,
+          "end": 2.587
+        },
+        {
+          "text": "and",
+          "start": 2.936,
+          "end": 3.108
+        },
+        {
+          "text": "the",
+          "start": 3.122,
+          "end": 3.294
+        },
+        {
+          "text": "finance",
+          "start": 3.309,
+          "end": 3.607
+        },
+        {
+          "text": "work",
+          "start": 3.633,
+          "end": 3.804
+        },
+        {
+          "text": "is",
+          "start": 3.819,
+          "end": 3.99
+        },
+        {
+          "text": "a",
+          "start": 4.005,
+          "end": 4.176
+        },
+        {
+          "text": "Business",
+          "start": 4.191,
+          "end": 4.616
+        },
+        {
+          "text": "Function.",
+          "start": 4.653,
+          "end": 4.951
+        },
+        {
+          "text": "The",
+          "start": 5.573,
+          "end": 5.773
+        },
+        {
+          "text": "relationship",
+          "start": 5.79,
+          "end": 6.435
+        },
+        {
+          "text": "table",
+          "start": 6.491,
+          "end": 6.839
+        },
+        {
+          "text": "says",
+          "start": 6.87,
+          "end": 7.07
+        },
+        {
+          "text": "they",
+          "start": 7.087,
+          "end": 7.287
+        },
+        {
+          "text": "can",
+          "start": 7.305,
+          "end": 7.505
+        },
+        {
+          "text": "connect.",
+          "start": 7.522,
+          "end": 7.87
         },
         {
           "text": "It",
-          "start": 2.929,
-          "end": 3.13
+          "start": 8.299,
+          "end": 8.511
         },
         {
           "text": "does",
-          "start": 3.148,
-          "end": 3.349
+          "start": 8.53,
+          "end": 8.742
         },
         {
           "text": "not",
-          "start": 3.366,
-          "end": 3.567
+          "start": 8.761,
+          "end": 8.973
         },
         {
-          "text": "tell",
-          "start": 3.585,
-          "end": 3.786
-        },
-        {
-          "text": "you",
-          "start": 3.803,
-          "end": 4.005
+          "text": "say",
+          "start": 8.992,
+          "end": 9.204
         },
         {
           "text": "through",
-          "start": 4.022,
-          "end": 4.223
+          "start": 9.223,
+          "end": 9.435
         },
         {
           "text": "what.",
-          "start": 4.24,
-          "end": 4.442
+          "start": 9.453,
+          "end": 9.666
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -156,27 +271,27 @@
     {
       "frame": 3,
       "path": "assets/voice/03.wav",
-      "duration_s": 1.685,
+      "duration_s": 2.021,
       "words": [
         {
           "text": "ArchiTrek",
           "start": 0.0,
-          "end": 0.702
+          "end": 0.578
         },
         {
           "text": "finds",
-          "start": 0.763,
-          "end": 1.046
+          "start": 0.602,
+          "end": 0.879
         },
         {
           "text": "the",
-          "start": 1.07,
-          "end": 1.353
+          "start": 0.903,
+          "end": 1.18
         },
         {
           "text": "route.",
-          "start": 1.378,
-          "end": 1.66
+          "start": 1.204,
+          "end": 1.481
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -184,102 +299,52 @@
     {
       "frame": 4,
       "path": "assets/voice/04.wav",
-      "duration_s": 5.077,
+      "duration_s": 3.493,
       "words": [
         {
           "text": "Pick",
           "start": 0.0,
-          "end": 0.194
+          "end": 0.2
         },
         {
-          "text": "a",
-          "start": 0.21,
-          "end": 0.404
-        },
-        {
-          "text": "start",
-          "start": 0.421,
-          "end": 0.614
+          "text": "Node",
+          "start": 0.218,
+          "end": 0.418
         },
         {
           "text": "and",
-          "start": 0.631,
-          "end": 0.825
+          "start": 0.436,
+          "end": 0.636
         },
         {
-          "text": "an",
-          "start": 0.842,
-          "end": 1.035
+          "text": "Business",
+          "start": 0.654,
+          "end": 1.151
         },
         {
-          "text": "end.",
-          "start": 1.052,
-          "end": 1.246
+          "text": "Function,",
+          "start": 1.195,
+          "end": 1.544
         },
         {
-          "text": "Add",
-          "start": 1.655,
-          "end": 1.811
-        },
-        {
-          "text": "a",
-          "start": 1.824,
-          "end": 1.981
-        },
-        {
-          "text": "stop",
-          "start": 1.994,
-          "end": 2.15
-        },
-        {
-          "text": "in",
-          "start": 2.164,
-          "end": 2.32
-        },
-        {
-          "text": "between",
-          "start": 2.334,
-          "end": 2.606
-        },
-        {
-          "text": "if",
-          "start": 2.629,
-          "end": 2.786
-        },
-        {
-          "text": "you",
-          "start": 2.799,
-          "end": 2.955
-        },
-        {
-          "text": "want",
-          "start": 2.969,
-          "end": 3.125
-        },
-        {
-          "text": "one.",
-          "start": 3.139,
-          "end": 3.295
-        },
-        {
-          "text": "Then",
-          "start": 3.697,
-          "end": 4.014
+          "text": "then",
+          "start": 1.869,
+          "end": 2.129
         },
         {
           "text": "click",
-          "start": 4.042,
-          "end": 4.359
+          "start": 2.152,
+          "end": 2.412
         },
         {
           "text": "Find",
-          "start": 4.387,
-          "end": 4.704
+          "start": 2.434,
+          "end": 2.694
         },
         {
           "text": "Path.",
-          "start": 4.732,
-          "end": 5.049
+          "start": 2.717,
+          "end": 2.977
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -287,82 +352,97 @@
     {
       "frame": 5,
       "path": "assets/voice/05.wav",
-      "duration_s": 6.848,
+      "duration_s": 6.523,
       "words": [
         {
-          "text": "ArchiTrek",
+          "text": "Every",
           "start": 0.0,
-          "end": 0.563
+          "end": 0.476
         },
         {
-          "text": "searches",
-          "start": 0.611,
-          "end": 1.006
+          "text": "route",
+          "start": 0.517,
+          "end": 0.709
+        },
+        {
+          "text": "it",
+          "start": 0.725,
+          "end": 0.917
+        },
+        {
+          "text": "finds",
+          "start": 0.934,
+          "end": 1.126
+        },
+        {
+          "text": "is",
+          "start": 1.142,
+          "end": 1.334
+        },
+        {
+          "text": "legal.",
+          "start": 1.351,
+          "end": 1.684
+        },
+        {
+          "text": "But",
+          "start": 2.234,
+          "end": 2.447
+        },
+        {
+          "text": "none",
+          "start": 2.466,
+          "end": 2.679
+        },
+        {
+          "text": "of",
+          "start": 2.698,
+          "end": 2.912
+        },
+        {
+          "text": "them",
+          "start": 2.93,
+          "end": 3.144
+        },
+        {
+          "text": "passes",
+          "start": 3.162,
+          "end": 3.534
+        },
+        {
+          "text": "through",
+          "start": 3.566,
+          "end": 3.78
         },
         {
           "text": "the",
-          "start": 1.04,
-          "end": 1.267
+          "start": 3.798,
+          "end": 4.012
         },
         {
-          "text": "Appendix",
-          "start": 1.287,
-          "end": 1.849
+          "text": "application",
+          "start": 4.031,
+          "end": 4.719
         },
         {
-          "text": "B",
-          "start": 1.898,
-          "end": 2.125
+          "text": "layer",
+          "start": 4.779,
+          "end": 4.992
         },
         {
-          "text": "tables",
-          "start": 2.145,
-          "end": 2.539
+          "text": "the",
+          "start": 5.011,
+          "end": 5.224
         },
         {
-          "text": "and",
-          "start": 2.573,
-          "end": 2.8
+          "text": "case",
+          "start": 5.243,
+          "end": 5.456
         },
         {
-          "text": "ranks",
-          "start": 2.82,
-          "end": 3.046
-        },
-        {
-          "text": "every",
-          "start": 3.066,
-          "end": 3.629
-        },
-        {
-          "text": "legal",
-          "start": 3.678,
-          "end": 4.072
-        },
-        {
-          "text": "route.",
-          "start": 4.107,
-          "end": 4.333
-        },
-        {
-          "text": "Direct",
-          "start": 4.918,
-          "end": 5.362
-        },
-        {
-          "text": "relationships",
-          "start": 5.4,
-          "end": 6.222
-        },
-        {
-          "text": "come",
-          "start": 6.294,
-          "end": 6.549
-        },
-        {
-          "text": "first.",
-          "start": 6.571,
-          "end": 6.826
+          "text": "describes.",
+          "start": 5.475,
+          "end": 6.005
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -370,62 +450,102 @@
     {
       "frame": 6,
       "path": "assets/voice/06.wav",
-      "duration_s": 3.797,
+      "duration_s": 6.352,
       "words": [
         {
-          "text": "You",
+          "text": "So",
           "start": 0.0,
-          "end": 0.224
+          "end": 0.203
         },
         {
-          "text": "decide",
-          "start": 0.244,
-          "end": 0.634
+          "text": "pin",
+          "start": 0.22,
+          "end": 0.423
         },
         {
-          "text": "each",
-          "start": 0.668,
-          "end": 0.892
+          "text": "the",
+          "start": 0.441,
+          "end": 0.643
         },
         {
-          "text": "hop.",
-          "start": 0.912,
-          "end": 1.136
+          "text": "layer",
+          "start": 0.661,
+          "end": 0.864
         },
         {
-          "text": "Right-click",
-          "start": 1.557,
-          "end": 1.892
+          "text": "you",
+          "start": 0.881,
+          "end": 1.084
         },
         {
-          "text": "an",
-          "start": 1.921,
-          "end": 2.114
+          "text": "mean.",
+          "start": 1.102,
+          "end": 1.304
         },
         {
-          "text": "arrow",
-          "start": 2.13,
-          "end": 2.465
+          "text": "Add",
+          "start": 1.894,
+          "end": 2.058
         },
         {
-          "text": "to",
-          "start": 2.495,
-          "end": 2.687
+          "text": "Application",
+          "start": 2.072,
+          "end": 2.602
         },
         {
-          "text": "choose",
-          "start": 2.704,
-          "end": 2.896
+          "text": "Component",
+          "start": 2.648,
+          "end": 3.055
         },
         {
-          "text": "its",
-          "start": 2.913,
-          "end": 3.106
+          "text": "in",
+          "start": 3.091,
+          "end": 3.255
         },
         {
-          "text": "relationship.",
-          "start": 3.123,
-          "end": 3.743
+          "text": "the",
+          "start": 3.269,
+          "end": 3.434
+        },
+        {
+          "text": "middle,",
+          "start": 3.448,
+          "end": 3.734
+        },
+        {
+          "text": "and",
+          "start": 4.1,
+          "end": 4.309
+        },
+        {
+          "text": "the",
+          "start": 4.327,
+          "end": 4.536
+        },
+        {
+          "text": "route",
+          "start": 4.554,
+          "end": 4.763
+        },
+        {
+          "text": "runs",
+          "start": 4.781,
+          "end": 4.99
+        },
+        {
+          "text": "through",
+          "start": 5.008,
+          "end": 5.217
+        },
+        {
+          "text": "the",
+          "start": 5.235,
+          "end": 5.444
+        },
+        {
+          "text": "software.",
+          "start": 5.462,
+          "end": 5.826
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -433,82 +553,42 @@
     {
       "frame": 7,
       "path": "assets/voice/07.wav",
-      "duration_s": 4.885,
+      "duration_s": 2.875,
       "words": [
         {
-          "text": "Then",
+          "text": "Right-click",
           "start": 0.0,
-          "end": 0.275
+          "end": 0.382
         },
         {
-          "text": "read",
-          "start": 0.299,
-          "end": 0.575
-        },
-        {
-          "text": "why.",
-          "start": 0.598,
-          "end": 0.874
-        },
-        {
-          "text": "Every",
-          "start": 1.354,
-          "end": 1.786
+          "text": "each",
+          "start": 0.416,
+          "end": 0.635
         },
         {
           "text": "hop",
-          "start": 1.823,
-          "end": 1.997
+          "start": 0.655,
+          "end": 0.874
         },
         {
-          "text": "comes",
-          "start": 2.012,
-          "end": 2.315
+          "text": "to",
+          "start": 0.893,
+          "end": 1.113
         },
         {
-          "text": "with",
-          "start": 2.342,
-          "end": 2.516
-        },
-        {
-          "text": "its",
-          "start": 2.531,
-          "end": 2.705
-        },
-        {
-          "text": "rule",
-          "start": 2.72,
-          "end": 3.023
-        },
-        {
-          "text": "and",
-          "start": 3.049,
-          "end": 3.223
+          "text": "choose",
+          "start": 1.132,
+          "end": 1.352
         },
         {
           "text": "its",
-          "start": 3.239,
-          "end": 3.413
+          "start": 1.371,
+          "end": 1.591
         },
         {
-          "text": "section",
-          "start": 3.428,
-          "end": 3.731
-        },
-        {
-          "text": "in",
-          "start": 3.757,
-          "end": 3.931
-        },
-        {
-          "text": "the",
-          "start": 3.946,
-          "end": 4.12
-        },
-        {
-          "text": "specification.",
-          "start": 4.135,
-          "end": 4.825
+          "text": "relationship.",
+          "start": 1.61,
+          "end": 2.318
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -516,67 +596,67 @@
     {
       "frame": 8,
       "path": "assets/voice/08.wav",
-      "duration_s": 3.563,
+      "duration_s": 4.091,
       "words": [
         {
-          "text": "Keep",
+          "text": "Every",
           "start": 0.0,
-          "end": 0.195
+          "end": 0.438
+        },
+        {
+          "text": "hop",
+          "start": 0.477,
+          "end": 0.653
+        },
+        {
+          "text": "comes",
+          "start": 0.669,
+          "end": 0.976
+        },
+        {
+          "text": "with",
+          "start": 1.003,
+          "end": 1.18
+        },
+        {
+          "text": "its",
+          "start": 1.195,
+          "end": 1.372
+        },
+        {
+          "text": "rule",
+          "start": 1.387,
+          "end": 1.695
+        },
+        {
+          "text": "and",
+          "start": 1.722,
+          "end": 1.898
+        },
+        {
+          "text": "its",
+          "start": 1.914,
+          "end": 2.09
+        },
+        {
+          "text": "section",
+          "start": 2.106,
+          "end": 2.413
+        },
+        {
+          "text": "of",
+          "start": 2.44,
+          "end": 2.617
         },
         {
           "text": "the",
-          "start": 0.212,
-          "end": 0.408
+          "start": 2.632,
+          "end": 2.809
         },
         {
-          "text": "search",
-          "start": 0.425,
-          "end": 0.62
-        },
-        {
-          "text": "strict",
-          "start": 0.637,
-          "end": 0.832
-        },
-        {
-          "text": "for",
-          "start": 0.849,
-          "end": 1.045
-        },
-        {
-          "text": "your",
-          "start": 1.062,
-          "end": 1.257
-        },
-        {
-          "text": "assignments,",
-          "start": 1.274,
-          "end": 1.759
-        },
-        {
-          "text": "or",
-          "start": 2.104,
-          "end": 2.311
-        },
-        {
-          "text": "loosen",
-          "start": 2.329,
-          "end": 2.69
-        },
-        {
-          "text": "it",
-          "start": 2.721,
-          "end": 2.928
-        },
-        {
-          "text": "to",
-          "start": 2.946,
-          "end": 3.153
-        },
-        {
-          "text": "explore.",
-          "start": 3.171,
-          "end": 3.532
+          "text": "specification.",
+          "start": 2.824,
+          "end": 3.524
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -584,97 +664,52 @@
     {
       "frame": 9,
       "path": "assets/voice/09.wav",
-      "duration_s": 5.12,
+      "duration_s": 3.259,
       "words": [
         {
-          "text": "Take",
+          "text": "Then",
           "start": 0.0,
-          "end": 0.193
+          "end": 0.212
+        },
+        {
+          "text": "export",
+          "start": 0.23,
+          "end": 0.599
         },
         {
           "text": "the",
-          "start": 0.21,
-          "end": 0.403
+          "start": 0.631,
+          "end": 0.843
         },
         {
           "text": "route",
-          "start": 0.42,
-          "end": 0.613
+          "start": 0.862,
+          "end": 1.073
         },
         {
-          "text": "with",
-          "start": 0.63,
-          "end": 0.823
+          "text": "to",
+          "start": 1.092,
+          "end": 1.304
         },
         {
-          "text": "you,",
-          "start": 0.84,
-          "end": 1.033
+          "text": "Archi",
+          "start": 1.322,
+          "end": 1.691
         },
         {
-          "text": "as",
-          "start": 1.303,
-          "end": 1.475
+          "text": "and",
+          "start": 1.723,
+          "end": 1.935
         },
         {
-          "text": "a",
-          "start": 1.49,
-          "end": 1.662
+          "text": "keep",
+          "start": 1.953,
+          "end": 2.165
         },
         {
-          "text": "picture,",
-          "start": 1.677,
-          "end": 1.978
-        },
-        {
-          "text": "a",
-          "start": 2.169,
-          "end": 2.366
-        },
-        {
-          "text": "share",
-          "start": 2.383,
-          "end": 2.579
-        },
-        {
-          "text": "link,",
-          "start": 2.597,
-          "end": 2.793
-        },
-        {
-          "text": "or",
-          "start": 3.154,
-          "end": 3.35
-        },
-        {
-          "text": "a",
-          "start": 3.367,
-          "end": 3.563
-        },
-        {
-          "text": "model",
-          "start": 3.58,
-          "end": 3.922
-        },
-        {
-          "text": "that",
-          "start": 3.952,
-          "end": 4.148
-        },
-        {
-          "text": "opens",
-          "start": 4.165,
-          "end": 4.506
-        },
-        {
-          "text": "in",
-          "start": 4.536,
-          "end": 4.732
-        },
-        {
-          "text": "Archi.",
-          "start": 4.749,
-          "end": 5.09
+          "text": "modelling.",
+          "start": 2.184,
+          "end": 2.71
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -682,47 +717,112 @@
     {
       "frame": 10,
       "path": "assets/voice/10.wav",
-      "duration_s": 2.965,
+      "duration_s": 8.421,
       "words": [
         {
-          "text": "ArchiTrek.",
+          "text": "Next,",
           "start": 0.0,
-          "end": 0.74
+          "end": 0.201
         },
         {
-          "text": "Free,",
-          "start": 1.07,
-          "end": 1.428
+          "text": "the",
+          "start": 0.219,
+          "end": 0.42
         },
         {
-          "text": "and",
-          "start": 1.651,
-          "end": 1.831
+          "text": "company",
+          "start": 0.437,
+          "end": 0.937
+        },
+        {
+          "text": "wants",
+          "start": 0.98,
+          "end": 1.181
+        },
+        {
+          "text": "to",
+          "start": 1.199,
+          "end": 1.4
+        },
+        {
+          "text": "replace",
+          "start": 1.417,
+          "end": 1.768
+        },
+        {
+          "text": "the",
+          "start": 1.798,
+          "end": 1.999
+        },
+        {
+          "text": "mainframe",
+          "start": 2.017,
+          "end": 2.367
+        },
+        {
+          "text": "with",
+          "start": 2.397,
+          "end": 2.599
+        },
+        {
+          "text": "a",
+          "start": 2.616,
+          "end": 2.817
+        },
+        {
+          "text": "cloud",
+          "start": 2.835,
+          "end": 3.036
+        },
+        {
+          "text": "server.",
+          "start": 3.054,
+          "end": 3.404
+        },
+        {
+          "text": "Which",
+          "start": 3.949,
+          "end": 4.193
+        },
+        {
+          "text": "elements",
+          "start": 4.214,
+          "end": 4.818
+        },
+        {
+          "text": "change?",
+          "start": 4.871,
+          "end": 5.115
+        },
+        {
+          "text": "Which",
+          "start": 5.518,
+          "end": 5.77
+        },
+        {
+          "text": "arrows?",
+          "start": 5.792,
+          "end": 6.231
+        },
+        {
+          "text": "Model",
+          "start": 6.59,
+          "end": 6.961
         },
         {
           "text": "it",
-          "start": 1.846,
-          "end": 2.026
+          "start": 6.993,
+          "end": 7.206
         },
         {
-          "text": "runs",
-          "start": 2.041,
-          "end": 2.22
+          "text": "with",
+          "start": 7.225,
+          "end": 7.438
         },
         {
-          "text": "in",
-          "start": 2.236,
-          "end": 2.415
-        },
-        {
-          "text": "your",
-          "start": 2.431,
-          "end": 2.61
-        },
-        {
-          "text": "browser.",
-          "start": 2.626,
-          "end": 2.938
+          "text": "ArchiTrek.",
+          "start": 7.456,
+          "end": 7.9
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"

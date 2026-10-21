@@ -2,7 +2,7 @@
 
 ## State
 
-The case-based version is built, checked and rendered with a stand-in voice (Kokoro, offline): 59 s, 1920×1080, 11 frames, captions on. What remains is the final voice (Gemini TTS) and a re-render, then a web version for the site.
+The case-based version is built, checked and rendered with the final voice (Gemini TTS, voice Kore, gemini-3.8-flash-tts): 74.8 s, 1920×1080, 11 frames, captions on. A web version (`renders/architrek-demo.mp4`, about 4.8 MB) and a poster frame (`renders/architrek-demo-poster.jpg`, the logo frame at 25 s) exist locally. `renders/` is not committed, so rebuild them with the commands below. What remains is deciding where the video goes on the site.
 
 Frames (`architrek-launch/compositions/frames/`):
 
@@ -20,7 +20,7 @@ Frames (`architrek-launch/compositions/frames/`):
 | 10 | 10-your-turn.html | The case again with SAP ERP filled in; Mainframe → Cloud server; "?" on the arrows; ends on the question |
 | 11 | 11-end-card.html | Silent end card with the address |
 
-## Next: the Gemini voice
+## Re-recording the voice
 
 Needs `GEMINI_API_KEY` in the environment (set in the cloud environment settings; a new session picks it up).
 
@@ -32,6 +32,8 @@ SK=$PWD/.agents/skills bash ../tools/rebuild_with_voice.sh
 ```
 
 `rebuild_with_voice.sh` records the narration in `SCRIPT.md` with Gemini (voice Kore, model gemini-3.8-flash-tts; override with `VOICE=`, `MODEL=`, `STYLE=`), pads each line by 0.4 s, gets word timings, syncs frame durations, retimes every frame (`tools/retime_from_voice.py` maps the stand-in voice's word times in `audio_meta.kokoro.json` onto the new ones), rebuilds captions, assembles, checks and renders `renders/video.mp4`.
+
+`retime_from_voice.py` also stretches each frame's inner clips (`data-duration`) to the frame's new length. Without that, a longer voice leaves frames blank for their last seconds while the captions run on.
 
 After the render, look at a contact sheet (`npx hyperframes snapshot --at <times>`) before handing it over.
 

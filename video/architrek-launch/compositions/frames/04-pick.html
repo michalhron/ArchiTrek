@@ -1,5 +1,5 @@
 <template id="pick04-template">
-<div id="root" data-composition-id="04-pick" data-width="1920" data-height="1080" data-start="0" data-duration="3.993">
+<div id="root" data-composition-id="04-pick" data-width="1920" data-height="1080" data-start="0" data-duration="6.82">
   <script src="assets/vendor/gsap.min.js"></script>
   <style>
     @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
@@ -96,9 +96,9 @@
     }
   </style>
 
-  <div id="pick04-bg" class="clip pick04-bg" data-start="0" data-duration="3.993" data-track-index="0"></div>
+  <div id="pick04-bg" class="clip pick04-bg" data-start="0" data-duration="6.82" data-track-index="0"></div>
 
-  <div id="pick04-stage" class="clip pick04-stage" data-start="0" data-duration="3.993" data-track-index="1">
+  <div id="pick04-stage" class="clip pick04-stage" data-start="0" data-duration="6.82" data-track-index="1">
     <div class="pick04-kicker" id="pick04-kicker">
       <span class="pick04-kicker-sq" id="pick04-kicker-sq"></span>
       <span class="pick04-kicker-text" id="pick04-kicker-text">1 · Pick</span>
@@ -117,16 +117,16 @@
       // Voice cue times (seconds from frame start) + frame length.
       // Re-time the frame by editing this object only.
       const CUES = {
-        pick: 0.0,
-        node: 0.218,
-        and: 0.436,
-        business: 0.654,
-        function: 1.195,
-        then: 1.869,
-        click: 2.152,
-        find: 2.434,
-        path: 2.717,
-        END: 3.493
+        pick: 0.000,
+        node: 0.728,
+        and: 1.163,
+        business: 1.598,
+        function: 2.678,
+        then: 3.794,
+        click: 4.259,
+        find: 4.725,
+        path: 5.190,
+        END: 6.32
       };
       const END = CUES.END;
       // Start a move on its cue, but clamp so a move of length d completes before the frame ends.

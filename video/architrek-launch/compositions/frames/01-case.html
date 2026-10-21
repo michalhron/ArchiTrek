@@ -1,4 +1,4 @@
-<template id="case01-template" data-composition-id="01-case" data-width="1920" data-height="1080" data-duration="9.327">
+<template id="case01-template" data-composition-id="01-case" data-width="1920" data-height="1080" data-duration="11.18">
   <script src="assets/vendor/gsap.min.js"></script>
   <style>
     @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -145,9 +145,9 @@
   </style>
 
   <div id="root" data-composition-id="01-case" data-width="1920" data-height="1080">
-    <div id="case01-bg" class="clip" data-start="0" data-duration="9.327" data-track-index="0"></div>
+    <div id="case01-bg" class="clip" data-start="0" data-duration="11.18" data-track-index="0"></div>
 
-    <div id="case01-stage" class="clip" data-start="0" data-duration="9.327" data-track-index="1">
+    <div id="case01-stage" class="clip" data-start="0" data-duration="11.18" data-track-index="1">
       <div id="case01-kicker">
         <div id="case01-kicker-sq"></div>
         <div id="case01-kicker-text">The case</div>
@@ -207,29 +207,29 @@
     (function () {
       // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
       const CUES = {
-        An: 0.0,
-        insurance: 0.232,
-        company: 0.809,
-        does: 1.386,
-        its: 1.619,
-        bookkeeping: 1.851,
-        on: 2.428,
-        an: 2.661,
-        old: 2.893,
-        mainframe: 3.126,
-        Its: 4.133,
-        architects: 4.377,
-        must: 4.984,
-        show: 5.229,
-        how: 5.474,
-        that: 5.718,
-        machine: 5.963,
-        supports: 6.389,
-        the: 6.815,
-        finance: 7.059,
-        departments: 7.485,
-        work: 8.092,
-        END: 8.827
+        An: 0.000,
+        insurance: 0.514,
+        company: 1.187,
+        does: 1.861,
+        its: 2.133,
+        bookkeeping: 2.404,
+        on: 3.078,
+        an: 3.349,
+        old: 3.621,
+        mainframe: 3.892,
+        Its: 4.713,
+        architects: 5.007,
+        must: 5.734,
+        show: 6.027,
+        how: 6.320,
+        that: 6.613,
+        machine: 6.906,
+        supports: 7.416,
+        the: 7.926,
+        finance: 8.219,
+        departments: 8.729,
+        work: 9.457,
+        END: 10.68
       };
       const END = CUES.END;
       // Start a reveal at its cue, but early enough that it completes before the frame ends.

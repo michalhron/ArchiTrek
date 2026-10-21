@@ -22,7 +22,7 @@ music: none
 
 - scene: Three layer bands like the app's swimlanes; the Mainframe sits in Technology at the bottom, the Finance Department and Financial Transaction Processing in Business at the top, the Application band empty between them
 - voiceover: "An insurance company does its bookkeeping on an old mainframe. Its architects must show how that machine supports the finance department's work."
-- duration: 8.827s
+- duration: 10.68s
 - transition_in: cut
 - status: animated
 - src: compositions/frames/01-case.html
@@ -46,7 +46,7 @@ keyMessage: one machine at the bottom, the finance work at the top, a gap betwee
 
 - scene: The Appendix B cell for Node → Business Function, letters f i O r t v; only O is capital
 - voiceover: "In ArchiMate, the mainframe is a Node, and the finance work is a Business Function. The relationship table says they can connect. It does not say through what."
-- duration: 10.171s
+- duration: 12.04s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/02-the-table.html
@@ -61,7 +61,7 @@ Reused from the first draft; retimed to the new line. Headers appear on "Node" a
 
 - scene: Navy ground, the ArchiTrek logo draws on, line "Find the route. Read the rule."
 - voiceover: "Archie Trek finds the route."
-- duration: 2.021s
+- duration: 2.84s
 - transition_in: zoom-through
 - status: animated
 - src: compositions/frames/03-architrek.html
@@ -76,7 +76,7 @@ Reused from the first draft.
 
 - scene: The real waypoint editor with Node and Business Function, push-in to the two cards then to Find Path
 - voiceover: "Pick Node and Business Function, then click Find Path."
-- duration: 3.493s
+- duration: 6.32s
 - transition_in: zoom-through
 - status: animated
 - src: compositions/frames/04-pick.html
@@ -95,7 +95,7 @@ Scene 2 (cue "click Find Path"): camera travels to Find Path, highlight lands on
 
 - scene: Results for Node → Business Function: five legal routes, all through technology elements
 - voiceover: "Every route it finds is legal. But none of them passes through the application layer the case describes."
-- duration: 6.523s
+- duration: 7.44s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/05-routes.html
@@ -114,7 +114,7 @@ Scene 2 (cue "none of them"): a label card sets in beside the list: "0 routes th
 
 - scene: Add Application Component as a waypoint, then the swimlane view shows the route climbing through the Application band
 - voiceover: "So pin the layer you mean. Add Application Component in the middle, and the route runs through the software."
-- duration: 6.352s
+- duration: 8.28s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/06-steer.html
@@ -133,7 +133,7 @@ Scene 2 (cue "and the route runs"): crossfade inside the window to s09-swimlanes
 
 - scene: Right-click menu on a hop with the relationship types, then the decided route
 - voiceover: "Right-click each hop to choose its relationship."
-- duration: 2.875s
+- duration: 3.88s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/07-decide.html
@@ -148,7 +148,7 @@ Reused from the first draft (was Frame 6); kicker becomes "4 · DECIDE"; retimed
 
 - scene: The step-by-step justification panel
 - voiceover: "Every hop comes with its rule and its section of the specification."
-- duration: 4.091s
+- duration: 5.56s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/08-read-why.html
@@ -163,7 +163,7 @@ Reused from the first draft (was Frame 7); kicker becomes "5 · UNDERSTAND"; ret
 
 - scene: The download popover, XML highlighted, label "Open Exchange XML → Archi"
 - voiceover: "Then export the route to Archi and keep modelling."
-- duration: 3.259s
+- duration: 4.48s
 - transition_in: push-slide LEFT
 - status: animated
 - src: compositions/frames/09-export.html
@@ -178,7 +178,7 @@ Reused from the first draft's Frame 9 with only the XML highlight (on "export") 
 
 - scene: Back to the case picture; the Mainframe gives way to a dashed "Cloud server", and the open questions hang over the technology layer and the arrows
 - voiceover: "Next, the company wants to replace the mainframe with a cloud server. Which elements change? Which arrows? Model it with Archie Trek."
-- duration: 8.421s
+- duration: 10.32s
 - transition_in: blur-crossfade
 - status: animated
 - src: compositions/frames/10-your-turn.html

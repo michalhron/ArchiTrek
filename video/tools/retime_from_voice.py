@@ -34,6 +34,14 @@ def warp_fn(o, n):
         return y0 + (t - x0) * (y1 - y0) / (x1 - x0) if x1 > x0 else y0
     return f
 
+def stretch_clips(s):
+    """Inner clips span the whole frame: give them the root's data-duration,
+    which sync-durations has already set to the new length."""
+    m = re.search(r'data-duration="([\d.]+)"', s)
+    if not m:
+        return s
+    return re.sub(r'data-duration="[\d.]+"', f'data-duration="{m.group(1)}"', s)
+
 for path in sorted(frames.glob("*.html")):
     num = int(path.name[:2])
     if num not in old or num not in new:
@@ -48,5 +56,6 @@ for path in sorted(frames.glob("*.html")):
     s = re.sub(r"(const (?:END|DUR|DURATION)\s*=\s*)\d+(?:\.\d+)?", lambda g: g.group(1) + f"{dur}", s)
     s = re.sub(r"(\bEND\s*:\s*)\d+(?:\.\d+)?", lambda g: g.group(1) + f"{dur}", s)
     s = re.sub(r"(\bend\s*:\s*)\d+(?:\.\d+)?", lambda g: g.group(1) + f"{dur}", s)
+    s = stretch_clips(s)
     path.write_text(s)
     print(f"retimed {path.name}: {old[num]['duration_s']}s -> {dur}s")

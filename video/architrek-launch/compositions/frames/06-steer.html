@@ -1,5 +1,5 @@
 <template id="steer06-template">
-<div id="root" data-composition-id="06-steer" data-width="1920" data-height="1080" data-start="0" data-duration="6.852">
+<div id="root" data-composition-id="06-steer" data-width="1920" data-height="1080" data-start="0" data-duration="8.78">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -91,9 +91,9 @@
   }
 </style>
 
-<div id="steer06-bg" class="clip" data-start="0" data-duration="6.852" data-track-index="0"></div>
+<div id="steer06-bg" class="clip" data-start="0" data-duration="8.78" data-track-index="0"></div>
 
-<div id="steer06-window" class="clip" data-start="0" data-duration="6.852" data-track-index="1">
+<div id="steer06-window" class="clip" data-start="0" data-duration="8.78" data-track-index="1">
   <div id="steer06-world-edit" class="steer06-world" data-layout-allow-overflow>
     <img src="assets/s02-edit.png" alt="">
     <div id="steer06-hl-card" class="steer06-hl"></div>
@@ -104,7 +104,7 @@
   </div>
 </div>
 
-<div id="steer06-kicker" class="clip" data-start="0" data-duration="6.852" data-track-index="2">
+<div id="steer06-kicker" class="clip" data-start="0" data-duration="8.78" data-track-index="2">
   <span class="steer06-sq"></span><span>3 · Steer</span>
 </div>
 
@@ -112,17 +112,17 @@
 (function () {
   // Voice cue times (s from frame start). Re-time the frame by editing this object only.
   const CUES = {
-    so: 0.0,
-    pin: 0.22,
-    layer: 0.661,
-    mean: 1.102,
-    add: 1.894,
-    applicationComponent: 2.072,
-    middle: 3.448,
-    and: 4.1,
-    route: 4.554,
-    software: 5.462,
-    END: 6.352
+    so: 0.000,
+    pin: 0.020,
+    layer: 0.059,
+    mean: 0.099,
+    add: 0.283,
+    applicationComponent: 0.476,
+    middle: 1.969,
+    and: 2.737,
+    route: 3.977,
+    software: 6.457,
+    END: 8.28
   };
   const END = CUES.END;
   const MIN_LEAD = 0.35;

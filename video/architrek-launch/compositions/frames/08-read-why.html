@@ -1,5 +1,5 @@
 <template id="f08-read-why-template">
-<div id="root" data-composition-id="08-read-why" data-width="1920" data-height="1080" data-start="0" data-duration="4.591">
+<div id="root" data-composition-id="08-read-why" data-width="1920" data-height="1080" data-start="0" data-duration="6.06">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -49,16 +49,16 @@
   }
 </style>
 
-<div id="f08-read-why-bg" class="clip" data-start="0" data-duration="4.591" data-track-index="0"></div>
+<div id="f08-read-why-bg" class="clip" data-start="0" data-duration="6.06" data-track-index="0"></div>
 
-<div id="f08-read-why-window" class="clip" data-start="0" data-duration="4.591" data-track-index="1">
+<div id="f08-read-why-window" class="clip" data-start="0" data-duration="6.06" data-track-index="1">
   <div class="rw07-world" id="f08-read-why-world" data-layout-allow-overflow>
     <img class="rw07-shot" src="assets/s06-explain.png" alt="">
     <div class="rw07-hl" id="f08-read-why-hl"></div>
   </div>
 </div>
 
-<div id="f08-read-why-kicker" class="clip" data-start="0" data-duration="4.591" data-track-index="2">
+<div id="f08-read-why-kicker" class="clip" data-start="0" data-duration="6.06" data-track-index="2">
   <span class="rw07-kicker-sq"></span><span>5 · Understand</span>
 </div>
 
@@ -66,23 +66,23 @@
 (function () {
   // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
   const CUES = {
-    then: 0.0,
-    read: 0.05,
-    why: 0.3,
-    every: 0.0,
-    hop: 0.477,
-    comes: 0.669,
-    with: 1.003,
-    its1: 1.195,
-    rule: 1.387,
-    and: 1.722,
-    its2: 1.914,
-    section: 2.106,
-    in: 2.44,
-    the: 2.632,
-    specification: 2.824
+    then: 0.000,
+    read: 0.347,
+    why: 0.661,
+    every: 0.000,
+    hop: 0.884,
+    comes: 1.126,
+    with: 1.547,
+    its1: 1.789,
+    rule: 2.031,
+    and: 2.453,
+    its2: 2.695,
+    section: 2.937,
+    in: 3.358,
+    the: 3.600,
+    specification: 3.842
   };
-  const DURATION = 4.091;
+  const DURATION = 5.56;
   const MIN_TAIL = 0.35;
   // Clamp a move so it completes before the frame ends.
   function span(start, dur) {

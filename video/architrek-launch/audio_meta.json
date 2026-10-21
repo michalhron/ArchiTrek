@@ -5,117 +5,117 @@
     {
       "frame": 1,
       "path": "assets/voice/01.wav",
-      "duration_s": 8.827,
+      "duration_s": 10.68,
       "words": [
         {
           "text": "An",
-          "start": 0.0,
-          "end": 0.214
+          "start": 0.242,
+          "end": 0.492
         },
         {
           "text": "insurance",
-          "start": 0.232,
-          "end": 0.763
+          "start": 0.514,
+          "end": 1.133
         },
         {
           "text": "company",
-          "start": 0.809,
-          "end": 1.34
+          "start": 1.187,
+          "end": 1.807
         },
         {
           "text": "does",
-          "start": 1.386,
-          "end": 1.6
+          "start": 1.861,
+          "end": 2.111
         },
         {
           "text": "its",
-          "start": 1.619,
-          "end": 1.833
-        },
-        {
-          "text": "bookkeeping",
-          "start": 1.851,
+          "start": 2.133,
           "end": 2.382
         },
         {
+          "text": "bookkeeping",
+          "start": 2.404,
+          "end": 3.024
+        },
+        {
           "text": "on",
-          "start": 2.428,
-          "end": 2.642
+          "start": 3.078,
+          "end": 3.328
         },
         {
           "text": "an",
-          "start": 2.661,
-          "end": 2.874
+          "start": 3.349,
+          "end": 3.599
         },
         {
           "text": "old",
-          "start": 2.893,
-          "end": 3.107
+          "start": 3.621,
+          "end": 3.871
         },
         {
           "text": "mainframe.",
-          "start": 3.126,
-          "end": 3.498
+          "start": 3.892,
+          "end": 4.327
         },
         {
           "text": "Its",
-          "start": 4.133,
-          "end": 4.358
+          "start": 4.713,
+          "end": 4.983
         },
         {
           "text": "architects",
-          "start": 4.377,
-          "end": 4.936
+          "start": 5.007,
+          "end": 5.676
         },
         {
           "text": "must",
-          "start": 4.984,
-          "end": 5.209
+          "start": 5.734,
+          "end": 6.003
         },
         {
           "text": "show",
-          "start": 5.229,
-          "end": 5.454
+          "start": 6.027,
+          "end": 6.296
         },
         {
           "text": "how",
-          "start": 5.474,
-          "end": 5.699
+          "start": 6.32,
+          "end": 6.589
         },
         {
           "text": "that",
-          "start": 5.718,
-          "end": 5.943
+          "start": 6.613,
+          "end": 6.882
         },
         {
           "text": "machine",
-          "start": 5.963,
-          "end": 6.355
+          "start": 6.906,
+          "end": 7.375
         },
         {
           "text": "supports",
-          "start": 6.389,
-          "end": 6.781
+          "start": 7.416,
+          "end": 7.885
         },
         {
           "text": "the",
-          "start": 6.815,
-          "end": 7.04
+          "start": 7.926,
+          "end": 8.196
         },
         {
           "text": "finance",
-          "start": 7.059,
-          "end": 7.451
+          "start": 8.219,
+          "end": 8.689
         },
         {
           "text": "department's",
-          "start": 7.485,
-          "end": 8.044
+          "start": 8.729,
+          "end": 9.398
         },
         {
           "text": "work.",
-          "start": 8.092,
-          "end": 8.317
+          "start": 9.457,
+          "end": 9.726
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -123,147 +123,147 @@
     {
       "frame": 2,
       "path": "assets/voice/02.wav",
-      "duration_s": 10.171,
+      "duration_s": 12.04,
       "words": [
         {
           "text": "In",
-          "start": 0.0,
-          "end": 0.244
+          "start": 0.254,
+          "end": 0.465
         },
         {
           "text": "ArchiMate,",
-          "start": 0.266,
-          "end": 0.872
+          "start": 0.484,
+          "end": 1.007
         },
         {
           "text": "the",
-          "start": 1.223,
-          "end": 1.445
+          "start": 1.341,
+          "end": 1.603
         },
         {
           "text": "mainframe",
-          "start": 1.464,
-          "end": 1.85
+          "start": 1.625,
+          "end": 2.081
         },
         {
           "text": "is",
-          "start": 1.883,
-          "end": 2.105
+          "start": 2.12,
+          "end": 2.382
         },
         {
           "text": "a",
-          "start": 2.124,
-          "end": 2.346
+          "start": 2.405,
+          "end": 2.666
         },
         {
           "text": "Node,",
-          "start": 2.365,
-          "end": 2.587
+          "start": 2.689,
+          "end": 2.951
         },
         {
           "text": "and",
-          "start": 2.936,
-          "end": 3.108
+          "start": 3.413,
+          "end": 3.622
         },
         {
           "text": "the",
-          "start": 3.122,
-          "end": 3.294
+          "start": 3.64,
+          "end": 3.849
         },
         {
           "text": "finance",
-          "start": 3.309,
-          "end": 3.607
+          "start": 3.868,
+          "end": 4.231
         },
         {
           "text": "work",
-          "start": 3.633,
-          "end": 3.804
+          "start": 4.263,
+          "end": 4.472
         },
         {
           "text": "is",
-          "start": 3.819,
-          "end": 3.99
+          "start": 4.49,
+          "end": 4.699
         },
         {
           "text": "a",
-          "start": 4.005,
-          "end": 4.176
+          "start": 4.718,
+          "end": 4.927
         },
         {
           "text": "Business",
-          "start": 4.191,
-          "end": 4.616
+          "start": 4.945,
+          "end": 5.464
         },
         {
           "text": "Function.",
-          "start": 4.653,
-          "end": 4.951
+          "start": 5.509,
+          "end": 5.873
         },
         {
           "text": "The",
-          "start": 5.573,
-          "end": 5.773
+          "start": 6.752,
+          "end": 7.0
         },
         {
           "text": "relationship",
-          "start": 5.79,
-          "end": 6.435
+          "start": 7.021,
+          "end": 7.821
         },
         {
           "text": "table",
-          "start": 6.491,
-          "end": 6.839
+          "start": 7.891,
+          "end": 8.323
         },
         {
           "text": "says",
-          "start": 6.87,
-          "end": 7.07
+          "start": 8.36,
+          "end": 8.608
         },
         {
           "text": "they",
-          "start": 7.087,
-          "end": 7.287
+          "start": 8.63,
+          "end": 8.878
         },
         {
           "text": "can",
-          "start": 7.305,
-          "end": 7.505
+          "start": 8.9,
+          "end": 9.148
         },
         {
           "text": "connect.",
-          "start": 7.522,
-          "end": 7.87
+          "start": 9.17,
+          "end": 9.602
         },
         {
           "text": "It",
-          "start": 8.299,
-          "end": 8.511
+          "start": 9.946,
+          "end": 10.162
         },
         {
           "text": "does",
-          "start": 8.53,
-          "end": 8.742
+          "start": 10.18,
+          "end": 10.396
         },
         {
           "text": "not",
-          "start": 8.761,
-          "end": 8.973
+          "start": 10.415,
+          "end": 10.63
         },
         {
           "text": "say",
-          "start": 8.992,
-          "end": 9.204
+          "start": 10.649,
+          "end": 10.864
         },
         {
           "text": "through",
-          "start": 9.223,
-          "end": 9.435
+          "start": 10.883,
+          "end": 11.098
         },
         {
           "text": "what.",
-          "start": 9.453,
-          "end": 9.666
+          "start": 11.117,
+          "end": 11.332
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -271,27 +271,27 @@
     {
       "frame": 3,
       "path": "assets/voice/03.wav",
-      "duration_s": 2.021,
+      "duration_s": 2.84,
       "words": [
         {
           "text": "ArchiTrek",
-          "start": 0.0,
-          "end": 0.578
+          "start": 0.29,
+          "end": 0.995
         },
         {
           "text": "finds",
-          "start": 0.602,
-          "end": 0.879
+          "start": 1.024,
+          "end": 1.362
         },
         {
           "text": "the",
-          "start": 0.903,
-          "end": 1.18
+          "start": 1.391,
+          "end": 1.729
         },
         {
           "text": "route.",
-          "start": 1.204,
-          "end": 1.481
+          "start": 1.758,
+          "end": 2.096
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -299,52 +299,52 @@
     {
       "frame": 4,
       "path": "assets/voice/04.wav",
-      "duration_s": 3.493,
+      "duration_s": 6.32,
       "words": [
         {
           "text": "Pick",
-          "start": 0.0,
-          "end": 0.2
+          "start": 0.293,
+          "end": 0.693
         },
         {
           "text": "Node",
-          "start": 0.218,
-          "end": 0.418
+          "start": 0.728,
+          "end": 1.128
         },
         {
           "text": "and",
-          "start": 0.436,
-          "end": 0.636
+          "start": 1.163,
+          "end": 1.563
         },
         {
           "text": "Business",
-          "start": 0.654,
-          "end": 1.151
+          "start": 1.598,
+          "end": 2.591
         },
         {
           "text": "Function,",
-          "start": 1.195,
-          "end": 1.544
+          "start": 2.678,
+          "end": 3.374
         },
         {
           "text": "then",
-          "start": 1.869,
-          "end": 2.129
+          "start": 3.794,
+          "end": 4.222
         },
         {
           "text": "click",
-          "start": 2.152,
-          "end": 2.412
+          "start": 4.259,
+          "end": 4.687
         },
         {
           "text": "Find",
-          "start": 2.434,
-          "end": 2.694
+          "start": 4.725,
+          "end": 5.153
         },
         {
           "text": "Path.",
-          "start": 2.717,
-          "end": 2.977
+          "start": 5.19,
+          "end": 5.618
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -352,97 +352,97 @@
     {
       "frame": 5,
       "path": "assets/voice/05.wav",
-      "duration_s": 6.523,
+      "duration_s": 7.44,
       "words": [
         {
           "text": "Every",
-          "start": 0.0,
-          "end": 0.476
+          "start": 0.271,
+          "end": 0.86
         },
         {
           "text": "route",
-          "start": 0.517,
-          "end": 0.709
+          "start": 0.911,
+          "end": 1.148
         },
         {
           "text": "it",
-          "start": 0.725,
-          "end": 0.917
+          "start": 1.169,
+          "end": 1.406
         },
         {
           "text": "finds",
-          "start": 0.934,
-          "end": 1.126
+          "start": 1.427,
+          "end": 1.664
         },
         {
           "text": "is",
-          "start": 1.142,
-          "end": 1.334
+          "start": 1.685,
+          "end": 1.922
         },
         {
           "text": "legal.",
-          "start": 1.351,
-          "end": 1.684
+          "start": 1.943,
+          "end": 2.356
         },
         {
           "text": "But",
-          "start": 2.234,
-          "end": 2.447
+          "start": 3.048,
+          "end": 3.256
         },
         {
           "text": "none",
-          "start": 2.466,
-          "end": 2.679
+          "start": 3.274,
+          "end": 3.481
         },
         {
           "text": "of",
-          "start": 2.698,
-          "end": 2.912
+          "start": 3.499,
+          "end": 3.707
         },
         {
           "text": "them",
-          "start": 2.93,
-          "end": 3.144
+          "start": 3.725,
+          "end": 3.933
         },
         {
           "text": "passes",
-          "start": 3.162,
-          "end": 3.534
+          "start": 3.951,
+          "end": 4.312
         },
         {
           "text": "through",
-          "start": 3.566,
-          "end": 3.78
+          "start": 4.344,
+          "end": 4.551
         },
         {
           "text": "the",
-          "start": 3.798,
-          "end": 4.012
+          "start": 4.57,
+          "end": 4.777
         },
         {
           "text": "application",
-          "start": 4.031,
-          "end": 4.719
+          "start": 4.795,
+          "end": 5.464
         },
         {
           "text": "layer",
-          "start": 4.779,
-          "end": 4.992
+          "start": 5.523,
+          "end": 5.73
         },
         {
           "text": "the",
-          "start": 5.011,
-          "end": 5.224
+          "start": 5.748,
+          "end": 5.956
         },
         {
           "text": "case",
-          "start": 5.243,
-          "end": 5.456
+          "start": 5.974,
+          "end": 6.182
         },
         {
           "text": "describes.",
-          "start": 5.475,
-          "end": 6.005
+          "start": 6.2,
+          "end": 6.715
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -450,102 +450,102 @@
     {
       "frame": 6,
       "path": "assets/voice/06.wav",
-      "duration_s": 6.352,
+      "duration_s": 8.28,
       "words": [
         {
           "text": "So",
           "start": 0.0,
-          "end": 0.203
+          "end": 0.018
         },
         {
           "text": "pin",
-          "start": 0.22,
-          "end": 0.423
+          "start": 0.02,
+          "end": 0.038
         },
         {
           "text": "the",
-          "start": 0.441,
-          "end": 0.643
+          "start": 0.039,
+          "end": 0.058
         },
         {
           "text": "layer",
-          "start": 0.661,
-          "end": 0.864
+          "start": 0.059,
+          "end": 0.077
         },
         {
           "text": "you",
-          "start": 0.881,
-          "end": 1.084
+          "start": 0.079,
+          "end": 0.097
         },
         {
           "text": "mean.",
-          "start": 1.102,
-          "end": 1.304
+          "start": 0.099,
+          "end": 0.117
         },
         {
           "text": "Add",
-          "start": 1.894,
-          "end": 2.058
+          "start": 0.283,
+          "end": 0.461
         },
         {
           "text": "Application",
-          "start": 2.072,
-          "end": 2.602
+          "start": 0.476,
+          "end": 1.051
         },
         {
           "text": "Component",
-          "start": 2.648,
-          "end": 3.055
+          "start": 1.101,
+          "end": 1.543
         },
         {
           "text": "in",
-          "start": 3.091,
-          "end": 3.255
+          "start": 1.582,
+          "end": 1.76
         },
         {
           "text": "the",
-          "start": 3.269,
-          "end": 3.434
+          "start": 1.776,
+          "end": 1.954
         },
         {
           "text": "middle,",
-          "start": 3.448,
-          "end": 3.734
+          "start": 1.969,
+          "end": 2.28
         },
         {
           "text": "and",
-          "start": 4.1,
-          "end": 4.309
+          "start": 2.737,
+          "end": 3.307
         },
         {
           "text": "the",
-          "start": 4.327,
-          "end": 4.536
+          "start": 3.357,
+          "end": 3.928
         },
         {
           "text": "route",
-          "start": 4.554,
-          "end": 4.763
+          "start": 3.977,
+          "end": 4.548
         },
         {
           "text": "runs",
-          "start": 4.781,
-          "end": 4.99
+          "start": 4.597,
+          "end": 5.168
         },
         {
           "text": "through",
-          "start": 5.008,
-          "end": 5.217
+          "start": 5.217,
+          "end": 5.788
         },
         {
           "text": "the",
-          "start": 5.235,
-          "end": 5.444
+          "start": 5.837,
+          "end": 6.408
         },
         {
           "text": "software.",
-          "start": 5.462,
-          "end": 5.826
+          "start": 6.457,
+          "end": 7.45
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -553,42 +553,42 @@
     {
       "frame": 7,
       "path": "assets/voice/07.wav",
-      "duration_s": 2.875,
+      "duration_s": 3.88,
       "words": [
         {
           "text": "Right-click",
-          "start": 0.0,
-          "end": 0.382
+          "start": 0.32,
+          "end": 0.803
         },
         {
           "text": "each",
-          "start": 0.416,
-          "end": 0.635
+          "start": 0.845,
+          "end": 1.122
         },
         {
           "text": "hop",
-          "start": 0.655,
-          "end": 0.874
+          "start": 1.146,
+          "end": 1.423
         },
         {
           "text": "to",
-          "start": 0.893,
-          "end": 1.113
+          "start": 1.447,
+          "end": 1.725
         },
         {
           "text": "choose",
-          "start": 1.132,
-          "end": 1.352
+          "start": 1.749,
+          "end": 2.026
         },
         {
           "text": "its",
-          "start": 1.371,
-          "end": 1.591
+          "start": 2.05,
+          "end": 2.327
         },
         {
           "text": "relationship.",
-          "start": 1.61,
-          "end": 2.318
+          "start": 2.352,
+          "end": 3.245
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -596,67 +596,67 @@
     {
       "frame": 8,
       "path": "assets/voice/08.wav",
-      "duration_s": 4.091,
+      "duration_s": 5.56,
       "words": [
         {
           "text": "Every",
-          "start": 0.0,
-          "end": 0.438
+          "start": 0.284,
+          "end": 0.836
         },
         {
           "text": "hop",
-          "start": 0.477,
-          "end": 0.653
+          "start": 0.884,
+          "end": 1.107
         },
         {
           "text": "comes",
-          "start": 0.669,
-          "end": 0.976
+          "start": 1.126,
+          "end": 1.514
         },
         {
           "text": "with",
-          "start": 1.003,
-          "end": 1.18
+          "start": 1.547,
+          "end": 1.77
         },
         {
           "text": "its",
-          "start": 1.195,
-          "end": 1.372
+          "start": 1.789,
+          "end": 2.012
         },
         {
           "text": "rule",
-          "start": 1.387,
-          "end": 1.695
+          "start": 2.031,
+          "end": 2.419
         },
         {
           "text": "and",
-          "start": 1.722,
-          "end": 1.898
+          "start": 2.453,
+          "end": 2.675
         },
         {
           "text": "its",
-          "start": 1.914,
-          "end": 2.09
+          "start": 2.695,
+          "end": 2.917
         },
         {
           "text": "section",
-          "start": 2.106,
-          "end": 2.413
+          "start": 2.937,
+          "end": 3.324
         },
         {
           "text": "of",
-          "start": 2.44,
-          "end": 2.617
+          "start": 3.358,
+          "end": 3.581
         },
         {
           "text": "the",
-          "start": 2.632,
-          "end": 2.809
+          "start": 3.6,
+          "end": 3.823
         },
         {
           "text": "specification.",
-          "start": 2.824,
-          "end": 3.524
+          "start": 3.842,
+          "end": 4.724
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -664,52 +664,52 @@
     {
       "frame": 9,
       "path": "assets/voice/09.wav",
-      "duration_s": 3.259,
+      "duration_s": 4.48,
       "words": [
         {
           "text": "Then",
-          "start": 0.0,
-          "end": 0.212
+          "start": 0.316,
+          "end": 0.576
         },
         {
           "text": "export",
-          "start": 0.23,
-          "end": 0.599
+          "start": 0.599,
+          "end": 1.051
         },
         {
           "text": "the",
-          "start": 0.631,
-          "end": 0.843
+          "start": 1.091,
+          "end": 1.35
         },
         {
           "text": "route",
-          "start": 0.862,
-          "end": 1.073
+          "start": 1.373,
+          "end": 1.633
         },
         {
           "text": "to",
-          "start": 1.092,
-          "end": 1.304
+          "start": 1.656,
+          "end": 1.915
         },
         {
           "text": "Archi",
-          "start": 1.322,
-          "end": 1.691
+          "start": 1.938,
+          "end": 2.39
         },
         {
           "text": "and",
-          "start": 1.723,
-          "end": 1.935
+          "start": 2.43,
+          "end": 2.69
         },
         {
           "text": "keep",
-          "start": 1.953,
-          "end": 2.165
+          "start": 2.712,
+          "end": 2.972
         },
         {
           "text": "modelling.",
-          "start": 2.184,
-          "end": 2.71
+          "start": 2.995,
+          "end": 3.64
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"
@@ -717,112 +717,112 @@
     {
       "frame": 10,
       "path": "assets/voice/10.wav",
-      "duration_s": 8.421,
+      "duration_s": 10.32,
       "words": [
         {
           "text": "Next,",
-          "start": 0.0,
-          "end": 0.201
+          "start": 0.232,
+          "end": 0.499
         },
         {
           "text": "the",
-          "start": 0.219,
-          "end": 0.42
+          "start": 0.522,
+          "end": 0.789
         },
         {
           "text": "company",
-          "start": 0.437,
-          "end": 0.937
+          "start": 0.812,
+          "end": 1.474
         },
         {
           "text": "wants",
-          "start": 0.98,
-          "end": 1.181
+          "start": 1.532,
+          "end": 1.798
         },
         {
           "text": "to",
-          "start": 1.199,
-          "end": 1.4
+          "start": 1.822,
+          "end": 2.088
         },
         {
           "text": "replace",
-          "start": 1.417,
-          "end": 1.768
+          "start": 2.112,
+          "end": 2.576
         },
         {
           "text": "the",
-          "start": 1.798,
-          "end": 1.999
+          "start": 2.616,
+          "end": 2.883
         },
         {
           "text": "mainframe",
-          "start": 2.017,
-          "end": 2.367
+          "start": 2.906,
+          "end": 3.371
         },
         {
           "text": "with",
-          "start": 2.397,
-          "end": 2.599
+          "start": 3.411,
+          "end": 3.678
         },
         {
           "text": "a",
-          "start": 2.616,
-          "end": 2.817
+          "start": 3.701,
+          "end": 3.968
         },
         {
           "text": "cloud",
-          "start": 2.835,
-          "end": 3.036
+          "start": 3.991,
+          "end": 4.258
         },
         {
           "text": "server.",
-          "start": 3.054,
-          "end": 3.404
+          "start": 4.281,
+          "end": 4.746
         },
         {
           "text": "Which",
-          "start": 3.949,
-          "end": 4.193
+          "start": 5.294,
+          "end": 5.527
         },
         {
           "text": "elements",
-          "start": 4.214,
-          "end": 4.818
+          "start": 5.547,
+          "end": 6.127
         },
         {
           "text": "change?",
-          "start": 4.871,
-          "end": 5.115
+          "start": 6.177,
+          "end": 6.411
         },
         {
           "text": "Which",
-          "start": 5.518,
-          "end": 5.77
+          "start": 6.79,
+          "end": 7.049
         },
         {
           "text": "arrows?",
-          "start": 5.792,
-          "end": 6.231
+          "start": 7.071,
+          "end": 7.521
         },
         {
           "text": "Model",
-          "start": 6.59,
-          "end": 6.961
+          "start": 8.253,
+          "end": 8.652
         },
         {
           "text": "it",
-          "start": 6.993,
-          "end": 7.206
+          "start": 8.687,
+          "end": 8.915
         },
         {
           "text": "with",
-          "start": 7.225,
-          "end": 7.438
+          "start": 8.935,
+          "end": 9.164
         },
         {
           "text": "ArchiTrek.",
-          "start": 7.456,
-          "end": 7.9
+          "start": 9.184,
+          "end": 9.662
         }
       ],
       "words_source": "approximate: silencedetect + syllable weighting"

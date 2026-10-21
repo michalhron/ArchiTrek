@@ -1,4 +1,4 @@
-<template id="f02-the-table-template" data-composition-id="02-the-table" data-width="1920" data-height="1080" data-duration="10.571">
+<template id="f02-the-table-template" data-composition-id="02-the-table" data-width="1920" data-height="1080" data-duration="12.44">
   <script src="assets/vendor/gsap.min.js"></script>
   <style>
     @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -152,9 +152,9 @@
   </style>
 
   <div id="root" data-composition-id="02-the-table" data-width="1920" data-height="1080">
-    <div id="f02-the-table-bg" class="clip" data-start="0" data-duration="10.571" data-track-index="0"></div>
+    <div id="f02-the-table-bg" class="clip" data-start="0" data-duration="12.44" data-track-index="0"></div>
 
-    <div id="f02-the-table-stage" class="clip" data-start="0" data-duration="10.571" data-track-index="1">
+    <div id="f02-the-table-stage" class="clip" data-start="0" data-duration="12.44" data-track-index="1">
       <div id="f02-the-table-table">
         <div id="f02-the-table-corner" class="f02-the-table-gcell"></div>
         <div id="f02-the-table-colhead" class="f02-the-table-gcell">
@@ -192,24 +192,24 @@
     (function () {
       // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
       const CUES = {
-        The: 0.0,
-        relationship: 2.365,
-        business: 4.191,
-        table: 6.491,
-        tells: 6.87,
-        you: 1.378,
-        what: 7.087,
-        is: 1.774,
-        allowed: 7.522,
-        It: 8.299,
-        does: 3.148,
-        not: 3.366,
-        tell: 3.585,
-        you2: 3.803,
-        through: 9.223,
-        whatEnd: 9.453
+        The: 0.000,
+        relationship: 2.689,
+        business: 4.945,
+        table: 7.891,
+        tells: 8.360,
+        you: 1.524,
+        what: 8.630,
+        is: 1.991,
+        allowed: 9.170,
+        It: 9.946,
+        does: 3.672,
+        not: 3.937,
+        tell: 4.204,
+        you2: 4.470,
+        through: 10.883,
+        whatEnd: 11.117
       };
-      const DUR = 10.171;
+      const DUR = 12.04;
       const S2_TAIL = 1.05; // time Scene 2 needs to fully land before the frame ends
 
       const q = (sel) => Array.prototype.slice.call(document.querySelectorAll(sel));

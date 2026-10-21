@@ -1,5 +1,5 @@
 {
-  "provider": "kokoro",
+  "provider": "gemini",
   "speed": "1.0",
   "lines": [
     {
@@ -46,5 +46,7 @@
   "bgm": {
     "mode": "none"
   },
-  "voice": "af_heart"
+  "voice": "Kore",
+  "tts_model": "gemini-3.8-flash-tts",
+  "style": "Calm, clear and friendly, like a good lecturer walking students through a case. Unhurried, with a short pause between sentences."
 }

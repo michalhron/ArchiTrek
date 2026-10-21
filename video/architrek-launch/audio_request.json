@@ -1,0 +1,50 @@
+{
+  "provider": "kokoro",
+  "speed": "1.0",
+  "lines": [
+    {
+      "id": "01",
+      "text": "An insurance company does its bookkeeping on an old mainframe. Its architects must show how that machine supports the finance department's work."
+    },
+    {
+      "id": "02",
+      "text": "In ArchiMate, the mainframe is a Node, and the finance work is a Business Function. The relationship table says they can connect. It does not say through what."
+    },
+    {
+      "id": "03",
+      "text": "Archie Trek finds the route."
+    },
+    {
+      "id": "04",
+      "text": "Pick Node and Business Function, then click Find Path."
+    },
+    {
+      "id": "05",
+      "text": "Every route it finds is legal. But none of them passes through the application layer the case describes."
+    },
+    {
+      "id": "06",
+      "text": "So pin the layer you mean. Add Application Component in the middle, and the route runs through the software."
+    },
+    {
+      "id": "07",
+      "text": "Right-click each hop to choose its relationship."
+    },
+    {
+      "id": "08",
+      "text": "Every hop comes with its rule and its section of the specification."
+    },
+    {
+      "id": "09",
+      "text": "Then export the route to Archi and keep modelling."
+    },
+    {
+      "id": "10",
+      "text": "Next, the company wants to replace the mainframe with a cloud server. Which elements change? Which arrows? Model it with Archie Trek."
+    }
+  ],
+  "bgm": {
+    "mode": "none"
+  },
+  "voice": "af_heart"
+}

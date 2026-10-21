@@ -1,0 +1,6 @@
+ArchiTrek — ArchiMate study engine. An unofficial study tool for ArchiMate 3.2: choose two or more element types, and it searches the standard Appendix B relationship tables for valid routes. You get a diagram, hop-by-hop explanation, and links to dig into elements and the metamodel.
+Waypoints: A Start Node, B Via Application Component, C End Business Function. Find Path. Clear All. Options: Viewpoint, Domain context, Explicit vs Inferred (+ Inferred), Semantic rigor Academic (Strict).
+Route 1, Node → Business Function, Technology-Heavy, Ground-Truth. 3 hops, primarily Realization relationships. Step-by-step justification. Phase 1: Technology to Application transition. Hop 1 Realization.
+Right-click a hop: Relationship type (Realization, Flow, Triggering, Serving, Association), Flip direction, Report feedback.
+Download format: PNG, SVG, PDF, CSV, XML. Share: Copy share link.
+Swimlanes: Business, Application, Technology.

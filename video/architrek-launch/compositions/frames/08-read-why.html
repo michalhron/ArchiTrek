@@ -1,0 +1,134 @@
+<template id="f08-read-why-template">
+<div id="root" data-composition-id="08-read-why" data-width="1920" data-height="1080" data-start="0" data-duration="4.591">
+<script src="assets/vendor/gsap.min.js"></script>
+<style>
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: block; }
+  #root {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #root .clip { position: absolute; }
+  #f08-read-why-bg {
+    left: 0; top: 0; width: 1920px; height: 1080px;
+    background: #f7f7f7;
+  }
+  #f08-read-why-kicker {
+    left: 96px; top: 66px; height: 40px;
+    display: flex; align-items: center; gap: 16px;
+    font-size: 22px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #4a5568; white-space: nowrap;
+  }
+  .rw07-kicker-sq { width: 12px; height: 12px; background: #ff4500; flex: none; }
+  #f08-read-why-window {
+    left: 96px; top: 136px; width: 1728px; height: 740px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 24px 60px rgba(26,36,50,0.18);
+    overflow: hidden;
+  }
+  .rw07-world {
+    position: absolute; left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: 0 0;
+  }
+  .rw07-shot {
+    position: absolute; left: 0; top: 0;
+    width: 1920px; height: 1080px; display: block;
+  }
+  .rw07-hl {
+    position: absolute;
+    left: 737px; top: 554px; width: 1131px; height: 278px;
+    border: 2px solid #ff4500;
+    box-sizing: border-box;
+    transform-origin: 50% 50%;
+    opacity: 0;
+  }
+</style>
+
+<div id="f08-read-why-bg" class="clip" data-start="0" data-duration="4.591" data-track-index="0"></div>
+
+<div id="f08-read-why-window" class="clip" data-start="0" data-duration="4.591" data-track-index="1">
+  <div class="rw07-world" id="f08-read-why-world" data-layout-allow-overflow>
+    <img class="rw07-shot" src="assets/s06-explain.png" alt="">
+    <div class="rw07-hl" id="f08-read-why-hl"></div>
+  </div>
+</div>
+
+<div id="f08-read-why-kicker" class="clip" data-start="0" data-duration="4.591" data-track-index="2">
+  <span class="rw07-kicker-sq"></span><span>5 · Understand</span>
+</div>
+
+<script>
+(function () {
+  // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
+  const CUES = {
+    then: 0.0,
+    read: 0.05,
+    why: 0.3,
+    every: 0.0,
+    hop: 0.477,
+    comes: 0.669,
+    with: 1.003,
+    its1: 1.195,
+    rule: 1.387,
+    and: 1.722,
+    its2: 1.914,
+    section: 2.106,
+    in: 2.44,
+    the: 2.632,
+    specification: 2.824
+  };
+  const DURATION = 4.091;
+  const MIN_TAIL = 0.35;
+  // Clamp a move so it completes before the frame ends.
+  function span(start, dur) {
+    const s = Math.min(start, DURATION - MIN_TAIL);
+    return { at: s, dur: Math.max(0.1, Math.min(dur, DURATION - s)) };
+  }
+
+  // Window view: 1728x740 card; center of card in card space.
+  const VIEW_CX = 864, VIEW_CY = 370;
+  // Camera framings in 1920x1080 viewport space: center point + scale.
+  function cam(cx, cy, s) { return { x: VIEW_CX - s * cx, y: VIEW_CY - s * cy, scale: s }; }
+  const SHOT_RIGHT_HALF = cam(1010, 679, 0.95);   // right-biased, lower panels in view
+  const SHOT_PANEL      = cam(1290, 790, 1.37);   // justification panel x 730-1880, y 520-1060
+  const SHOT_PHASE1     = cam(1302, 694, 1.5);    // Phase 1 hop block
+
+  const tl = gsap.timeline({ paused: true });
+  const world = '#f08-read-why-world';
+  const hl = '#f08-read-why-hl';
+  const kicker = '#f08-read-why-kicker';
+
+  // Scene 1 — kicker + window establish, then push toward the panel on "read why".
+  tl.fromTo(kicker, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: 'power3.out' }, CUES.then);
+  const p1 = span(CUES.read, CUES.comes - CUES.read + 0.1);
+  tl.fromTo(world,
+    { x: SHOT_RIGHT_HALF.x, y: SHOT_RIGHT_HALF.y, scale: SHOT_RIGHT_HALF.scale },
+    { x: SHOT_PANEL.x, y: SHOT_PANEL.y, scale: SHOT_PANEL.scale, duration: p1.dur, ease: 'power2.inOut', immediateRender: true },
+    p1.at);
+
+  // Scene 2 — the breather: slowest push onto the Phase 1 hop block, held to the end.
+  const p2Start = CUES.comes + 0.1;
+  const p2 = span(p2Start, DURATION - p2Start);
+  tl.fromTo(world,
+    { x: SHOT_PANEL.x, y: SHOT_PANEL.y, scale: SHOT_PANEL.scale },
+    { x: SHOT_PHASE1.x, y: SHOT_PHASE1.y, scale: SHOT_PHASE1.scale, duration: p2.dur, ease: 'sine.out', immediateRender: false },
+    p2.at);
+
+  // Highlight box outlines the Phase 1 hop on "its rule".
+  const h = span(CUES.rule, 0.45);
+  tl.fromTo(hl, { opacity: 0, scale: 1.04 }, { opacity: 1, scale: 1, duration: h.dur, ease: 'power3.out' }, h.at);
+
+  // Pad the timeline to the full frame length.
+  tl.set({}, {}, DURATION);
+
+  window.__timelines = window.__timelines || {};
+  window.__timelines["08-read-why"] = tl;
+})();
+</script>
+</div>
+</template>

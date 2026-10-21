@@ -1,0 +1,333 @@
+<template id="turn10-template">
+  <div id="root" data-composition-id="10-your-turn" data-width="1920" data-height="1080" data-start="0" data-duration="9.021">
+    <style>
+      @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+      @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_500.woff2") format("woff2"); font-weight: 500; font-style: normal; }
+      @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_600.woff2") format("woff2"); font-weight: 600; font-style: normal; }
+      @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_700.woff2") format("woff2"); font-weight: 700; font-style: normal; }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        font-family: "IBM Plex Sans", sans-serif;
+        color: #1a2432;
+      }
+      .turn10-bg {
+        position: absolute;
+        inset: 0;
+        background: #f7f7f7;
+      }
+      .turn10-stage {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+      }
+      .turn10-svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: visible;
+      }
+      .turn10-band-label {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 600;
+        font-size: 20px;
+      }
+      .turn10-box {
+        position: absolute;
+        box-sizing: border-box;
+        border: 2px solid #1a2432;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1.15;
+        color: #1a2432;
+      }
+      .turn10-glyph {
+        position: absolute;
+        top: 9px;
+        right: 10px;
+        overflow: visible;
+      }
+      #turn10-function {
+        left: 760px; top: 210px; width: 320px; height: 100px;
+        background: #fffbe6;
+        border-radius: 10px;
+      }
+      #turn10-actor {
+        left: 1260px; top: 210px; width: 260px; height: 100px;
+        background: #fffbe6;
+      }
+      #turn10-sap {
+        left: 790px; top: 440px; width: 260px; height: 100px;
+        background: #bfffff;
+      }
+      #turn10-mainframe {
+        left: 790px; top: 670px; width: 260px; height: 100px;
+        background: #c1ffb1;
+      }
+      #turn10-cloud {
+        left: 1200px; top: 670px; width: 260px; height: 100px;
+        background: transparent;
+        border: 2px dashed #1a2432;
+        border-radius: 0;
+      }
+      .turn10-outline {
+        position: absolute;
+        left: 90px;
+        top: 604px;
+        width: 1740px;
+        height: 232px;
+        box-sizing: border-box;
+        border: 3px solid #ff4500;
+        border-radius: 0;
+      }
+      .turn10-hop {
+        position: absolute;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #1a2432;
+        color: #ffffff;
+        font-size: 28px;
+        font-weight: 600;
+        line-height: 48px;
+        text-align: center;
+      }
+      #turn10-hop-lower { left: 896px; top: 581px; }
+      #turn10-hop-upper { left: 896px; top: 351px; }
+      .turn10-card {
+        position: absolute;
+        left: 1520px;
+        top: 420px;
+        width: 304px;
+        height: 140px;
+        box-sizing: border-box;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 0;
+        box-shadow: 0 24px 60px rgba(26, 36, 50, 0.18);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .turn10-card-logo {
+        display: block;
+        width: 240px;
+        height: 48px;
+      }
+      .turn10-card-url {
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 26px;
+        color: #1a2432;
+        white-space: nowrap;
+      }
+      .turn10-kicker {
+        position: absolute;
+        left: 96px;
+        top: 88px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .turn10-kicker-square {
+        width: 12px;
+        height: 12px;
+        background: #ff4500;
+      }
+      .turn10-kicker-text {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #4a5568;
+        line-height: 28px;
+      }
+    </style>
+
+    <div id="turn10-bg" class="clip turn10-bg" data-start="0" data-duration="9.021" data-track-index="0"></div>
+
+    <div id="turn10-stage" class="clip turn10-stage" data-start="0" data-duration="9.021" data-track-index="1">
+      <!-- Layer bands -->
+      <svg class="turn10-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <rect x="96" y="150" width="1728" height="220" fill="#f5e87a" fill-opacity="0.35" />
+        <rect x="96" y="380" width="1728" height="220" fill="#bfffff" fill-opacity="0.45" />
+        <rect x="96" y="610" width="1728" height="220" fill="#c1ffb1" fill-opacity="0.45" />
+        <text class="turn10-band-label" x="116" y="184" fill="#1a2432" fill-opacity="0.75">Business</text>
+        <text class="turn10-band-label" x="116" y="414" fill="#1a2432" fill-opacity="0.75">Application</text>
+        <text class="turn10-band-label" x="116" y="644" fill="#1a2432" fill-opacity="0.75">Technology</text>
+      </svg>
+
+      <!-- Element boxes -->
+      <div id="turn10-function" class="turn10-box">
+        <span>Financial Transaction<br />Processing</span>
+        <svg class="turn10-glyph" width="16" height="20" viewBox="0 0 16 20">
+          <path d="M1 6 L8 1 L15 6 L15 19 L8 14 L1 19 Z" fill="none" stroke="#1a2432" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </div>
+
+      <div id="turn10-actor" class="turn10-box">
+        <span>Finance<br />Department</span>
+        <svg class="turn10-glyph" width="16" height="24" viewBox="0 0 16 24">
+          <circle cx="8" cy="4" r="3.4" fill="none" stroke="#1a2432" stroke-width="1.6" />
+          <path d="M8 7.5 L8 15 M1.5 10.5 L14.5 10.5 M8 15 L2.5 22.5 M8 15 L13.5 22.5" fill="none" stroke="#1a2432" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </div>
+
+      <div id="turn10-sap" class="turn10-box">
+        <span>SAP ERP</span>
+        <svg class="turn10-glyph" width="22" height="20" viewBox="0 0 22 20">
+          <rect x="5" y="1" width="16" height="18" fill="none" stroke="#1a2432" stroke-width="1.6" />
+          <rect x="1" y="4.5" width="8" height="4" fill="#bfffff" stroke="#1a2432" stroke-width="1.6" />
+          <rect x="1" y="11.5" width="8" height="4" fill="#bfffff" stroke="#1a2432" stroke-width="1.6" />
+        </svg>
+      </div>
+
+      <div id="turn10-mainframe" class="turn10-box">
+        <span>Mainframe</span>
+        <svg class="turn10-glyph" width="22" height="20" viewBox="0 0 22 20">
+          <path d="M1 6 L6 1 L21 1 L21 14 L16 19 L1 19 Z M1 6 L16 6 L16 19 M16 6 L21 1" fill="none" stroke="#1a2432" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </div>
+
+      <div id="turn10-cloud" class="turn10-box">
+        <span>Cloud server</span>
+      </div>
+
+      <!-- Relationships -->
+      <svg class="turn10-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+        <!-- Assignment: Finance Department -> Financial Transaction Processing -->
+        <g id="turn10-assign">
+          <line x1="1260" y1="260" x2="1094" y2="260" stroke="#1a2432" stroke-width="2" />
+          <circle cx="1260" cy="260" r="5" fill="#1a2432" />
+          <polygon points="1080,260 1095,253 1095,267" fill="#1a2432" />
+        </g>
+        <!-- Realization: Mainframe -> SAP ERP (navy) -->
+        <g id="turn10-real-navy">
+          <line x1="920" y1="670" x2="920" y2="556" stroke="#1a2432" stroke-width="2" stroke-dasharray="8 6" />
+          <polygon points="920,541 910,556 930,556" fill="#ffffff" stroke="#1a2432" stroke-width="2" stroke-linejoin="miter" />
+        </g>
+        <!-- Serving: SAP ERP -> Financial Transaction Processing (navy) -->
+        <g id="turn10-serv-navy">
+          <line x1="920" y1="440" x2="920" y2="312" stroke="#1a2432" stroke-width="2" />
+          <polyline points="910,325 920,311 930,325" fill="none" stroke="#1a2432" stroke-width="2" stroke-linejoin="miter" />
+        </g>
+        <!-- Questioned versions (grey, dashed) -->
+        <g id="turn10-real-grey">
+          <line x1="920" y1="670" x2="920" y2="556" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 6" />
+          <polygon points="920,541 910,556 930,556" fill="#ffffff" stroke="#94a3b8" stroke-width="2" />
+        </g>
+        <g id="turn10-serv-grey">
+          <line x1="920" y1="440" x2="920" y2="312" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 6" />
+          <polyline points="910,325 920,311 930,325" fill="none" stroke="#94a3b8" stroke-width="2" />
+        </g>
+        <!-- Small grey arrow: Mainframe -> Cloud server -->
+        <line id="turn10-move-line" x1="1050" y1="720" x2="1188" y2="720" stroke="#94a3b8" stroke-width="2" stroke-dasharray="138" stroke-dashoffset="0" />
+        <polygon id="turn10-move-head" points="1200,720 1187,714 1187,726" fill="#94a3b8" />
+      </svg>
+
+      <!-- Hop badges -->
+      <div id="turn10-hop-lower" class="turn10-hop">?</div>
+      <div id="turn10-hop-upper" class="turn10-hop">?</div>
+
+      <!-- Orange outline on the Technology band -->
+      <div id="turn10-outline" class="turn10-outline"></div>
+
+      <!-- Model-it card -->
+      <div id="turn10-card" class="turn10-card">
+        <img id="turn10-card-logo" class="turn10-card-logo" src="assets/logo-on-light.svg" alt="ArchiTrek" />
+        <div id="turn10-card-url" class="turn10-card-url">architrek.hronmichal.net</div>
+      </div>
+    </div>
+
+    <div id="turn10-chrome" class="clip turn10-stage" data-start="0" data-duration="9.021" data-track-index="2">
+      <div class="turn10-kicker">
+        <div class="turn10-kicker-square"></div>
+        <div class="turn10-kicker-text">Your turn</div>
+      </div>
+    </div>
+
+    <script src="assets/vendor/gsap.min.js"></script>
+    <script>
+      (function () {
+        // Voice cue times, seconds from frame start. Re-time the frame by editing only this object.
+        const CUES = {
+          next: 0.0,
+          the1: 0.219,
+          company: 0.437,
+          wants: 0.98,
+          to: 1.199,
+          replace: 1.417,
+          the2: 1.798,
+          mainframe: 2.017,
+          with1: 2.397,
+          a: 2.616,
+          cloud: 2.835,
+          server: 3.054,
+          which1: 3.949,
+          elements: 4.214,
+          change: 4.871,
+          which2: 5.518,
+          arrows: 5.792,
+          model: 6.59,
+          it: 6.993,
+          with2: 7.225,
+          archiTrek: 7.456,
+          END: 8.421
+        };
+        const END = CUES.END;
+        const MARGIN = 0.35;
+        // Start a reveal at its cue, clamped so it completes at least MARGIN before the end.
+        function at(cue, dur) {
+          return Math.max(0, Math.min(cue, END - MARGIN - dur));
+        }
+
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        // Macro camera: a slow push-in under the whole shot.
+        tl.fromTo("#turn10-stage", { scale: 1 }, { scale: 1.02, transformOrigin: "960px 490px", duration: END, ease: "none" }, 0);
+
+        // Scene 1: the picture is on screen at t=0. On "replace the mainframe" the Mainframe dims,
+        // then a grey arrow points right and the dashed Cloud server slides in.
+        tl.fromTo("#turn10-mainframe", { opacity: 1 }, { opacity: 0.35, duration: 0.5, ease: "power2.out" }, at(CUES.replace, 0.5));
+        tl.fromTo("#turn10-move-line", { attr: { "stroke-dashoffset": 138 } }, { attr: { "stroke-dashoffset": 0 }, duration: 0.45, ease: "power2.out" }, at(CUES.with1, 0.45));
+        tl.fromTo("#turn10-move-head", { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "none" }, at(CUES.with1, 0.45) + 0.35);
+        tl.fromTo("#turn10-cloud", { x: -60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, at(CUES.a, 0.6));
+
+        // Scene 2: "Which elements change?" -> orange outline frames the Technology band.
+        tl.fromTo("#turn10-outline", { opacity: 0, scale: 1.02, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.45, ease: "power2.out" }, at(CUES.elements, 0.45));
+
+        // Scene 3: "Which arrows?" -> the outline lifts off; inter-layer arrows turn dashed grey with "?" hop badges.
+        tl.to("#turn10-outline", { opacity: 0, scale: 1.015, duration: 0.3, ease: "power2.in" }, at(CUES.which2, 0.3));
+        tl.fromTo(["#turn10-real-grey", "#turn10-serv-grey"], { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out" }, at(CUES.arrows, 0.4));
+        tl.to(["#turn10-real-navy", "#turn10-serv-navy"], { opacity: 0, duration: 0.4, ease: "power1.out" }, at(CUES.arrows, 0.4));
+        tl.fromTo("#turn10-hop-lower", { scale: 0, opacity: 0, transformOrigin: "50% 50%" }, { scale: 1, opacity: 1, duration: 0.4, ease: "back.out(1.8)" }, at(CUES.arrows, 0.4) + 0.05);
+        tl.fromTo("#turn10-hop-upper", { scale: 0, opacity: 0, transformOrigin: "50% 50%" }, { scale: 1, opacity: 1, duration: 0.4, ease: "back.out(1.8)" }, at(CUES.arrows, 0.4) + 0.17);
+
+        // Scene 4: "Model it with ArchiTrek." -> the card sets in at the right; the address lands on "ArchiTrek".
+        tl.fromTo("#turn10-card", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, at(CUES.model, 0.55));
+        tl.fromTo("#turn10-card-logo", { y: 8, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, at(CUES.it, 0.45));
+        tl.fromTo("#turn10-card-url", { y: 8, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, at(CUES.archiTrek, 0.45));
+
+        // Pad the timeline to the full frame duration (hold to the end).
+        tl.set({}, {}, END);
+
+        window.__timelines["10-your-turn"] = tl;
+      })();
+    </script>
+  </div>
+</template>

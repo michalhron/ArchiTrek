@@ -1,0 +1,190 @@
+<template id="f09-export-template">
+<script src="assets/vendor/gsap.min.js"></script>
+<style>
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_700.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: block; }
+
+  #root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #take09-bg {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    background: #f7f7f7;
+  }
+
+  /* kicker: 12px orange square + uppercase tracked label */
+  #take09-kicker {
+    position: absolute;
+    left: 96px;
+    top: 52px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #4a5568;
+    white-space: nowrap;
+  }
+  #take09-kicker .take09-sq {
+    width: 12px; height: 12px;
+    background: #ff4500;
+    flex: none;
+  }
+
+  /* the camera view: between the kicker and the caption band (y 120 → 896) */
+  #take09-view {
+    position: absolute;
+    left: 0;
+    top: 120px;
+    width: 1920px;
+    height: 776px;
+    overflow: hidden;
+  }
+  #take09-world {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    transform-origin: 0 0;
+  }
+  #take09-shot {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 24px 60px rgba(26,36,50,0.18);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  #take09-shot img {
+    display: block;
+    width: 1920px; height: 1080px;
+  }
+  /* highlight boxes live in viewport (world) px so they track the image */
+  .take09-hl {
+    position: absolute;
+    border: 1.25px solid #ff4500;
+    box-sizing: border-box;
+    opacity: 0;
+  }
+  #take09-hl-png  { left: 1606px; top: 133px; width: 48px;  height: 34px; }
+  #take09-hl-link { left: 1606px; top: 199px; width: 255px; height: 36px; }
+  #take09-hl-xml  { left: 1808px; top: 133px; width: 53px;  height: 34px; }
+
+  /* label set below the popover, in screen space */
+  #take09-label-row {
+    position: absolute;
+    left: 500px;
+    top: 712px;
+    width: 1920px;
+    display: flex;
+    justify-content: center;
+  }
+  #take09-label {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 18px 32px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    color: #1a2432;
+    font-size: 36px;
+    font-weight: 600;
+    line-height: 1.1;
+    white-space: nowrap;
+    opacity: 0;
+  }
+  #take09-label .take09-strong { font-weight: 700; }
+  #take09-label svg { display: block; flex: none; }
+</style>
+
+<div id="root" data-composition-id="09-export" data-width="1920" data-height="1080" data-duration="3.859">
+  <div id="take09-bg" class="clip" data-start="0" data-duration="3.859" data-track-index="0"></div>
+
+  <div id="take09-view" class="clip" data-start="0" data-duration="3.859" data-track-index="1">
+    <div id="take09-world" data-layout-allow-overflow>
+      <div id="take09-shot">
+        <img src="assets/s08-download.png" alt="" />
+      </div>
+      <div id="take09-hl-xml" class="take09-hl"></div>
+    </div>
+  </div>
+
+  <div id="take09-kicker" class="clip" data-start="0" data-duration="3.859" data-track-index="2">
+    <span class="take09-sq"></span><span>6 · Take it to Archi</span>
+  </div>
+
+  <div id="take09-label-row" class="clip" data-start="0" data-duration="3.859" data-track-index="3">
+    <div id="take09-label">
+      <span>Open Exchange <span class="take09-strong">XML</span></span>
+      <svg width="40" height="20" viewBox="0 0 40 20" aria-hidden="true">
+        <path d="M2 10 H34 M26 3 L35 10 L26 17" fill="none" stroke="#1a2432" stroke-width="3" stroke-linecap="square" />
+      </svg>
+      <span class="take09-strong">Archi</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    // Every voice cue, seconds from frame start. Re-time the frame by editing this object only.
+    const CUES = {
+      take: 0.0,
+      picture: 0.86,   // PNG chip highlight
+      share: 0.86,     // highlight moves to Copy share link
+      model: 0.9,      // highlight moves to XML
+      opens: 1.322,     // label sets in below the popover
+      end: 3.259         // frame duration
+    };
+    const END = CUES.end;
+    // Clamp a move so it completes before the frame ends (>= 0.35 s runway).
+    function slot(cue, dur) {
+      const start = Math.max(0, Math.min(cue, END - 0.35));
+      return { at: start, dur: Math.min(dur, END - start - 0.02) };
+    }
+
+    // Camera: view 1920×776; popover centre in world px (1733, 171.5).
+    const VIEW_W = 1920, VIEW_H = 776;
+    const TX = 1733, TY = 171.5;
+    const S0 = 0.68;                       // whole screenshot in view
+    const cam = (s) => ({ scale: s, x: Math.min(0, Math.max(VIEW_W - 1920 * s, VIEW_W / 2 - TX * s)), y: Math.min(0, Math.max(VIEW_H - 1080 * s, VIEW_H / 2 - TY * s)) });
+    const wide = { scale: S0, x: (VIEW_W - 1920 * S0) / 2, y: (VIEW_H - 1080 * S0) / 2 };
+
+    const tl = gsap.timeline({ paused: true });
+
+    // Scene 1 — kicker sets in, camera pushes in ~2.4× to centre the popover, PNG lights on "picture".
+    tl.fromTo("#take09-kicker", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, CUES.take + 0.1);
+    tl.set("#take09-world", wide, 0);
+    const pushStart = CUES.take + 0.2;
+    const pushEnd = Math.max(pushStart + 0.6, CUES.picture - 0.1);
+    tl.fromTo("#take09-world", wide, Object.assign({ duration: pushEnd - pushStart, ease: "power3.inOut" }, cam(2.4)), pushStart);
+    // slow creep through the rest of the shot keeps the camera alive
+    tl.fromTo("#take09-world", cam(2.4), Object.assign({ duration: END - pushEnd, ease: "none", immediateRender: false }, cam(2.48)), pushEnd);
+
+    // Scene 2 — XML lights once the push lands ("model" cue); the Archi label sets in on "opens"; hold.
+    const md = slot(CUES.model, 0.3);
+    tl.fromTo("#take09-hl-xml", { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: md.dur, ease: "back.out(2)" }, md.at);
+
+    const op = slot(CUES.opens, 0.45);
+    tl.fromTo("#take09-label", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: op.dur, ease: "power3.out" }, op.at);
+
+    // full-span anchor
+    tl.to({}, { duration: END }, 0);
+
+    window.__timelines = window.__timelines || {};
+    window.__timelines["09-export"] = tl;
+  })();
+</script>
+</template>

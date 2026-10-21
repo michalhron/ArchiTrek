@@ -24,7 +24,7 @@ music: none
 - voiceover: "An insurance company does its bookkeeping on an old mainframe. Its architects must show how that machine supports the finance department's work."
 - duration: 8.827s
 - transition_in: cut
-- status: outline
+- status: animated
 - src: compositions/frames/01-case.html
 - type: hook
 - persuasion: Concrete scenario
@@ -78,7 +78,7 @@ Reused from the first draft.
 - voiceover: "Pick Node and Business Function, then click Find Path."
 - duration: 3.493s
 - transition_in: zoom-through
-- status: outline
+- status: animated
 - src: compositions/frames/04-pick.html
 - type: key_feature
 - persuasion: Show-don't-tell proof
@@ -97,7 +97,7 @@ Scene 2 (cue "click Find Path"): camera travels to Find Path, highlight lands on
 - voiceover: "Every route it finds is legal. But none of them passes through the application layer the case describes."
 - duration: 6.523s
 - transition_in: crossfade
-- status: outline
+- status: animated
 - src: compositions/frames/05-routes.html
 - type: key_feature
 - persuasion: Negative contrast
@@ -116,7 +116,7 @@ Scene 2 (cue "none of them"): a label card sets in beside the list: "0 routes th
 - voiceover: "So pin the layer you mean. Add Application Component in the middle, and the route runs through the software."
 - duration: 6.352s
 - transition_in: crossfade
-- status: outline
+- status: animated
 - src: compositions/frames/06-steer.html
 - type: key_feature
 - persuasion: Control
@@ -180,7 +180,7 @@ Reused from the first draft's Frame 9 with only the XML highlight (on "export") 
 - voiceover: "Next, the company wants to replace the mainframe with a cloud server. Which elements change? Which arrows? Model it with Archie Trek."
 - duration: 8.421s
 - transition_in: blur-crossfade
-- status: outline
+- status: animated
 - src: compositions/frames/10-your-turn.html
 - type: cta
 - persuasion: Open loop

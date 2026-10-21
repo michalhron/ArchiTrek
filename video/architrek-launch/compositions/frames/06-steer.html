@@ -1,0 +1,190 @@
+<template id="steer06-template">
+<div id="root" data-composition-id="06-steer" data-width="1920" data-height="1080" data-start="0" data-duration="8.78">
+<script src="assets/vendor/gsap.min.js"></script>
+<style>
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
+  @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_600.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: block; }
+  #root {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #steer06-bg {
+    position: absolute;
+    inset: 0;
+    background: #f7f7f7;
+  }
+  /* kicker: 12px orange square + uppercase tracked label (frame.md kicker) */
+  #steer06-kicker {
+    position: absolute;
+    left: 96px;
+    top: 72px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #4a5568;
+    white-space: nowrap;
+  }
+  #steer06-kicker .steer06-sq {
+    width: 12px;
+    height: 12px;
+    background: #ff4500;
+    flex: none;
+  }
+  /* screen-frame window: x 96–1824, y 140–872 (above caption keep-out at 896) */
+  #steer06-window {
+    position: absolute;
+    left: 96px;
+    top: 140px;
+    width: 1728px;
+    height: 732px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 24px 60px rgba(26,36,50,0.18);
+    overflow: hidden;
+  }
+  /* one virtual camera per screenshot; each holds its screenshot + its highlight box */
+  .steer06-world {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    transform-origin: 0 0;
+  }
+  .steer06-world img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 1920px;
+    height: 1080px;
+    display: block;
+  }
+  .steer06-hl {
+    position: absolute;
+    box-sizing: border-box;
+    transform-origin: 50% 50%;
+  }
+  /* card B "VIA 1 Application Component" in s02-edit: viewport x 291–529, y 99–206 */
+  #steer06-hl-card {
+    left: 285px;
+    top: 93px;
+    width: 250px;
+    height: 120px;
+    border: 1.5px solid #ff4500; /* ~3px at the 2× push-in */
+  }
+  /* Application band row in s09-swimlanes: band y 214–304; App Component x 731–853,
+     App Function x 1039–1161 (y 232–285); incoming dashed arrow starts x ~707 */
+  #steer06-hl-band {
+    left: 692px;
+    top: 214px;
+    width: 486px;
+    height: 90px;
+    border: 1.9px solid #ff4500; /* ~3px at the 1.6× framing */
+  }
+</style>
+
+<div id="steer06-bg" class="clip" data-start="0" data-duration="8.78" data-track-index="0"></div>
+
+<div id="steer06-window" class="clip" data-start="0" data-duration="8.78" data-track-index="1">
+  <div id="steer06-world-edit" class="steer06-world" data-layout-allow-overflow>
+    <img src="assets/s02-edit.png" alt="">
+    <div id="steer06-hl-card" class="steer06-hl"></div>
+  </div>
+  <div id="steer06-world-lanes" class="steer06-world" data-layout-allow-overflow>
+    <img src="assets/s09-swimlanes.png" alt="">
+    <div id="steer06-hl-band" class="steer06-hl"></div>
+  </div>
+</div>
+
+<div id="steer06-kicker" class="clip" data-start="0" data-duration="8.78" data-track-index="2">
+  <span class="steer06-sq"></span><span>3 · Steer</span>
+</div>
+
+<script>
+(function () {
+  // Voice cue times (s from frame start). Re-time the frame by editing this object only.
+  const CUES = {
+    so: 0.000,
+    pin: 0.020,
+    layer: 0.059,
+    mean: 0.099,
+    add: 0.283,
+    applicationComponent: 0.476,
+    middle: 1.969,
+    and: 2.737,
+    route: 3.977,
+    software: 6.457,
+    END: 8.28
+  };
+  const END = CUES.END;
+  const MIN_LEAD = 0.35;
+
+  // Start a move at `t` but make sure it completes before the frame ends.
+  function fit(t, dur) {
+    const latestEnd = END - 0.05;
+    const start = Math.max(0, Math.min(t, END - MIN_LEAD));
+    return { start: start, dur: Math.max(0.2, Math.min(dur, latestEnd - start)) };
+  }
+
+  // Camera math: window view 1728×732; centre (cx, cy) in 1920×1080 viewport px at scale s.
+  const VW = 1728, VH = 732;
+  function cam(s, cx, cy) {
+    const halfH = VH / 2 / s, halfW = VW / 2 / s;
+    cy = Math.min(Math.max(cy, halfH), 1080 - halfH); // never show past the screenshot edge
+    cx = Math.min(Math.max(cx, halfW), 1920 - halfW);
+    return { scale: s, x: VW / 2 - cx * s, y: VH / 2 - cy * s };
+  }
+  // s02-edit: cards row x 14–839, y 99–207
+  const EDIT_WIDE = cam(1.0, 600, 300);
+  const EDIT_PUSH = cam(2.0, 427, 160);
+  const EDIT_DRIFT = cam(2.08, 410, 160);
+  // s09-swimlanes: route spans Node (x ~423) to Business Function (x ~1469), bands y 124–394
+  const LANES_IN = cam(1.48, 946, 262);
+  const LANES_SET = cam(1.6, 946, 260);
+  const LANES_DRIFT = cam(1.63, 946, 260);
+
+  window.__timelines = window.__timelines || {};
+  const tl = gsap.timeline({ paused: true });
+
+  // Scene 1 — surface establishes, kicker in, camera pushes in on the waypoint cards
+  tl.fromTo("#steer06-kicker", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, CUES.so);
+  tl.fromTo("#steer06-window", { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, CUES.so);
+  const push = fit(CUES.pin, Math.max(0.5, CUES.mean - CUES.pin));
+  tl.fromTo("#steer06-world-edit", EDIT_WIDE, Object.assign({}, EDIT_PUSH, { duration: push.dur, ease: "power2.inOut" }), push.start);
+  const drift1 = push.start + push.dur;
+  tl.to("#steer06-world-edit", Object.assign({}, EDIT_DRIFT, { duration: Math.max(0.2, END - drift1), ease: "none" }), drift1);
+
+  // "Add Application Component" — highlight outlines card B
+  const hl1 = fit(CUES.add, 0.4);
+  tl.fromTo("#steer06-hl-card", { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: hl1.dur, ease: "power3.out" }, hl1.start);
+
+  // Scene 2 — "and the route runs": crossfade inside the window to the swimlanes view
+  const xf = fit(CUES.and, 0.55);
+  tl.fromTo("#steer06-world-lanes", { opacity: 0 }, { opacity: 1, duration: xf.dur, ease: "power1.inOut" }, xf.start);
+  tl.fromTo("#steer06-hl-card", { opacity: 1 }, { opacity: 0, duration: Math.min(0.3, xf.dur), ease: "power1.in", immediateRender: false }, xf.start);
+  const settle = fit(CUES.and, Math.max(0.6, CUES.route + 0.3 - CUES.and));
+  tl.fromTo("#steer06-world-lanes", LANES_IN, Object.assign({}, LANES_SET, { duration: settle.dur, ease: "power2.out" }), settle.start);
+  const drift2 = settle.start + settle.dur;
+  if (END - drift2 > 0.2) {
+    tl.to("#steer06-world-lanes", Object.assign({}, LANES_DRIFT, { duration: END - drift2, ease: "none" }), drift2);
+  }
+
+  // "software" — highlight outlines the Application band row; hold
+  const hl2 = fit(CUES.software, 0.4);
+  tl.fromTo("#steer06-hl-band", { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: hl2.dur, ease: "power3.out" }, hl2.start);
+
+  // full-span anchor
+  tl.to({}, { duration: END }, 0);
+  window.__timelines["06-steer"] = tl;
+})();
+</script>
+</div>
+</template>

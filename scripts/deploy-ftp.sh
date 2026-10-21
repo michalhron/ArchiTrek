@@ -53,6 +53,7 @@ EXCLUDE_ARGS=(
   -X '.vite/'
   # Documentation and its images (GitHub only)
   -X 'docs/'
+  -X 'video/'
 )
 
 if [[ "$FTP_USE_TLS" == "1" ]]; then

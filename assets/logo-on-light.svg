@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" width="200" height="40">
-  <!-- Cliff mark: same geometry as logo.svg; navy on light backgrounds (matches --accent) -->
+  <!-- Cliff mark: same geometry as logo.svg; navy on light backgrounds (matches the accent colour) -->
   <g transform="translate(0, 3)" fill="none">
     <path
       d="M 0 29 L 0 9 L 5 5 L 16 3 L 23 11 L 26 20 L 23 29 Z"

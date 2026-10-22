@@ -1,6 +1,6 @@
 {
   "tts_provider": "gemini",
-  "voice_id": "Kore",
+  "voice_id": "Fenrir",
   "bgm": null,
   "bgm_pending": false,
   "bgm_provider": null,
@@ -14,64 +14,76 @@
     {
       "id": "01",
       "path": "assets/voice/01.wav",
-      "duration_s": 10.28,
+      "duration_s": 11.88,
       "words": []
     },
     {
       "id": "02",
       "path": "assets/voice/02.wav",
-      "duration_s": 11.64,
+      "duration_s": 8.24,
       "words": []
     },
     {
       "id": "03",
       "path": "assets/voice/03.wav",
-      "duration_s": 2.44,
+      "duration_s": 2.16,
       "words": []
     },
     {
       "id": "04",
       "path": "assets/voice/04.wav",
-      "duration_s": 5.92,
+      "duration_s": 3.6,
       "words": []
     },
     {
       "id": "05",
       "path": "assets/voice/05.wav",
-      "duration_s": 7.04,
+      "duration_s": 4.32,
       "words": []
     },
     {
       "id": "06",
       "path": "assets/voice/06.wav",
-      "duration_s": 7.88,
+      "duration_s": 6.2,
       "words": []
     },
     {
       "id": "07",
       "path": "assets/voice/07.wav",
-      "duration_s": 3.48,
+      "duration_s": 3.12,
       "words": []
     },
     {
       "id": "08",
       "path": "assets/voice/08.wav",
-      "duration_s": 5.16,
+      "duration_s": 4.08,
       "words": []
     },
     {
       "id": "09",
       "path": "assets/voice/09.wav",
-      "duration_s": 4.08,
+      "duration_s": 2.44,
       "words": []
     },
     {
       "id": "10",
       "path": "assets/voice/10.wav",
-      "duration_s": 9.92,
+      "duration_s": 8.04,
+      "words": []
+    },
+    {
+      "id": "11",
+      "path": "assets/voice/11.wav",
+      "duration_s": 9.6,
+      "words": []
+    },
+    {
+      "id": "12",
+      "path": "assets/voice/12.wav",
+      "duration_s": 8,
       "words": []
     }
   ],
   "sfx": [],
-  "total_duration_s": 67.84
+  "total_duration_s": 71.68
 }

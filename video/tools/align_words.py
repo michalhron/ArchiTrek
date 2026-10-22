@@ -19,6 +19,8 @@ for m in re.finditer(r"^## Line (\d+).*?\n((?:.*\n)*?)(?=^## |\Z)", script, re.M
     lines[int(m.group(1))] = spoken
 
 def syllables(w):
+    if re.sub(r"[^A-Z]", "", w) == "SAP":
+        return 3
     w = re.sub(r"[^a-z]", "", w.lower())
     if not w:
         return 1
@@ -27,39 +29,73 @@ def syllables(w):
         n -= 1
     return max(1, n)
 
-def speech_segments(path, dur):
+def speech_segments(path, dur, noise="-38dB", d=0.14):
     out = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-af",
-                          "silencedetect=noise=-38dB:d=0.14", "-f", "null", "-"],
+                          f"silencedetect=noise={noise}:d={d}", "-f", "null", "-"],
                          capture_output=True, text=True).stderr
     starts = [float(x) for x in re.findall(r"silence_start: ([\d.]+)", out)]
     ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", out)]
     segs, cur = [], 0.0
     for s, e in zip(starts, ends + [dur] * (len(starts) - len(ends))):
-        if s - cur > 0.08:
+        if s - cur > 0.1:  # shorter "speech" is a click or breath
             segs.append([cur, s])
         cur = e
-    if dur - cur > 0.08:
+    if dur - cur > 0.1:
         segs.append([cur, dur])
     return segs
 
+def group_segments(segs, phrases):
+    """Split the speech segments into len(phrases) contiguous runs. Each run's
+    share of the speaking time should match its phrase's share of the syllables,
+    and runs should break at the longer pauses (dynamic programming)."""
+    n, m = len(phrases), len(segs)
+    syl = [sum(syllables(w) for w in p.split()) for p in phrases]
+    span = segs[-1][1] - segs[0][0]
+    want = [x / sum(syl) for x in syl]
+    gap = [segs[i + 1][0] - segs[i][1] for i in range(m - 1)]
+    best = {(0, 0): (0.0, None)}
+    for k in range(1, n + 1):
+        for j in range(k, m - (n - k) + 1):
+            options = []
+            for i in range(k - 1, j):
+                if (k - 1, i) not in best:
+                    continue
+                share = (segs[j - 1][1] - segs[i][0]) / span
+                cost = best[(k - 1, i)][0] + abs(share - want[k - 1])
+                if i > 0:
+                    cost -= 0.5 * gap[i - 1] / span
+                options.append((cost, i))
+            if options:
+                best[(k, j)] = min(options)
+    runs, j = [], m
+    for k in range(n, 0, -1):
+        i = best[(k, j)][1]
+        runs.append([segs[i][0], segs[j - 1][1]])
+        j = i
+    return runs[::-1]
+
 for v in meta["voices"]:
-    text = lines[v["frame"]]
+    # "S.A.P." is spelled with dots so TTS reads the letters; its dots are not phrase breaks
+    text = lines[v["frame"]].replace("S.A.P.", "SAP")
     dur = v["duration_s"]
-    segs = speech_segments(root / v["path"], dur)
     phrases = [p.strip() for p in re.split(r"(?<=[.,?!:])\s+", text) if p.strip()]
-    # a one-word phrase ("Next,") rarely has its own pause: join it to the next phrase
-    i = 0
-    while i < len(phrases) - 1:
-        if len(phrases[i].split()) == 1:
-            phrases[i] = phrases[i] + " " + phrases.pop(i + 1)
-        else:
-            i += 1
-    # merge segments down to the phrase count (join the closest gaps), or merge phrases up
-    while len(segs) > len(phrases):
-        gaps = [segs[i + 1][0] - segs[i][1] for i in range(len(segs) - 1)]
-        i = gaps.index(min(gaps))
-        segs[i] = [segs[i][0], segs[i + 1][1]]
-        del segs[i + 1]
+    # fast lines barely pause: look for shorter silences until there is a segment per phrase
+    for noise, d in (("-38dB", 0.14), ("-35dB", 0.1), ("-35dB", 0.06)):
+        segs = speech_segments(root / v["path"], dur, noise, d)
+        if len(segs) >= len(phrases):
+            break
+    else:
+        # a one-word phrase ("Next,") often has no pause of its own: join it to the next phrase
+        i = 0
+        while i < len(phrases) - 1:
+            if len(phrases[i].split()) == 1:
+                phrases[i] = phrases[i] + " " + phrases.pop(i + 1)
+            else:
+                i += 1
+        segs = speech_segments(root / v["path"], dur)
+    # group segments into one run per phrase
+    if len(segs) > len(phrases):
+        segs = group_segments(segs, phrases)
     while len(phrases) > len(segs):
         # join the two shortest neighbouring phrases
         lens = [len(phrases[i]) + len(phrases[i + 1]) for i in range(len(phrases) - 1)]
@@ -79,7 +115,7 @@ for v in meta["voices"]:
     # display names: the script spells the product phonetically for TTS
     merged = []
     for w in words:
-        if merged and merged[-1]["text"].lower() == "archie" and w["text"].lower().startswith("trek"):
+        if merged and merged[-1]["text"].lower() in ("archie", "arky") and w["text"].lower().startswith("trek"):
             merged[-1] = {"text": "ArchiTrek" + w["text"][4:], "start": merged[-1]["start"], "end": w["end"]}
         else:
             merged.append(w)

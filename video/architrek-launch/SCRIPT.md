@@ -1,78 +1,80 @@
-# SCRIPT — architrek-launch (case version)
+# SCRIPT — architrek-launch (case version, launch energy)
 
-**Voice:** Kore (Gemini, gemini-3.8-flash-tts). Draft renders use a Kokoro stand-in.
+**Voice:** Fenrir (Gemini, gemini-3.8-flash-tts).
 **Voice settings:** speed 1
-**Voice direction:** Calm, clear and friendly, like a good lecturer walking students through a case. Unhurried. A short pause between sentences.
-**Pronunciation:** the product name is written "Archie Trek" in the spoken lines so TTS says it right. Captions show "ArchiTrek" (tools/align_words.py merges the two words).
+**Voice direction:** Energetic product-launch narrator with a real sense of urgency. Brisk pace, punchy and confident, crisp consonants, rising energy on the questions. Keep pauses short.
+**Pronunciation:** the product name is said ARK-ee-trek, like ArchiMate. The spoken lines write it "Arky Trek" so every line says it the same way. SAP is written "S.A.P." so it is read as letters. Captions show "ArchiTrek" and "SAP" (tools/align_words.py merges them back).
 
 ---
 
 ## Line 1 — The case (Frame 1)
 
-**Time:** 0.0 – 8.0s
-**Delivery:** Setting the scene, plain.
+**Delivery:** Setting the scene fast. A little weight on "S.A.P. stays".
 
-    An insurance company does its bookkeeping on an old mainframe. Its architects must show how that machine supports the finance department's work.
+    An insurance company runs its bookkeeping on an old mainframe. Its finance team works in S.A.P., and S.A.P. stays. The architects have to show how that mainframe supports the finance work.
 
 ## Line 2 — The gap (Frame 2)
 
-**Time:** 8.0 – 17.0s
-**Delivery:** Matter of fact. Slight weight on "through what".
+**Delivery:** Quick, building to the question.
 
-    In ArchiMate, the mainframe is a Node, and the finance work is a Business Function. The relationship table says they can connect. It does not say through what.
+    In ArchiMate, the mainframe is a Node. The finance work is a Business Function. The relationship table says they can connect. But through what?
 
 ## Line 3 — Product intro (Frame 3)
 
-**Time:** 17.0 – 19.5s
-**Delivery:** Confident and simple.
+**Delivery:** The answer. Confident.
 
-    Archie Trek finds the route.
+    Arky Trek finds the route.
 
 ## Line 4 — Pick (Frame 4)
 
-**Time:** 19.5 – 23.5s
-**Delivery:** Instructional, easy pace.
+**Delivery:** Fast and instructional.
 
     Pick Node and Business Function, then click Find Path.
 
 ## Line 5 — Routes (Frame 5)
 
-**Time:** 23.5 – 29.5s
-**Delivery:** Steady, a small turn on "none".
+**Delivery:** Quick win, then the turn on "not one".
 
-    Every route it finds is legal. But none of them passes through the application layer the case describes.
+    Five legal routes. But not one of them passes through S.A.P.
 
 ## Line 6 — Steer (Frame 6)
 
-**Time:** 29.5 – 36.0s
-**Delivery:** Inviting.
+**Delivery:** Decisive.
 
-    So pin the layer you mean. Add Application Component in the middle, and the route runs through the software.
+    So pin S.A.P. in the middle, as an Application Component. Now every route has to pass through it.
 
 ## Line 7 — Decide (Frame 7)
 
-**Time:** 36.0 – 39.5s
-**Delivery:** Practical.
+**Delivery:** Practical, quick.
 
     Right-click each hop to choose its relationship.
 
 ## Line 8 — Read why (Frame 8)
 
-**Time:** 39.5 – 44.0s
-**Delivery:** Warm.
+**Delivery:** Confident.
 
-    Every hop comes with its rule and its section of the specification.
+    Every hop comes with its rule, and its section of the specification.
 
 ## Line 9 — Export (Frame 9)
 
-**Time:** 44.0 – 47.5s
-**Delivery:** Practical.
+**Delivery:** Quick.
 
-    Then export the route to Archi and keep modelling.
+    Export to Archi, and keep modelling.
 
-## Line 10 — The question (Frame 10)
+## Line 10 — Rigor (Frame 10)
 
-**Time:** 47.5 – 57.0s
-**Delivery:** Curious, open. Let the two short questions breathe.
+**Delivery:** Three quick beats, one per level.
 
-    Next, the company wants to replace the mainframe with a cloud server. Which elements change? Which arrows? Model it with Archie Trek.
+    And you set how strict the search is. Academic, strict enough for exams. Pragmatic, balanced. Discovery, loose, for exploring.
+
+## Line 11 — So much more (Frame 11)
+
+**Delivery:** Rapid fire, picking up speed, then land the last phrase.
+
+    And there's so much more. Viewpoints. Evidence labels. Spec definitions. Swimlanes. Share links. Story themes, from a hospital to the Death Star.
+
+## Line 12 — The question (Frame 12)
+
+**Delivery:** Challenge the viewer. Punchy questions.
+
+    Your turn. The company wants to swap the mainframe for a cloud server. Which elements change? Which arrows? Model it with Arky Trek.

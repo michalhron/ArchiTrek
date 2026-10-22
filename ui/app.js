@@ -2120,6 +2120,7 @@ window.resetToDefaults = function resetToDefaults() {
 function dismissWelcomeModalAndContinue() {
   const el = document.getElementById("welcome-modal");
   if (el) {
+    el.querySelectorAll("video").forEach((v) => v.pause());
     el.style.display = "none";
     el.setAttribute("aria-hidden", "true");
   }

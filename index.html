@@ -609,6 +609,14 @@
     </div>
     <div class="welcome-modal-body">
       <p class="feedback-modal-lead">ArchiTrek is an <strong>unofficial study tool</strong> for ArchiMate 3.2: choose two or more element types, and it searches the standard <strong>Appendix B</strong> relationship tables for valid routes. You get a diagram, hop-by-hop explanation, and links to dig into elements and the metamodel.</p>
+      <div class="welcome-try-grid">
+      <figure class="welcome-video" role="region" aria-labelledby="welcome-video-heading">
+        <h3 class="welcome-try-heading" id="welcome-video-heading">Watch the tour</h3>
+        <p class="welcome-try-hint">80 seconds, with captions.</p>
+        <video class="welcome-video-player" controls playsinline preload="none" poster="./assets/media/architrek-demo-poster.jpg" width="1920" height="1080">
+          <source src="./assets/media/architrek-demo.mp4" type="video/mp4">
+        </video>
+      </figure>
       <div class="welcome-try-section" role="region" aria-labelledby="welcome-try-heading">
         <h3 class="welcome-try-heading" id="welcome-try-heading">Try an example</h3>
         <p class="welcome-try-hint">Jump straight to a path, or skip and pick your own elements below.</p>
@@ -618,6 +626,7 @@
           <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Application","element":"Application Component"},{"layer":"Business","element":"Business Service"}]'>App Component → Business Service</button>
           <button type="button" class="add-waypoint-btn example-btn welcome-example-btn" data-welcome-example='[{"layer":"Technology","element":"Device"},{"layer":"Application","element":"Application Service"},{"layer":"Business","element":"Business Process"}]'>Device → App Service → Business Process</button>
         </div>
+      </div>
       </div>
       <p class="welcome-storage-note">By continuing, you agree this browser may store your settings and last session (path choices, layout) locally on your device so the app can restore them when you return. Nothing is sent to a server unless you use Feedback. You can clear site data anytime.</p>
       <div class="feedback-modal-actions welcome-modal-actions">

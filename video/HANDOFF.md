@@ -2,7 +2,7 @@
 
 ## State
 
-The launch version is built, checked and rendered: 79.5 s, 1920×1080, 13 frames, captions on, voice Fenrir (Gemini TTS, gemini-3.8-flash-tts) with a high-energy direction. A web version (`renders/architrek-demo.mp4`, about 6 MB) and a poster frame (`renders/architrek-demo-poster.jpg`, the logo frame) exist locally. `renders/` is not committed, so rebuild them with the commands below. What remains is deciding where the video goes on the site.
+The launch version is built, checked and rendered: 79.5 s, 1920×1080, 13 frames, captions on, voice Fenrir (Gemini TTS, gemini-3.8-flash-tts) with a high-energy direction. The web version and its poster (the end card) are published in the app at `assets/media/architrek-demo.mp4` and `assets/media/architrek-demo-poster.jpg`, where the welcome window plays them next to the examples.
 
 Frames (`architrek-launch/compositions/frames/`):
 
@@ -52,7 +52,9 @@ The name is said ARK-ee-trek, like ArchiMate. `SCRIPT.md` spells it "Arky Trek" 
 - cdn.jsdelivr.net is blocked, so GSAP is vendored at `assets/vendor/gsap.min.js`; the rebuild script rewrites CDN links the HyperFrames scripts emit.
 - Each frame keeps its cue times in one `const CUES = {...}` object; `tools/set_cues.py` edits one frame by hand.
 
-## After the final render
+## After a new render
 
-- Make a web version (for example `ffmpeg -i renders/video.mp4 -c:v libx264 -crf 26 -preset slow -movflags +faststart -c:a aac -b:a 96k architrek-demo.mp4`) and a poster frame.
-- Decide with the user where it goes on the site: the welcome window or a splash page.
+- Replace the web version the app plays:
+  `ffmpeg -i renders/video.mp4 -c:v libx264 -crf 26 -preset slow -movflags +faststart -c:a aac -b:a 96k ../../assets/media/architrek-demo.mp4`
+  and the poster: `ffmpeg -ss 79.0 -i renders/video.mp4 -frames:v 1 -q:v 3 ../../assets/media/architrek-demo-poster.jpg`.
+- Then deploy the app with `scripts/deploy-ftp.sh`.

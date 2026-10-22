@@ -1,5 +1,5 @@
 <template id="turn10-template">
-  <div id="root" data-composition-id="10-your-turn" data-width="1920" data-height="1080" data-start="0" data-duration="10.92">
+  <div id="root" data-composition-id="12-your-turn" data-width="1920" data-height="1080" data-start="0" data-duration="9">
     <style>
       @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
       @font-face { font-family: "IBM Plex Sans"; src: url("assets/fonts/IBM_Plex_Sans_500.woff2") format("woff2"); font-weight: 500; font-style: normal; }
@@ -158,9 +158,9 @@
       }
     </style>
 
-    <div id="turn10-bg" class="clip turn10-bg" data-start="0" data-duration="10.92" data-track-index="0"></div>
+    <div id="turn10-bg" class="clip turn10-bg" data-start="0" data-duration="9" data-track-index="0"></div>
 
-    <div id="turn10-stage" class="clip turn10-stage" data-start="0" data-duration="10.92" data-track-index="1">
+    <div id="turn10-stage" class="clip turn10-stage" data-start="0" data-duration="9" data-track-index="1">
       <!-- Layer bands -->
       <svg class="turn10-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
         <rect x="96" y="150" width="1728" height="220" fill="#f5e87a" fill-opacity="0.35" />
@@ -253,7 +253,7 @@
       </div>
     </div>
 
-    <div id="turn10-chrome" class="clip turn10-stage" data-start="0" data-duration="10.92" data-track-index="2">
+    <div id="turn10-chrome" class="clip turn10-stage" data-start="0" data-duration="9" data-track-index="2">
       <div class="turn10-kicker">
         <div class="turn10-kicker-square"></div>
         <div class="turn10-kicker-text">Your turn</div>
@@ -270,23 +270,23 @@
           company: 0.812,
           wants: 1.532,
           to: 1.822,
-          replace: 2.112,
+          replace: 2.160,
           the2: 2.616,
           mainframe: 2.906,
-          with1: 3.411,
-          a: 3.701,
+          with1: 2.887,
+          a: 3.081,
           cloud: 3.991,
           server: 4.281,
           which1: 5.294,
-          elements: 5.547,
+          elements: 4.216,
           change: 6.177,
-          which2: 6.790,
-          arrows: 7.071,
-          model: 8.253,
-          it: 8.687,
+          which2: 5.200,
+          arrows: 5.478,
+          model: 6.230,
+          it: 6.618,
           with2: 8.935,
-          archiTrek: 9.184,
-          END: 10.32
+          archiTrek: 7.064,
+          END: 8.4
         };
         const END = CUES.END;
         const MARGIN = 0.35;
@@ -326,7 +326,7 @@
         // Pad the timeline to the full frame duration (hold to the end).
         tl.set({}, {}, END);
 
-        window.__timelines["10-your-turn"] = tl;
+        window.__timelines["12-your-turn"] = tl;
       })();
     </script>
   </div>

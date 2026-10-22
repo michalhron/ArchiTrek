@@ -1,5 +1,5 @@
 <template id="f07-decide-template">
-<div id="root" data-composition-id="07-decide" data-width="1920" data-height="1080" data-start="0" data-duration="4.38">
+<div id="root" data-composition-id="07-decide" data-width="1920" data-height="1080" data-start="0" data-duration="4.02">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -80,9 +80,9 @@
   }
 </style>
 
-<div id="decide-06-bg" class="clip" data-start="0" data-duration="4.38" data-track-index="0"></div>
+<div id="decide-06-bg" class="clip" data-start="0" data-duration="4.02" data-track-index="0"></div>
 
-<div id="decide-06-window" class="clip" data-start="0" data-duration="4.38" data-track-index="1">
+<div id="decide-06-window" class="clip" data-start="0" data-duration="4.02" data-track-index="1">
   <div id="decide-06-world" data-layout-allow-overflow>
     <img id="decide-06-shot-menu" src="assets/s04-ctx-menu.png" alt="">
     <img id="decide-06-shot-route" src="assets/s05-route.png" alt="">
@@ -90,7 +90,7 @@
   </div>
 </div>
 
-<div id="decide-06-kicker" class="clip" data-start="0" data-duration="4.38" data-track-index="2">
+<div id="decide-06-kicker" class="clip" data-start="0" data-duration="4.02" data-track-index="2">
   <span class="decide-06-sq"></span><span>4 · Decide</span>
 </div>
 
@@ -98,19 +98,19 @@
 (function () {
   // Voice cue times (s from frame start). Re-time the frame by editing this object only.
   const CUES = {
-    you: 0.000,
-    decide: 0.000,
+    you: 0.266,
+    decide: 0.266,
     each: 0.572,
-    hop: 0.825,
-    rightClick: 0.845,
+    hop: 0.706,
+    rightClick: 0.706,
     an: 0.951,
     arrow: 1.146,
     to: 1.447,
-    choose: 1.749,
+    choose: 1.462,
     its: 2.050,
     relationship: 2.352
   };
-  const DURATION = 3.88;
+  const DURATION = 3.52;
   const MIN_LEAD = 0.35;
 
   // Start a move at `t` but make sure it finishes before the frame ends.

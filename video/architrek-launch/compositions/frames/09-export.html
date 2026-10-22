@@ -110,10 +110,10 @@
   #take09-label svg { display: block; flex: none; }
 </style>
 
-<div id="root" data-composition-id="09-export" data-width="1920" data-height="1080" data-duration="5.08">
-  <div id="take09-bg" class="clip" data-start="0" data-duration="5.08" data-track-index="0"></div>
+<div id="root" data-composition-id="09-export" data-width="1920" data-height="1080" data-duration="3.34">
+  <div id="take09-bg" class="clip" data-start="0" data-duration="3.34" data-track-index="0"></div>
 
-  <div id="take09-view" class="clip" data-start="0" data-duration="5.08" data-track-index="1">
+  <div id="take09-view" class="clip" data-start="0" data-duration="3.34" data-track-index="1">
     <div id="take09-world" data-layout-allow-overflow>
       <div id="take09-shot">
         <img src="assets/s08-download.png" alt="" />
@@ -122,11 +122,11 @@
     </div>
   </div>
 
-  <div id="take09-kicker" class="clip" data-start="0" data-duration="5.08" data-track-index="2">
+  <div id="take09-kicker" class="clip" data-start="0" data-duration="3.34" data-track-index="2">
     <span class="take09-sq"></span><span>6 · Take it to Archi</span>
   </div>
 
-  <div id="take09-label-row" class="clip" data-start="0" data-duration="5.08" data-track-index="3">
+  <div id="take09-label-row" class="clip" data-start="0" data-duration="3.34" data-track-index="3">
     <div id="take09-label">
       <span>Open Exchange <span class="take09-strong">XML</span></span>
       <svg width="40" height="20" viewBox="0 0 40 20" aria-hidden="true">
@@ -141,12 +141,12 @@
   (function () {
     // Every voice cue, seconds from frame start. Re-time the frame by editing this object only.
     const CUES = {
-      take: 0.000,
-      picture: 1.371,   // PNG chip highlight
+      take: 0.204,
+      picture: 0.551,   // PNG chip highlight
       share: 1.371,     // highlight moves to Copy share link
-      model: 1.420,      // highlight moves to XML
-      opens: 1.938,     // label sets in below the popover
-      end: 4.48         // frame duration
+      model: 0.551,      // highlight moves to XML
+      opens: 0.750,     // label sets in below the popover
+      end: 2.84         // frame duration
     };
     const END = CUES.end;
     // Clamp a move so it completes before the frame ends (>= 0.35 s runway).

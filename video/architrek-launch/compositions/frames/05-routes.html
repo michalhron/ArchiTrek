@@ -78,14 +78,14 @@
   }
 </style>
 
-<div id="root" data-composition-id="05-routes" data-start="0" data-duration="7.94" data-width="1920" data-height="1080">
-  <div id="routes05-bg" class="clip" data-start="0" data-duration="7.94" data-track-index="0"></div>
+<div id="root" data-composition-id="05-routes" data-start="0" data-duration="5.22" data-width="1920" data-height="1080">
+  <div id="routes05-bg" class="clip" data-start="0" data-duration="5.22" data-track-index="0"></div>
 
-  <div id="routes05-kicker" class="clip" data-start="0" data-duration="7.94" data-track-index="2">
+  <div id="routes05-kicker" class="clip" data-start="0" data-duration="5.22" data-track-index="2">
     <span class="routes05-kicker-sq"></span><span>2 · Search</span>
   </div>
 
-  <div id="routes05-window" class="clip" data-start="0" data-duration="7.94" data-track-index="1">
+  <div id="routes05-window" class="clip" data-start="0" data-duration="5.22" data-track-index="1">
     <div id="routes05-world" class="routes05-world" data-layout-allow-overflow>
       <img class="routes05-shot" src="assets/c02-routes-direct.png" alt="">
       <!-- route row ticks, measured: rows y 670-697 / 703-731 / 736-764 / 770-797 / 803-830 -->
@@ -104,25 +104,25 @@
 (function () {
   // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
   const CUES = {
-    every: 0.000,
+    every: 0.213,
     route: 0.911,
-    it: 1.169,
-    finds: 1.427,
+    it: 0.213,
+    finds: 0.505,
     is: 1.685,
-    legal: 1.943,
+    legal: 1.012,
     but: 3.048,
-    none: 3.274,
+    none: 1.956,
     of: 3.499,
     them: 3.725,
     passes: 3.951,
     through: 4.344,
     the: 4.570,
-    application: 4.795,
+    application: 3.460,
     layer: 5.523,
     the2: 5.748,
     case: 5.974,
     describes: 6.200,
-    END: 7.44
+    END: 4.72
   };
   const END = CUES.END;
   // Clamp: start no later than END - 0.35, and finish before the frame ends.

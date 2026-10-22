@@ -135,9 +135,9 @@
   </div>
 
   <div id="rigor10-strip" class="clip" data-start="0" data-duration="8.94" data-track-index="3">
-    <div id="rigor10-c1" class="rigor10-chip"><b>Academic</b><span>Strict</span></div>
-    <div id="rigor10-c2" class="rigor10-chip"><b>Pragmatic</b><span>Balanced</span></div>
-    <div id="rigor10-c3" class="rigor10-chip"><b>Discovery</b><span>Loose</span></div>
+    <div id="rigor10-c1" class="rigor10-chip"><b>Academic</b><span>Strict · no route</span></div>
+    <div id="rigor10-c2" class="rigor10-chip"><b>Pragmatic</b><span>Balanced · 5 routes</span></div>
+    <div id="rigor10-c3" class="rigor10-chip"><b>Discovery</b><span>Loose · 5 other routes</span></div>
     <div id="rigor10-mark"></div>
   </div>
 </div>
@@ -155,8 +155,9 @@
     const END = CUES.END;
 
     // Regions in the screenshots' 1920×1080 px: [x, y, w, h].
-    const CONTROL = [0, 0, 400, 100];   // Semantic rigor control in r0-options
-    const RESULTS = [0, 0, 1920, 1080]; // what each preset shot is framed on
+    const CONTROL = [1441, 376, 454, 109]; // Semantic rigor control in r0-options
+    // Business Object -> Artifact under each preset: no route, then each route diagram
+    const RESULTS = [[730, 374, 1146, 200], [600, 112, 720, 140], [640, 112, 640, 140]];
 
     const VIEW_W = 1920, VIEW_H = 640;
     function cam(r, maxScale, creep = 1) {
@@ -189,11 +190,11 @@
     presets.forEach((key, i) => {
       const t = CUES[key] - 0.05;
       const w = "#rigor10-w" + (i + 1);
-      const shot = cam(RESULTS, 2.4);
+      const shot = cam(RESULTS[i], 2.4);
       tl.set(w, Object.assign({ opacity: 1 }, shot), t);
       tl.set(i === 0 ? "#rigor10-w0" : "#rigor10-w" + i, { opacity: 0 }, t);
       const next = i < 2 ? CUES[presets[i + 1]] - 0.05 : END;
-      tl.fromTo(w, shot, Object.assign({ duration: next - t, ease: "none", immediateRender: false }, cam(RESULTS, 2.4, 1.03)), t);
+      tl.fromTo(w, shot, Object.assign({ duration: next - t, ease: "none", immediateRender: false }, cam(RESULTS[i], 2.4, 1.03)), t);
       if (i === 0) tl.fromTo("#rigor10-mark", { opacity: 0, x: 0 }, { opacity: 1, x: 0, duration: 0.15, ease: "none" }, t);
       else tl.to("#rigor10-mark", { x: i * STEP, duration: 0.22, ease: "power3.inOut" }, t);
     });

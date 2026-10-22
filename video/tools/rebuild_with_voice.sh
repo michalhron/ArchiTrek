@@ -44,5 +44,5 @@ node "$PLV/transitions.mjs" verify --storyboard ./STORYBOARD.md --index ./index.
 sed -i 's#https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js#assets/vendor/gsap.min.js#g' index.html compositions/*.html
 
 # 5. check and render
-npx hyperframes check
-npx hyperframes render --quality high --output renders/video.mp4
+npx --yes hyperframes@0.8.183 check
+npx --yes hyperframes@0.8.183 render --quality high --output renders/video.mp4

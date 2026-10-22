@@ -22,7 +22,7 @@ music: none
 
 - scene: Three layer bands like the app's swimlanes; the Mainframe sits in Technology at the bottom, the Finance Department and Financial Transaction Processing in Business at the top, SAP ERP in the Application band between them
 - voiceover: "An insurance company runs its bookkeeping on an old mainframe. Its finance team works in SAP, and SAP stays. The architects have to show how that mainframe supports the finance work."
-- duration: 10.68s
+- duration: 12.28s
 - transition_in: cut
 - status: animated
 - src: compositions/frames/01-case.html
@@ -46,7 +46,7 @@ keyMessage: one machine at the bottom, the finance work at the top, SAP in betwe
 
 - scene: The Appendix B cell for Node → Business Function, letters f i O r t v; only O is capital
 - voiceover: "In ArchiMate, the mainframe is a Node. The finance work is a Business Function. The relationship table says they can connect. But through what?"
-- duration: 12.04s
+- duration: 8.64s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/02-the-table.html
@@ -61,7 +61,7 @@ Reused from the first draft; retimed to the new line. Headers appear on "Node" a
 
 - scene: Navy ground, the ArchiTrek logo draws on, line "Find the route. Read the rule."
 - voiceover: "ArchiTrek finds the route."
-- duration: 2.84s
+- duration: 2.56s
 - transition_in: zoom-through
 - status: animated
 - src: compositions/frames/03-architrek.html
@@ -76,7 +76,7 @@ Reused from the first draft.
 
 - scene: The real waypoint editor with Node and Business Function, push-in to the two cards then to Find Path
 - voiceover: "Pick Node and Business Function, then click Find Path."
-- duration: 6.32s
+- duration: 4s
 - transition_in: zoom-through
 - status: animated
 - src: compositions/frames/04-pick.html
@@ -95,7 +95,7 @@ Scene 2 (cue "click Find Path"): camera travels to Find Path, highlight lands on
 
 - scene: Results for Node → Business Function: five legal routes, all through technology elements
 - voiceover: "Five legal routes. But not one of them passes through SAP."
-- duration: 7.44s
+- duration: 4.72s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/05-routes.html
@@ -114,7 +114,7 @@ Scene 2 (cue "not one"): a label card sets in beside the list: "0 routes through
 
 - scene: Add Application Component as a waypoint, then the swimlane view shows the route climbing through the Application band
 - voiceover: "So pin SAP in the middle, as an Application Component. Now every route has to pass through it."
-- duration: 8.28s
+- duration: 6.6s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/06-steer.html
@@ -133,7 +133,7 @@ Scene 2 (cue "Now every route"): crossfade inside the window to s09-swimlanes.pn
 
 - scene: Right-click menu on a hop with the relationship types, then the decided route
 - voiceover: "Right-click each hop to choose its relationship."
-- duration: 3.88s
+- duration: 3.52s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/07-decide.html
@@ -148,7 +148,7 @@ Reused from the first draft (was Frame 6); kicker becomes "4 · DECIDE"; retimed
 
 - scene: The step-by-step justification panel
 - voiceover: "Every hop comes with its rule, and its section of the specification."
-- duration: 5.56s
+- duration: 4.48s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/08-read-why.html
@@ -163,7 +163,7 @@ Reused from the first draft (was Frame 7); kicker becomes "5 · UNDERSTAND"; ret
 
 - scene: The download popover, XML highlighted, label "Open Exchange XML → Archi"
 - voiceover: "Export to Archi, and keep modelling."
-- duration: 4.48s
+- duration: 2.84s
 - transition_in: push-slide LEFT
 - status: animated
 - src: compositions/frames/09-export.html
@@ -178,7 +178,7 @@ Reused from the first draft's Frame 9 with only the XML highlight (on "export") 
 
 - scene: Semantic rigor, the three presets as three quick beats on the real app
 - voiceover: "And you set how strict the search is. Academic, strict enough for exams. Pragmatic, balanced. Discovery, loose, for exploring."
-- duration: 8s
+- duration: 8.44s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/10-rigor.html
@@ -190,13 +190,13 @@ Reused from the first draft's Frame 9 with only the XML highlight (on "export") 
 - asset_candidates: assets/r0-options.png, assets/r1-academic.png, assets/r2-pragmatic.png, assets/r3-discovery.png
 
 Scene 1 (cue "how strict"): kicker "7 · RIGOR"; the Options panel with Semantic rigor, push-in on the control.
-Scenes 2–4 (cues "Academic", "Pragmatic", "Discovery"): hard cuts between the same search under each preset, each with a label card naming the preset and its app wording (Strict, Balanced, Loose).
+Scenes 2–4 (cues "Academic", "Pragmatic", "Discovery"): hard cuts between the same search, Business Object → Artifact, under each preset: Academic finds no route, Pragmatic finds 5 (association bridges), Discovery finds 5 others. A strip of three chips under the window names each preset with its app wording and result; an orange mark moves to the active chip.
 
 ## Frame 11 — And more
 
 - scene: Rapid montage of other features, one cut per spoken item, accelerating
 - voiceover: "And there's so much more. Viewpoints. Evidence labels. Spec definitions. Swimlanes. Share links. Story themes, from a hospital to the Death Star."
-- duration: 9s
+- duration: 10s
 - transition_in: crossfade
 - status: animated
 - src: compositions/frames/11-more.html
@@ -205,15 +205,15 @@ Scenes 2–4 (cues "Academic", "Pragmatic", "Discovery"): hard cuts between the 
 - beat: momentum
 - blueprint: compose
 - focal: real screenshots, one per feature
-- asset_candidates: assets/m1-viewpoints.png … assets/m8-swimlanes.png
+- asset_candidates: assets/m1-viewpoints.png … assets/m8-swimlanes.png (m9–m11 are spare shots)
 
-The one deliberate montage in the video. Each spoken item cuts to its screenshot, pushed in on the region that shows it, with a short label card. Cuts get faster towards the end and the last item holds.
+The one deliberate montage in the video. On "so much more" a wall of eight screenshots (4 × 2) pops in. On each spoken item the camera dives into its tile, framed on the region that shows it; only that tile stays visible while zoomed, and the captions name the feature. On "Death Star" the camera pulls back out to the whole wall, so the last beat says there is more than the list.
 
 ## Frame 12 — Your turn
 
 - scene: Back to the case picture; the Mainframe gives way to a dashed "Cloud server", and the open questions hang over the technology layer and the arrows
 - voiceover: "Your turn. The company wants to swap the mainframe for a cloud server. Which elements change? Which arrows? Model it with ArchiTrek."
-- duration: 10.32s
+- duration: 8.4s
 - transition_in: blur-crossfade
 - status: animated
 - src: compositions/frames/12-your-turn.html

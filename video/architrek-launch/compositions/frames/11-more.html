@@ -75,31 +75,12 @@
     width: 1920px; height: 1080px;
   }
 
-  /* feature label, screen space, bottom-left above the caption band */
-  #more11-label {
-    position: absolute;
-    left: 96px;
-    top: 772px;
-    height: 84px;
-  }
-  .more11-name {
-    position: absolute;
-    left: 0; top: 0;
-    padding: 18px 30px;
-    background: #1a2432;
-    color: #ffffff;
-    font-size: 40px;
-    font-weight: 700;
-    line-height: 1.2;
-    white-space: nowrap;
-    opacity: 0;
-  }
 </style>
 
-<div id="root" data-composition-id="11-more" data-width="1920" data-height="1080" data-duration="10.5">
-  <div id="more11-bg" class="clip" data-start="0" data-duration="10.5" data-track-index="0"></div>
+<div id="root" data-composition-id="11-more" data-width="1920" data-height="1080" data-duration="10.6">
+  <div id="more11-bg" class="clip" data-start="0" data-duration="10.6" data-track-index="0"></div>
 
-  <div id="more11-view" class="clip" data-start="0" data-duration="10.5" data-track-index="1">
+  <div id="more11-view" class="clip" data-start="0" data-duration="10.6" data-track-index="1">
     <div id="more11-world" data-layout-allow-overflow>
       <div id="more11-t0" class="more11-tile"><img src="assets/m1-viewpoints.png" alt=""></div>
       <div id="more11-t1" class="more11-tile"><img src="assets/m2-evidence.png" alt=""></div>
@@ -112,27 +93,19 @@
     </div>
   </div>
 
-  <div id="more11-kicker" class="clip" data-start="0" data-duration="10.5" data-track-index="2">
+  <div id="more11-kicker" class="clip" data-start="0" data-duration="10.6" data-track-index="2">
     <span class="more11-sq"></span><span>8 · And more</span>
   </div>
 
-  <div id="more11-label" class="clip" data-start="0" data-duration="10.5" data-track-index="3">
-    <div id="more11-n0" class="more11-name">Viewpoints</div>
-    <div id="more11-n1" class="more11-name">Evidence labels</div>
-    <div id="more11-n2" class="more11-name">Spec definitions</div>
-    <div id="more11-n3" class="more11-name">Swimlanes</div>
-    <div id="more11-n4" class="more11-name">Share links</div>
-    <div id="more11-n5" class="more11-name">Story themes</div>
-  </div>
 </div>
 
 <script>
   (function () {
     // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
     const CUES = {
-      more: 0.894,
+      more: 1.399,
       viewpoints: 1.897,
-      evidence: 2.77,
+      evidence: 2.770,
       spec: 3.911,
       swimlanes: 4.826,
       share: 5.682,
@@ -152,12 +125,12 @@
 
     // Region each spoken item zooms to, in the screenshot's 1920×1080 px: [x, y, w, h].
     const REGIONS = [
-      [0, 0, 1920, 1080],
-      [0, 0, 1920, 1080],
-      [0, 0, 1920, 1080],
-      [0, 0, 1920, 1080],
-      [0, 0, 1920, 1080],
-      [0, 0, 1920, 1080]
+      [1464, 45, 440, 377],   // viewpoint menu
+      [36, 669, 633, 162],    // route rows: Ground-Truth, Simplified
+      [730, 370, 1146, 338],  // spec excerpts
+      [224, 123, 1472, 271],  // swimlane bands
+      [1598, 103, 270, 137],  // download popover with Copy share link
+      [470, 110, 980, 100]    // Death Star element names on the diagram
     ];
 
     // Camera that frames region r of tile i in the view (at most 2.4× the screenshot, which stays sharp).
@@ -167,7 +140,11 @@
       const o = origin(i);
       const fit = Math.min(VIEW_W * 0.86 / w, VIEW_H * 0.8 / h, 2.4);
       const s = fit / TILE;
-      const cx = o.x + (x + w / 2) * TILE, cy = o.y + (y + h / 2) * TILE;
+      let cx = o.x + (x + w / 2) * TILE, cy = o.y + (y + h / 2) * TILE;
+      // keep the view inside the tile, never past the screenshot's edge
+      const hw = VIEW_W / 2 / s, hh = VIEW_H / 2 / s;
+      cx = Math.min(Math.max(cx, o.x + hw), o.x + TW - hw);
+      cy = Math.min(Math.max(cy, o.y + hh), o.y + TH - hh);
       return { scale: s, x: VIEW_W / 2 - cx * s, y: VIEW_H / 2 - cy * s };
     }
     const WALL = { scale: 1, x: 0, y: 0 };
@@ -187,23 +164,28 @@
       tl.fromTo("#more11-t" + i, { opacity: 0, y: origin(i).y + 40 }, { opacity: 1, y: origin(i).y, duration: 0.35, ease: "power3.out" }, 0.1 + i * 0.07);
     }
 
-    // Scenes 2–7 — on each spoken item, the camera dives into its tile and its label sets in.
+    // Scenes 2–7 — on each spoken item, the camera dives into its tile. Only the tile in shot
+    // is visible while zoomed, so neighbours never show at the screen edge.
     const items = ["viewpoints", "evidence", "spec", "swimlanes", "share", "story"];
+    const others = (i) => [0, 1, 2, 3, 4, 5, 6, 7].filter((k) => k !== i).map((k) => "#more11-t" + k);
     let prev = WALL;
     items.forEach((key, i) => {
       const t = CUES[key] - 0.12;
       const shot = cam(i, REGIONS[i]);
       const move = i === 0 ? 0.5 : 0.36;
       tl.fromTo("#more11-world", prev, Object.assign({ duration: move, ease: "power3.inOut", immediateRender: false }, shot), t);
-      if (i > 0) tl.to("#more11-n" + (i - 1), { opacity: 0, duration: 0.12, ease: "power1.in" }, t);
-      tl.fromTo("#more11-n" + i, { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.25, ease: "power3.out" }, t + move * 0.6);
+      if (i === 0) tl.to(others(0), { opacity: 0, duration: 0.25, ease: "power1.in" }, t + 0.1);
+      else {
+        tl.to("#more11-t" + i, { opacity: 1, duration: 0.1, ease: "none" }, t);
+        tl.to("#more11-t" + (i - 1), { opacity: 0, duration: 0.1, ease: "none" }, t + move - 0.1);
+      }
       prev = shot;
     });
 
-    // Last item holds with a slow creep, then on "Death Star" the camera pulls back out to the whole wall.
+    // Last item holds, then on "Death Star" the camera pulls back out to the whole wall.
     const pull = Math.min(CUES.death + 0.1, END - 1.0);
-    tl.to("#more11-n5", { opacity: 0, duration: 0.2, ease: "power1.in" }, pull);
     tl.fromTo("#more11-world", prev, Object.assign({ duration: 0.8, ease: "power3.inOut", immediateRender: false }, WALL), pull);
+    tl.to(others(5), { opacity: 1, duration: 0.3, ease: "power1.out" }, pull + 0.2);
 
     // full-span anchor
     tl.to({}, { duration: END }, 0);

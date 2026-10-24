@@ -3314,6 +3314,14 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   border: 1px solid var(--border, #e2e8f0);
 }
 
+.help-video {
+  margin: 0 0 12px;
+}
+
+.help-video .welcome-video-player {
+  margin-top: 10px;
+}
+
 .welcome-modal-brand {
   display: flex;
   justify-content: center;

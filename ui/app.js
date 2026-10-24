@@ -5184,6 +5184,7 @@ function setHelpModalPane(pane) {
   const tabApp = document.getElementById("help-tab-app");
   const tabTech = document.getElementById("help-tab-tech");
   const tabLabels = document.getElementById("help-tab-labels");
+  if (appPane && !showApp) appPane.querySelectorAll("video").forEach((v) => v.pause());
   if (appPane) appPane.hidden = !showApp;
   if (techPane) techPane.hidden = !showTech;
   if (labelsPane) labelsPane.hidden = !showLabels;
@@ -5243,6 +5244,7 @@ window.hideHelp = function () {
   const m = document.getElementById("help-modal");
   if (!m) return;
   m.setAttribute("aria-hidden", "true");
+  m.querySelectorAll("video").forEach((v) => v.pause());
   unlockBodyScroll();
   setHelpModalPane(HELP_PANE_APP);
   document.getElementById("path-categories-help-btn")?.setAttribute("aria-expanded", "false");

@@ -5205,9 +5205,7 @@ function setHelpModalPane(pane) {
   }
   if (showLabels) {
     const body = document.getElementById("help-labels-body");
-    if (body && typeof buildPathLabelsModalHtml === "function") {
-      body.innerHTML = buildPathLabelsModalHtml();
-    }
+    if (body) body.innerHTML = buildHelpResultsHtml();
   }
 }
 
@@ -8886,6 +8884,56 @@ function buildPathLabelsModalHtml() {
         </div>
       </div>
     </div>
+  `;
+}
+
+/** Short version of the route glossary for the help window's Read the results tab. */
+function buildHelpResultsHtml() {
+  const t = getPerspectiveTitlesForDomain();
+  const te = (s) =>
+    String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  return `
+    <section class="help-results-block">
+      <h3 class="help-results-h">Three route groups</h3>
+      <div class="help-tile-grid">
+        <div class="help-tile path-labels-route-card--upper">
+          <div class="help-tile-title">${te(t.A)}</div>
+          <p class="help-tile-text">Stays in Motivation, Strategy and Business.</p>
+        </div>
+        <div class="help-tile path-labels-route-card--infra">
+          <div class="help-tile-title">${te(t.B)}</div>
+          <p class="help-tile-text">Stays in Application, Technology and Implementation.</p>
+        </div>
+        <div class="help-tile path-labels-route-card--cross">
+          <div class="help-tile-title">${te(t.C)}</div>
+          <p class="help-tile-text">Mixes the upper layers with Application or Technology.</p>
+        </div>
+      </div>
+    </section>
+    <section class="help-results-block">
+      <h3 class="help-results-h">Two badges on each route</h3>
+      <div class="help-badge-rows">
+        <div class="help-badge-row">
+          <div class="help-badge-pills">
+            <span class="path-labels-pill path-labels-pill--business">Business-Heavy</span>
+            <span class="path-labels-pill path-labels-pill--tech">Technology-Heavy</span>
+            <span class="path-labels-pill path-labels-pill--fullstack">Full-Stack Alignment</span>
+          </div>
+          <p class="help-tile-text">Layer mix. Shows where most hops sit, or that the route links both ends of the stack.</p>
+        </div>
+        <div class="help-badge-row">
+          <div class="help-badge-pills">
+            <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-simplified">Simplified</span>
+            <span class="path-labels-pill path-labels-pill--precision path-labels-pill--precision-ground">Ground-Truth</span>
+          </div>
+          <p class="help-tile-text">Precision. Simplified skips the technical plumbing for the big picture. Ground-Truth follows every structural step.</p>
+        </div>
+      </div>
+    </section>
   `;
 }
 

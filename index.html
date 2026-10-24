@@ -253,24 +253,19 @@
       </details>
     </div>
 
-    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
-      <div class="help-card">
-        <div class="help-kicker">How routes are ranked</div>
-        <div class="help-card-title">Strongest Legal Chain: lowest total cost first</div>
-        <p class="help-text">
-          Each hop has a cost. ArchiTrek adds them up and lists the cheapest legal chain first.
-          Ties go to fewer hops, then to fewer inferred hops.
-        </p>
-        <div class="help-pill-row" role="list" aria-label="Default hop weights">
-          <span class="help-pill help-pill--direct" role="listitem"><strong>Explicit</strong> hop weight 1</span>
-          <span class="help-pill help-pill--derived" role="listitem"><strong>Inferred (B.2)</strong> hop weight 5</span>
-          <span class="help-pill help-pill--derived" role="listitem"><strong>Potential (B.3)</strong> hop weight 20</span>
-          <span class="help-pill help-pill--assoc" role="listitem"><strong>Association</strong> weight 100</span>
+    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels help-results" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
+      <section class="help-results-block">
+        <h3 class="help-results-h">Cheapest legal chain first</h3>
+        <p class="help-results-p">Each hop has a cost. ArchiTrek adds them up and lists the lowest total first. Ties go to fewer hops, then to fewer inferred hops.</p>
+        <div class="help-cost-grid" role="list" aria-label="Default hop weights">
+          <div class="help-cost help-cost--direct" role="listitem"><span class="help-cost-n">1</span><span class="help-cost-l">Explicit</span></div>
+          <div class="help-cost help-cost--derived" role="listitem"><span class="help-cost-n">5</span><span class="help-cost-l">Inferred (B.2)</span></div>
+          <div class="help-cost help-cost--derived" role="listitem"><span class="help-cost-n">20</span><span class="help-cost-l">Potential (B.3)</span></div>
+          <div class="help-cost help-cost--assoc" role="listitem"><span class="help-cost-n">100</span><span class="help-cost-l">Association</span></div>
         </div>
-        <p class="help-note">You can change the weights in Advanced options. A higher weight means avoid this hop unless it's worth it.</p>
-      </div>
-      <p class="help-labels-intro">How routes are grouped, and what the badges on each route mean.</p>
-      <div id="help-labels-body" class="path-labels-body"></div>
+        <p class="help-results-foot">Change the costs in Advanced options.</p>
+      </section>
+      <div id="help-labels-body"></div>
     </div>
 
     <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>

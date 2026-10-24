@@ -1,5 +1,5 @@
 <template id="steer06-template">
-<div id="root" data-composition-id="06-steer" data-width="1920" data-height="1080" data-start="0" data-duration="8.78">
+<div id="root" data-composition-id="06-steer" data-width="1920" data-height="1080" data-start="0" data-duration="7.1">
 <script src="assets/vendor/gsap.min.js"></script>
 <style>
   @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -89,22 +89,35 @@
     height: 90px;
     border: 1.9px solid #ff4500; /* ~3px at the 1.6× framing */
   }
+  /* "SAP ERP" tags: under card B in the editor, under App Component in the swimlanes */
+  .steer06-tag {
+    position: absolute;
+    background: #1a2432;
+    color: #ffffff;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  #steer06-tag-card { left: 285px; top: 219px; font-size: 12px; padding: 4px 7px; }
+  #steer06-tag-band { left: 731px; top: 288px; font-size: 11px; padding: 3px 6px; }
 </style>
 
-<div id="steer06-bg" class="clip" data-start="0" data-duration="8.78" data-track-index="0"></div>
+<div id="steer06-bg" class="clip" data-start="0" data-duration="7.1" data-track-index="0"></div>
 
-<div id="steer06-window" class="clip" data-start="0" data-duration="8.78" data-track-index="1">
+<div id="steer06-window" class="clip" data-start="0" data-duration="7.1" data-track-index="1">
   <div id="steer06-world-edit" class="steer06-world" data-layout-allow-overflow>
     <img src="assets/s02-edit.png" alt="">
     <div id="steer06-hl-card" class="steer06-hl"></div>
+    <div id="steer06-tag-card" class="steer06-tag">SAP ERP</div>
   </div>
   <div id="steer06-world-lanes" class="steer06-world" data-layout-allow-overflow>
     <img src="assets/s09-swimlanes.png" alt="">
     <div id="steer06-hl-band" class="steer06-hl"></div>
+    <div id="steer06-tag-band" class="steer06-tag">SAP ERP</div>
   </div>
 </div>
 
-<div id="steer06-kicker" class="clip" data-start="0" data-duration="8.78" data-track-index="2">
+<div id="steer06-kicker" class="clip" data-start="0" data-duration="7.1" data-track-index="2">
   <span class="steer06-sq"></span><span>3 · Steer</span>
 </div>
 
@@ -112,17 +125,17 @@
 (function () {
   // Voice cue times (s from frame start). Re-time the frame by editing this object only.
   const CUES = {
-    so: 0.000,
-    pin: 0.020,
+    so: 0.255,
+    pin: 0.472,
     layer: 0.059,
-    mean: 0.099,
-    add: 0.283,
+    mean: 0.690,
+    add: 2.572,
     applicationComponent: 0.476,
     middle: 1.969,
-    and: 2.737,
-    route: 3.977,
-    software: 6.457,
-    END: 8.28
+    and: 3.848,
+    route: 4.589,
+    software: 5.440,
+    END: 6.6
   };
   const END = CUES.END;
   const MIN_LEAD = 0.35;
@@ -162,14 +175,15 @@
   const drift1 = push.start + push.dur;
   tl.to("#steer06-world-edit", Object.assign({}, EDIT_DRIFT, { duration: Math.max(0.2, END - drift1), ease: "none" }), drift1);
 
-  // "Add Application Component" — highlight outlines card B
+  // "as an Application Component" — highlight outlines card B and tags it SAP ERP
   const hl1 = fit(CUES.add, 0.4);
   tl.fromTo("#steer06-hl-card", { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: hl1.dur, ease: "power3.out" }, hl1.start);
+  tl.fromTo("#steer06-tag-card", { opacity: 0, y: -6 }, { opacity: 1, y: 0, duration: hl1.dur, ease: "power3.out" }, hl1.start + 0.1);
 
   // Scene 2 — "and the route runs": crossfade inside the window to the swimlanes view
   const xf = fit(CUES.and, 0.55);
   tl.fromTo("#steer06-world-lanes", { opacity: 0 }, { opacity: 1, duration: xf.dur, ease: "power1.inOut" }, xf.start);
-  tl.fromTo("#steer06-hl-card", { opacity: 1 }, { opacity: 0, duration: Math.min(0.3, xf.dur), ease: "power1.in", immediateRender: false }, xf.start);
+  tl.fromTo(["#steer06-hl-card", "#steer06-tag-card"], { opacity: 1 }, { opacity: 0, duration: Math.min(0.3, xf.dur), ease: "power1.in", immediateRender: false }, xf.start);
   const settle = fit(CUES.and, Math.max(0.6, CUES.route + 0.3 - CUES.and));
   tl.fromTo("#steer06-world-lanes", LANES_IN, Object.assign({}, LANES_SET, { duration: settle.dur, ease: "power2.out" }), settle.start);
   const drift2 = settle.start + settle.dur;
@@ -177,7 +191,7 @@
     tl.to("#steer06-world-lanes", Object.assign({}, LANES_DRIFT, { duration: END - drift2, ease: "none" }), drift2);
   }
 
-  // "software" — highlight outlines the Application band row; hold
+  // "pass through it" — highlight outlines the Application band row; hold
   const hl2 = fit(CUES.software, 0.4);
   tl.fromTo("#steer06-hl-band", { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: hl2.dur, ease: "power3.out" }, hl2.start);
 

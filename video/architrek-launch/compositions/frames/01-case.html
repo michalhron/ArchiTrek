@@ -1,4 +1,4 @@
-<template id="case01-template" data-composition-id="01-case" data-width="1920" data-height="1080" data-duration="11.18">
+<template id="case01-template" data-composition-id="01-case" data-width="1920" data-height="1080" data-duration="12.78">
   <script src="assets/vendor/gsap.min.js"></script>
   <style>
     @font-face { font-family: 'IBM Plex Sans'; src: url('assets/fonts/IBM_Plex_Sans_400.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: block; }
@@ -109,6 +109,11 @@
       background: #fffbe6;
       border-radius: 3px;
     }
+    #case01-sap {
+      left: 790px; top: 440px; width: 260px; height: 100px;
+      background: #bfffff;
+      border-radius: 3px;
+    }
     #case01-node {
       left: 790px; top: 670px; width: 260px; height: 100px;
       background: #c1ffb1;
@@ -126,10 +131,9 @@
     }
 
     /* ---- hop badge ---- */
-    #case01-badge {
+    [class~="case01-badge"] {
       position: absolute;
       left: 892px;
-      top: 462px;
       width: 56px;
       height: 56px;
       border-radius: 50%;
@@ -142,12 +146,14 @@
       line-height: 1;
       font-weight: 700;
     }
+    #case01-badge-lower { top: 577px; }
+    #case01-badge-upper { top: 347px; }
   </style>
 
   <div id="root" data-composition-id="01-case" data-width="1920" data-height="1080">
-    <div id="case01-bg" class="clip" data-start="0" data-duration="11.18" data-track-index="0"></div>
+    <div id="case01-bg" class="clip" data-start="0" data-duration="12.78" data-track-index="0"></div>
 
-    <div id="case01-stage" class="clip" data-start="0" data-duration="11.18" data-track-index="1">
+    <div id="case01-stage" class="clip" data-start="0" data-duration="12.78" data-track-index="1">
       <div id="case01-kicker">
         <div id="case01-kicker-sq"></div>
         <div id="case01-kicker-text">The case</div>
@@ -166,7 +172,7 @@
             <rect id="case01-hop-reveal" x="900" y="670" width="40" height="0"></rect>
           </clipPath>
         </defs>
-        <!-- dashed hop line, Mainframe top (920,670) up to the function bottom (920,310) -->
+        <!-- dashed hop line, Mainframe top (920,670) up to the function bottom (920,310); SAP ERP covers its middle -->
         <g clip-path="url(#case01-hop-clip)">
           <line id="case01-hop-line" x1="920" y1="670" x2="920" y2="310" stroke="#94a3b8" stroke-width="3" stroke-dasharray="12 10"></line>
         </g>
@@ -181,6 +187,15 @@
         <svg class="case01-glyph" viewBox="0 0 24 24" fill="none" stroke="#1a2432" stroke-width="1.8" stroke-linejoin="round">
           <path d="M3 8 L8 3 L21 3 L21 16 L16 21 L3 21 Z"></path>
           <path d="M3 8 L16 8 L21 3 M16 8 L16 21"></path>
+        </svg>
+      </div>
+
+      <div id="case01-sap" class="case01-el">
+        SAP ERP
+        <svg class="case01-glyph" viewBox="0 0 24 24" fill="none" stroke="#1a2432" stroke-width="1.8" stroke-linejoin="round">
+          <rect x="6" y="3" width="15" height="18"></rect>
+          <rect x="3" y="7" width="6" height="3"></rect>
+          <rect x="3" y="14" width="6" height="3"></rect>
         </svg>
       </div>
 
@@ -199,7 +214,8 @@
         </svg>
       </div>
 
-      <div id="case01-badge">?</div>
+      <div id="case01-badge-lower" class="case01-badge">?</div>
+      <div id="case01-badge-upper" class="case01-badge">?</div>
     </div>
   </div>
 
@@ -207,29 +223,15 @@
     (function () {
       // Voice cue times (seconds from frame start). Re-time the frame by editing this object only.
       const CUES = {
-        An: 0.000,
-        insurance: 0.514,
-        company: 1.187,
-        does: 1.861,
-        its: 2.133,
-        bookkeeping: 2.404,
-        on: 3.078,
-        an: 3.349,
-        old: 3.621,
-        mainframe: 3.892,
-        Its: 4.713,
-        architects: 5.007,
-        must: 5.734,
-        show: 6.027,
-        how: 6.320,
-        that: 6.613,
-        machine: 6.906,
-        supports: 7.416,
-        the: 7.926,
-        finance: 8.219,
-        departments: 8.729,
-        work: 9.457,
-        END: 10.68
+        An: 0.244,
+        insurance: 0.460,
+        old: 2.927,
+        finance: 4.050,
+        departments: 4.475,
+        sap: 5.208,
+        machine: 9.721,
+        show: 8.967,
+        END: 12.28
       };
       const END = CUES.END;
       // Start a reveal at its cue, but early enough that it completes before the frame ends.
@@ -247,7 +249,8 @@
       const aDot = q("case01-assign-dot");
       const aHead = q("case01-assign-head");
       const hopReveal = q("case01-hop-reveal");
-      const badge = q("case01-badge");
+      const sap = q("case01-sap");
+      const badges = [q("case01-badge-lower"), q("case01-badge-upper")];
 
       const tl = gsap.timeline({ paused: true });
 
@@ -265,7 +268,7 @@
       tl.fromTo(node, { scale: 1 }, { scale: 1.05, duration: 0.18, ease: "power2.out" }, at(CUES.machine, 0.4));
       tl.to(node, { scale: 1, duration: 0.22, ease: "power2.inOut" }, at(CUES.machine, 0.4) + 0.18);
 
-      // ---- Scene 3: the finance work rises into the Business band, then the assignment draws ----
+      // ---- Scene 3: the finance work rises into the Business band, then the assignment draws; SAP ERP takes the Application band ----
       const fnAt = at(CUES.finance, 0.45);
       const actorAt = at(CUES.departments, 0.45);
       tl.fromTo(fn, { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, fnAt);
@@ -274,11 +277,12 @@
       tl.fromTo(aDot, { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, arrowAt);
       tl.fromTo(aLine, { strokeDashoffset: 168 }, { strokeDashoffset: 0, duration: 0.24, ease: "power2.out" }, arrowAt);
       tl.fromTo(aHead, { opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, arrowAt + 0.2);
+      tl.fromTo(sap, { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, at(CUES.sap, 0.45));
 
-      // ---- Scene 4 (last ~1s): dashed hop line climbs the empty Application band, "?" badge pops. Hold. ----
-      const hopAt = at(CUES.work, 0.85);
+      // ---- Scene 4: on "show how", the dashed hop line climbs through SAP ERP and a "?" pops on each side. Hold. ----
+      const hopAt = at(CUES.show, 0.85);
       tl.fromTo(hopReveal, { attr: { y: 670, height: 0 } }, { attr: { y: 310, height: 360 }, duration: 0.45, ease: "power2.inOut" }, hopAt);
-      tl.fromTo(badge, { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2.2)" }, hopAt + 0.4);
+      tl.fromTo(badges, { opacity: 0, scale: 0.3 }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2.2)", stagger: 0.12 }, hopAt + 0.3);
 
       // Pin the timeline length to the frame duration (hold to the end).
       tl.set({}, {}, END);

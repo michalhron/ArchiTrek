@@ -1,0 +1,14 @@
+{
+  "01-case": {"An": "an", "insurance": "insurance", "old": "old", "finance": "finance", "departments": "team", "sap": "sap", "machine": "mainframe#2", "show": "show"},
+  "02-the-table": {"The": "in", "relationship": "node", "business": "business", "table": "table", "tells": "says", "what": "they", "allowed": "connect", "It": "but", "through": "through"},
+  "03-architrek": {"architrek": "architrek", "finds": "finds", "the": "the"},
+  "04-pick": {"pick": "pick", "node": "node", "business": "business", "click": "click", "path": "path"},
+  "05-routes": {"every": "five", "it": "five", "finds": "legal", "legal": "routes", "none": "not", "application": "sap"},
+  "06-steer": {"so": "so", "pin": "pin", "mean": "sap", "add": "application", "and": "now", "route": "route", "software": "through"},
+  "07-decide": {"decide": "rightclick", "you": "rightclick", "hop": "each", "rightClick": "each", "choose": "choose"},
+  "08-read-why": {"then": "every", "read": "every", "comes": "comes", "rule": "rule"},
+  "09-export": {"take": "export", "picture": "to", "model": "to", "opens": "archi"},
+  "10-rigor": {"strict": "strict", "academic": "academic", "pragmatic": "pragmatic", "discovery": "discovery"},
+  "11-more": {"more": "more", "viewpoints": "viewpoints", "evidence": "evidence", "spec": "spec", "swimlanes": "swimlanes", "share": "share", "story": "story", "death": "death"},
+  "12-your-turn": {"replace": "swap", "with1": "for", "a": "a", "elements": "elements", "which2": "which#2", "arrows": "arrows", "model": "model", "it": "it", "archiTrek": "architrek"}
+}

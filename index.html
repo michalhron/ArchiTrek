@@ -181,7 +181,7 @@
 </header>
 <div id="top-drawer-backdrop" class="top-drawer-backdrop" aria-hidden="true" hidden></div>
 <!-- ── App Layout ─────────────────────────────────────────────────────────── -->
-<!-- Help modal: About the app → Scenarios & route labels → Technical notes -->
+<!-- Help modal: Get started → Read the results → About the data -->
 <div id="help-modal" class="help-modal" aria-hidden="true">
   <div class="help-modal-backdrop" aria-hidden="true" onclick="hideHelp()"></div>
   <div class="help-modal-card" role="dialog" aria-modal="true" aria-labelledby="help-modal-title" tabindex="-1">
@@ -192,14 +192,15 @@
 
     <div class="help-modal-tabs" role="tablist" aria-label="Help topics">
       <button type="button" class="help-modal-tab help-modal-tab--active" role="tab" id="help-tab-app"
-        aria-selected="true" aria-controls="help-pane-app" tabindex="0">About the app</button>
+        aria-selected="true" aria-controls="help-pane-app" tabindex="0">Get started</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-labels"
-        aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Scenarios &amp; route labels</button>
+        aria-selected="false" aria-controls="help-pane-labels" tabindex="-1">Read the results</button>
       <button type="button" class="help-modal-tab" role="tab" id="help-tab-tech"
-        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">Technical notes</button>
+        aria-selected="false" aria-controls="help-pane-tech" tabindex="-1">About the data</button>
     </div>
 
     <div id="help-pane-app" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-app">
+      <div class="help-start-grid">
       <figure class="help-card help-video">
         <div class="help-kicker">Watch the tour</div>
         <div class="help-card-title">ArchiTrek in 80 seconds, with captions</div>
@@ -209,108 +210,83 @@
       </figure>
 
       <div class="help-card help-card--primary">
-        <div class="help-kicker">The problem</div>
-        <div class="help-card-title">How do these elements connect across layers?</div>
+        <div class="help-kicker">How it works</div>
+        <div class="help-card-title">Find the legal route between element types</div>
         <p class="help-text">
-          ArchiMate relationships are defined in the spec, but it can be <strong>tedious</strong> to look up the tables
-          and verify which element types can connect. Even with modeling tools that help you draw links, it’s not always
-          obvious what <em>chain</em> of allowed relationships will get you from one element type to another.
-          ArchiTrek helps you find a valid <strong>relationship chain</strong> (a “route”) — often crossing Business /
-          Application / Technology layers.
+          ArchiMate's tables tell you which element types may connect. They don't show the chain that gets you
+          from one to another. ArchiTrek finds that chain, often across the Business, Application and Technology layers.
         </p>
-        <p class="help-note">
-          Which relationship symbols are legal between which element types follows the normative <strong>ArchiMate 3.2</strong>
-          Appendix&nbsp;B matrix shipped in the app (offline snapshot of the same table family as the public spec).
-          Caveats on encoding and limits are under
-          <button type="button" class="help-note-tab-link" onclick="showHelp('tech')" aria-controls="help-pane-tech">
-            Technical notes
-          </button>
-          (last tab in the bar above).
-        </p>
+        <ol class="help-list help-steps">
+          <li>Pick two or more element types.</li>
+          <li>Click Find Path.</li>
+          <li>Read the diagram and the hop-by-hop explanation. Click any item to learn more.</li>
+        </ol>
       </div>
-
-      <div class="help-card">
-        <div class="help-kicker">What the app does</div>
-        <div class="help-card-title">Pick points → Find Path → read the explanation</div>
-        <ul class="help-list">
-          <li><strong>Choose 2+ element types</strong> using the pickers.</li>
-          <li>Click <strong>Find Path</strong> to search Appendix B (plus optional derivation rules).</li>
-          <li>Review the diagram and the <strong>hop-by-hop</strong> explanation; click items to learn more.</li>
-        </ul>
-      </div>
-
-      <div class="help-card">
-        <div class="help-kicker">How it ranks routes</div>
-        <div class="help-card-title">Strongest Legal Chain (weighted syntax score)</div>
-        <p class="help-text">
-          ArchiTrek uses uniform-cost search to rank the <strong>Strongest Legal Chain</strong>: lower total syntax cost
-          (sum of hop weights), then ties break by <em>fewer hops</em>, then <em>fewer inferred hops</em>.
-        </p>
-        <div class="help-pill-row" role="list" aria-label="Default hop weights">
-          <span class="help-pill help-pill--direct" role="listitem"><strong>Explicit</strong> hop weight 1</span>
-          <span class="help-pill help-pill--derived" role="listitem"><strong>Inferred (B.2)</strong> hop weight 5</span>
-          <span class="help-pill help-pill--derived" role="listitem"><strong>Potential (B.3)</strong> hop weight 20</span>
-          <span class="help-pill help-pill--assoc" role="listitem"><strong>Association</strong> weight 100</span>
-        </div>
-        <p class="help-note">
-          These weights can be tuned in Advanced options; higher weight means “avoid this hop unless it’s worth it”.
-        </p>
-      </div>
-
-      <div class="help-grid-2">
-        <div class="help-card">
-          <div class="help-kicker">Selection logic</div>
-          <div class="help-card-title">Ordered vs Connect set</div>
-          <ul class="help-list">
-            <li><strong>Ordered</strong>: you decide Start → Via → End; the route must follow that sequence.</li>
-            <li><strong>Connect set</strong>: order doesn’t matter; the app reorders points to produce one strongest legal chain that connects everything.</li>
-          </ul>
-        </div>
-
-        <div class="help-card">
-          <div class="help-kicker">Relationship rules</div>
-          <div class="help-card-title">Explicit, + Inferred, Semantic rigor</div>
-          <ul class="help-list">
-            <li><strong>Explicit</strong>: only uppercase Appendix B relationships (strictest graph).</li>
-            <li><strong>+ Inferred</strong>: include Appendix B derivations. B.2 (“certain”) is weighted lower than B.3 (“potential”).</li>
-            <li><strong>Semantic rigor</strong> (Academic / Pragmatic / Discovery): bundles grammar gates with whether §5.2.4 Association may be used as a last-resort bridge. Use <strong>Advanced options → Advanced Logic Overrides</strong> for manual control.</li>
-            <li><strong>Together:</strong> <strong>Explicit vs +Inferred</strong> decides which edges exist in the graph; <strong>Semantic rigor</strong> judges routes and Association on top. They are separate controls.</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="help-card">
-        <div class="help-kicker">Context</div>
-        <div class="help-card-title">Story Theme</div>
-        <p class="help-text">
-          The <strong>Story Theme</strong> (top-right) changes scenario labels and narrative wording in explanations
-          (e.g. Abstract vs Hospital vs Death Star). It does <strong>not</strong> change <strong>Explicit vs +Inferred</strong>, <strong>Semantic rigor</strong>, or other pathfinding rules.
-        </p>
       </div>
 
       <div class="help-card help-card--hint">
-        <div class="help-card-title">If you get “No path found”</div>
+        <div class="help-card-title">No path found?</div>
         <ul class="help-list">
-          <li>Enable <strong>+ Inferred</strong> (Search Depth).</li>
-          <li>Choose a looser <strong>Semantic rigor</strong> (e.g. Discovery) or open <strong>Advanced options → Advanced Logic Overrides</strong> and allow Association fallback.</li>
-          <li>Add an intermediate element type that sits “between” layers.</li>
+          <li>Turn on + Inferred under Search Depth.</li>
+          <li>Pick a looser Semantic rigor, such as Discovery. Or allow Association fallback in Advanced options, under Advanced Logic Overrides.</li>
+          <li>Add an element type that sits between the layers.</li>
         </ul>
       </div>
+
+      <details class="help-card help-fold">
+        <summary class="help-fold-summary">What the settings do</summary>
+        <dl class="help-defs">
+          <dt>Ordered</dt>
+          <dd>The route follows your points in order, from Start through Via to End.</dd>
+          <dt>Connect set</dt>
+          <dd>Order doesn't matter. ArchiTrek reorders the points to find the strongest chain that connects them all.</dd>
+          <dt>Explicit</dt>
+          <dd>Only the uppercase relationships in Appendix B. This is the strictest graph.</dd>
+          <dt>+ Inferred</dt>
+          <dd>Adds the Appendix B derivations. Certain ones (B.2) cost less than potential ones (B.3).</dd>
+          <dt>Semantic rigor</dt>
+          <dd>Academic, Pragmatic or Discovery. It sets the grammar checks and whether Association (§5.2.4) may bridge a gap.
+            Search Depth decides which relationships exist. Rigor judges the routes built from them.</dd>
+          <dt>Story theme</dt>
+          <dd>Changes labels and wording, for example Abstract, Hospital or Death Star. The search rules stay the same.</dd>
+        </dl>
+      </details>
     </div>
 
-    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
-      <p class="help-labels-intro">How alternatives are grouped under each heading, and what the small badges on each route mean.</p>
-      <div id="help-labels-body" class="path-labels-body"></div>
+    <div id="help-pane-labels" class="help-modal-body help-modal-pane--labels help-results" role="tabpanel" aria-labelledby="help-tab-labels" hidden>
+      <section class="help-results-block">
+        <h3 class="help-results-h">Cheapest legal chain first</h3>
+        <p class="help-results-p">Each hop has a cost. ArchiTrek adds them up and lists the lowest total first. Ties go to fewer hops, then to fewer inferred hops.</p>
+        <div class="help-cost-grid" role="list" aria-label="Default hop weights">
+          <div class="help-cost help-cost--direct" role="listitem"><span class="help-cost-n">1</span><span class="help-cost-l">Explicit</span></div>
+          <div class="help-cost help-cost--derived" role="listitem"><span class="help-cost-n">5</span><span class="help-cost-l">Inferred (B.2)</span></div>
+          <div class="help-cost help-cost--derived" role="listitem"><span class="help-cost-n">20</span><span class="help-cost-l">Potential (B.3)</span></div>
+          <div class="help-cost help-cost--assoc" role="listitem"><span class="help-cost-n">100</span><span class="help-cost-l">Association</span></div>
+        </div>
+        <p class="help-results-foot">Change the costs in Advanced options.</p>
+      </section>
+      <div id="help-labels-body"></div>
     </div>
 
     <div id="help-pane-tech" class="help-modal-body" role="tabpanel" aria-labelledby="help-tab-tech" hidden>
+
       <div class="help-card help-card--primary">
-        <div class="help-kicker">Where Appendix B shows up</div>
-        <div class="help-card-title">Type-to-type validity</div>
+        <div class="help-kicker">Where the rules come from</div>
+        <div class="help-card-title">ArchiMate 3.2 Appendix B, built into the app</div>
+        <p class="help-text">
+          ArchiTrek checks every hop against the Appendix B relationship table, shipped as an offline snapshot.
+          The Open Group owns the language and its
+          <a href="https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html" target="_blank" rel="noopener noreferrer">normative relationship chapter</a>.
+          Found a mismatch with the published tables? Report it through Feedback, with the from and to element types and the table cell you expect.
+        </p>
+      </div>
+
+      <details class="help-card help-fold">
+        <summary class="help-fold-summary">How Appendix B is used</summary>
         <p class="help-text">
           The engine treats the embedded <strong>ArchiMate 3.2</strong> relationship matrix as the contract for “may this
           relationship kind exist on this directed element-type pair?” That contract is built offline from the vendored
-          machine-readable table under <code>data/source/</code> (see <strong>Upstream</strong> below) and shipped as
+          machine-readable table under <code>data/source/</code> (see <strong>How the table was captured</strong> below) and shipped as
           <code>data/matrix.js</code> — letter codes per cell for offline lookup, not re-derived at runtime from prose in the PDF.
           <strong>Association</strong> follows the usual “always permitted” rule (section 5.2.4): it is not part of the per-cell
           letter set in the matrix file; the UI layers it in as a deliberately weak escape hatch with a tunable cost so
@@ -321,11 +297,10 @@
           snapshot aligned to that family.
           <a href="https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html" target="_blank" rel="noopener noreferrer">https://pubs.opengroup.org/architecture/archimate32-doc/ch-relationships-Normative.html</a>
         </p>
-      </div>
+      </details>
 
-      <div class="help-card">
-        <div class="help-kicker">Honest limits</div>
-        <div class="help-card-title">Explicit vs + Inferred reflects the encoding</div>
+      <details class="help-card help-fold">
+        <summary class="help-fold-summary">Known limits</summary>
         <p class="help-text">
           The frozen matrix answers <em>which</em> relationship symbols appear for a type pair; it does <strong>not</strong>
           by itself certify each symbol as “printed verbatim as uppercase in the table” versus “only appears after
@@ -339,11 +314,10 @@
           Viewpoint palettes, aspect/metamodel blurbs, and narrative copy are curated for teaching — they should stay
           consistent with the matrix, but they are not emitted from the same mechanical source as the pairwise rules.
         </p>
-      </div>
+      </details>
 
-      <div class="help-card">
-        <div class="help-kicker">Upstream</div>
-        <div class="help-card-title">How the matrix was captured</div>
+      <details class="help-card help-fold">
+        <summary class="help-fold-summary">How the table was captured</summary>
         <p class="help-text">
           The <code>MATRIX</code> records in <code>data/matrix.js</code> are produced by <code>scripts/build-matrix.mjs</code>.
           The allowed codes for each pair come from the Appendix&nbsp;B table in <code>data/source/relationships.xml</code>
@@ -355,11 +329,10 @@
           and the date are in the header of <code>data/matrix.js</code>.
           If you find a mismatch against the published tables, that is a bug worth reporting — include the from/to element types and the table cell you expect.
         </p>
-      </div>
+      </details>
 
-      <div class="help-card">
-        <div class="help-kicker">Acknowledgements</div>
-        <div class="help-card-title">External sources</div>
+      <details class="help-card help-fold">
+        <summary class="help-fold-summary">Credits</summary>
         <p class="help-text">
           ArchiTrek builds on published ArchiMate material and related community work. The normative language is owned by
           The Open Group; community projects publish parallel machine-readable encodings that many tools use for validation
@@ -393,7 +366,7 @@
             Specification, &copy; The Open Group.
           </li>
         </ul>
-      </div>
+      </details>
     </div>
   </div>
 </div>

@@ -3607,6 +3607,58 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
 
 .help-list li { margin: 6px 0; }
 
+.help-steps { margin-top: 8px; }
+
+@media (min-width: 900px) {
+  .help-start-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 12px;
+    align-items: stretch;
+    margin-bottom: 12px;
+  }
+  .help-start-grid > .help-card { margin: 0; }
+}
+
+.help-fold { padding: 0; }
+
+.help-fold-summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1, #1a2432);
+}
+
+.help-fold[open] > .help-fold-summary {
+  border-bottom: 1px solid var(--border-light, #e2e8f0);
+}
+
+.help-fold > :not(summary) {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+
+.help-fold > :last-child { margin-bottom: 12px; }
+
+.help-defs {
+  margin: 10px 12px 12px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2, #475569);
+}
+
+.help-defs dt { font-weight: 600; color: var(--text-1, #1a2432); }
+.help-defs dd { margin: 0; }
+
+@media (max-width: 600px) {
+  .help-defs { grid-template-columns: 1fr; }
+  .help-defs dd { margin-bottom: 6px; }
+}
+
 .help-rule-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

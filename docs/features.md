@@ -30,8 +30,12 @@ Pick two or more element types and click Find Path. ArchiTrek treats the metamod
 
 There are two modes:
 
-- Ordered: you set Start → Via → End, and the route follows that order. This is the default.
-- Connect set: order does not matter. ArchiTrek reorders your points to find the strongest legal chain that connects them all.
+- Connect set: order does not matter. ArchiTrek reorders your points to find the strongest legal chain that connects them all. This is the default.
+- Ordered: you set Start → Via → End, and the route follows that order.
+
+The label next to "Waypoints" shows the mode. Click it to switch.
+
+In Connect set, ArchiTrek may reverse your order. Pick Application Component and then Application Service, and it swaps them: Application Service serves Application Component directly, while the other direction has only derived relationships. A note above the waypoints says what changed and why. Click Keep my order to switch to Ordered and search in your own order. For this pair that gives Application Component → Application Function → Application Service, the realization chain.
 
 The first visit opens a welcome window with four examples. Show quick examples in the editor brings them back.
 

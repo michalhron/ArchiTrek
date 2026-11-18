@@ -5652,42 +5652,23 @@ html.architrek-mobile-gate-active:not(.architrek-force-desktop-shell) .mobile-bl
   border-color: var(--path-association-warning-stroke, #c27820);
   color: var(--derived, #7a4f00);
 }
-.waypoint-reorder-note {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 6px 0 10px;
-  padding: 8px 12px;
-  border-left: 4px solid var(--path-association-warning-stroke, #c27820);
-  background: var(--derived-bg, #fff8ec);
-  color: var(--text-2);
-  font-size: 13px;
-  line-height: 1.45;
-  text-transform: none;
-  letter-spacing: normal;
+/* Connect set changed the student's order: said in the route summary, under the title. */
+.explain-reorder {
+  margin: 0 0 0.75rem;
 }
-.waypoint-reorder-note[hidden] {
-  display: none;
+.path-badge.path-badge--reorder {
+  display: inline-block;
+  font-weight: 600;
+  background: #1f2937;
+  border-color: #1f2937;
+  color: #ffffff;
 }
-.waypoint-reorder-note strong {
-  color: var(--text);
+.explain-summary p.explain-reorder-text {
+  margin: 6px 0 0;
 }
-.waypoint-reorder-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.waypoint-reorder-dismiss {
-  font: inherit;
-  font-size: 16px;
-  line-height: 1;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0 2px;
+.explain-reorder-text .text-link-btn {
+  margin-left: 4px;
+  font-size: 14px;
 }
 
 .quick-examples-list {

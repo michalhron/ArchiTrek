@@ -90,6 +90,7 @@ window.state = {
   edgeConstraints: [],
   /** One-shot warning message set when a flip had to degrade to Association. */
   edgeConstraintWarning: null,
+  waypointReorderNote: null,
   /** True when direction flips changed constraints since the last path recompute. */
   pendingConstraintRecompute: false,
   /** Number of post-recompute direction flips currently pending. */
@@ -7215,6 +7216,8 @@ function teardownPickerOverlay() {
 
 function renderWaypointChain() {
   ensureWaypointChainInteractionDelegation();
+  renderWaypointModeChip();
+  renderWaypointReorderNote();
   const chain = document.getElementById('waypoint-chain');
   if (!chain) return;
   syncWaypointLayersFromElements();
@@ -7978,10 +7981,97 @@ function syncWaypointSlotsToSolverChainIfPossible() {
   reorderWaypointsToMatchLastSolverChainIfPossible();
   const after = (state.waypoints || []).map((wp) => wp?.element || "");
   if (before.join("|") !== after.join("|")) {
+    if (state.selectionMode === "set") state.waypointReorderNote = { before, after };
     requestWaypointConstraintReorderAnimation();
     renderWaypointChain();
   }
 }
+
+// ── Connect set: say when the search changed the student's order ─────────────
+
+function relationshipNamesForCodes(codes) {
+  return (codes || [])
+    .map((c) => (typeof RELATIONSHIPS !== "undefined" && RELATIONSHIPS?.[c]?.name) || c)
+    .map((n) => String(n).toLowerCase())
+    .join(", ");
+}
+
+function waypointReorderExplanation(note) {
+  const after = note.after || [];
+  const before = note.before || [];
+  const chain = after.map(escapeHtmlAttr).join(" → ");
+  if (after.length === 2 && before.length === 2 && before[0] === after[1] && before[1] === after[0]) {
+    const [a, b] = before;
+    const mm = typeof MATRIX_MAP !== "undefined" ? MATRIX_MAP : {};
+    const forward = mm[`${a}→${b}`] || {};
+    const reverse = mm[`${b}→${a}`] || {};
+    const revDirect = reverse.direct || [];
+    const fwdDirect = forward.direct || [];
+    const fwdDerived = [...(forward.derived || []), ...(forward.derivedPotential || [])];
+    if (revDirect.length && !fwdDirect.length) {
+      const tail = fwdDerived.length
+        ? `${escapeHtmlAttr(a)} → ${escapeHtmlAttr(b)} has only derived ones.`
+        : `${escapeHtmlAttr(a)} → ${escapeHtmlAttr(b)} has none in the table.`;
+      return `ArchiTrek reversed your order to <strong>${chain}</strong>. That direction has a direct relationship (${escapeHtmlAttr(relationshipNamesForCodes(revDirect))}). ${tail}`;
+    }
+    return `ArchiTrek reversed your order to <strong>${chain}</strong>, because that direction gives the strongest chain.`;
+  }
+  return `ArchiTrek reordered your points into the strongest chain: <strong>${chain}</strong>.`;
+}
+
+function renderWaypointReorderNote() {
+  const box = document.getElementById("waypoint-reorder-note");
+  const text = document.getElementById("waypoint-reorder-text");
+  if (!box || !text) return;
+  const note = state.waypointReorderNote;
+  const current = (state.waypoints || []).map((wp) => wp?.element || "");
+  const stillValid =
+    note &&
+    state.selectionMode === "set" &&
+    Array.isArray(note.after) &&
+    note.after.join("|") === current.join("|");
+  if (!stillValid) {
+    if (note) state.waypointReorderNote = null;
+    box.hidden = true;
+    return;
+  }
+  text.innerHTML = waypointReorderExplanation(note);
+  box.hidden = false;
+}
+
+function renderWaypointModeChip() {
+  const chip = document.getElementById("waypoint-mode-chip");
+  if (!chip) return;
+  const isSet = state.selectionMode === "set";
+  chip.textContent = isSet ? "Connect set · ArchiTrek picks the order" : "Ordered · your order";
+  chip.title = isSet
+    ? "Order does not matter: ArchiTrek reorders the points into the strongest chain. Click to keep your own order (Ordered)."
+    : "The route follows your order. Click to let ArchiTrek pick the order (Connect set).";
+  chip.classList.toggle("waypoint-mode-chip--set", isSet);
+}
+
+window.toggleSelectionModeFromChip = function () {
+  window.setSelectionMode(state.selectionMode === "set" ? "ordered" : "set");
+};
+
+window.dismissWaypointReorderNote = function () {
+  state.waypointReorderNote = null;
+  renderWaypointReorderNote();
+};
+
+/** Put the waypoints back in the order the student chose, then switch to Ordered and search again. */
+window.keepMyWaypointOrder = function () {
+  const note = state.waypointReorderNote;
+  if (note && Array.isArray(note.before)) {
+    const byEl = new Map((state.waypoints || []).map((wp) => [wp?.element, wp]));
+    const restored = note.before.map((el) => byEl.get(el)).filter(Boolean);
+    if (restored.length === (state.waypoints || []).length) state.waypoints = restored;
+  }
+  state.waypointReorderNote = null;
+  // Without this, switching to Ordered would sync the slots back to the solver's chain.
+  state.lastAutoOrderResult = null;
+  window.setSelectionMode("ordered");
+};
 
 window.setSelectionMode = function(mode) {
   const prev = state.selectionMode;
@@ -8137,6 +8227,7 @@ window.findPath = function(opts = {}) {
       edgeConstraints: normalizedEdgeConstraintsFromState(),
     };
     let searchStatus = "no_path";
+    if (!recomputeKeepWaypointChain) state.waypointReorderNote = null;
     if (state.selectionMode === 'set' && !recomputeKeepWaypointChain) {
       const res = findBestChainForSet(searchGraph, picked, searchOptions);
       segs = res?.segments ?? [];

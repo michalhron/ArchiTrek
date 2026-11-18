@@ -1035,7 +1035,17 @@
       </div>
 
       <div class="selector-panel-main">
-        <div class="panel-label">Waypoints</div>
+        <div class="panel-label panel-label-with-action waypoint-panel-label">
+          <span>Waypoints</span>
+          <button type="button" class="waypoint-mode-chip" id="waypoint-mode-chip" onclick="toggleSelectionModeFromChip()"></button>
+        </div>
+        <p class="waypoint-reorder-note" id="waypoint-reorder-note" role="status" hidden>
+          <span class="waypoint-reorder-text" id="waypoint-reorder-text"></span>
+          <span class="waypoint-reorder-actions">
+            <button type="button" class="text-link-btn" onclick="keepMyWaypointOrder()">Keep my order</button>
+            <button type="button" class="waypoint-reorder-dismiss" onclick="dismissWaypointReorderNote()" aria-label="Dismiss" title="Dismiss">×</button>
+          </span>
+        </p>
         <div class="waypoint-chain-row">
           <div class="waypoint-chain" id="waypoint-chain"></div>
         </div>

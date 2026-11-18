@@ -6234,6 +6234,7 @@ function explainPath(
         <span class="panel-section-heading explain-route-eyebrow">Route ${selectedPathIndex + 1}</span>
         <h2 class="explain-route-title">${fromDisplay} → ${toDisplay}</h2>
         ${routeHeaderPills}
+        ${typeof window.waypointReorderSummaryHtml === "function" ? window.waypointReorderSummaryHtml() : ""}
         ${pathNarrativeHtml}
         <p class="explain-path-meta">${metaLine}</p>
         ${educationalContrast ? `<p class="explain-path-purpose">${educationalContrast}</p>` : ""}

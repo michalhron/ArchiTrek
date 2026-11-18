@@ -7217,7 +7217,6 @@ function teardownPickerOverlay() {
 function renderWaypointChain() {
   ensureWaypointChainInteractionDelegation();
   renderWaypointModeChip();
-  renderWaypointReorderNote();
   const chain = document.getElementById('waypoint-chain');
   if (!chain) return;
   syncWaypointLayersFromElements();
@@ -7984,7 +7983,20 @@ function syncWaypointSlotsToSolverChainIfPossible() {
     if (state.selectionMode === "set") state.waypointReorderNote = { before, after };
     requestWaypointConstraintReorderAnimation();
     renderWaypointChain();
+    // The route summary may already be on screen from before the reorder: add the note to it.
+    refreshExplainReorderBlock();
   }
+}
+
+/** Replace the reorder block in the route summary that is on screen, without re-rendering results. */
+function refreshExplainReorderBlock() {
+  const summary = document.querySelector("#explanation-content .explain-summary");
+  if (!summary) return;
+  summary.querySelector(".explain-reorder")?.remove();
+  const html = window.waypointReorderSummaryHtml?.() || "";
+  if (!html) return;
+  const anchor = summary.querySelector(".explain-route-meta-pills") || summary.querySelector(".explain-route-title");
+  if (anchor) anchor.insertAdjacentHTML("afterend", html);
 }
 
 // ── Connect set: say when the search changed the student's order ─────────────
@@ -7996,11 +8008,32 @@ function relationshipNamesForCodes(codes) {
     .join(", ");
 }
 
-function waypointReorderExplanation(note) {
-  const after = note.after || [];
+function isTwoPointReversal(note) {
+  const after = note?.after || [];
+  const before = note?.before || [];
+  return after.length === 2 && before.length === 2 && before[0] === after[1] && before[1] === after[0];
+}
+
+/** The reorder note from the last search, or null once the waypoints or mode no longer match it. */
+function currentWaypointReorderNote() {
+  const note = state.waypointReorderNote;
+  if (!note) return null;
+  const current = (state.waypoints || []).map((wp) => wp?.element || "");
+  const stillValid =
+    state.selectionMode === "set" &&
+    Array.isArray(note.after) &&
+    note.after.join("|") === current.join("|");
+  if (!stillValid) {
+    state.waypointReorderNote = null;
+    return null;
+  }
+  return note;
+}
+
+/** Why the search changed the order, as one HTML sentence (names escaped). */
+function waypointReorderReasonHtml(note) {
   const before = note.before || [];
-  const chain = after.map(escapeHtmlAttr).join(" → ");
-  if (after.length === 2 && before.length === 2 && before[0] === after[1] && before[1] === after[0]) {
+  if (isTwoPointReversal(note)) {
     const [a, b] = before;
     const mm = typeof MATRIX_MAP !== "undefined" ? MATRIX_MAP : {};
     const forward = mm[`${a}→${b}`] || {};
@@ -8009,35 +8042,33 @@ function waypointReorderExplanation(note) {
     const fwdDirect = forward.direct || [];
     const fwdDerived = [...(forward.derived || []), ...(forward.derivedPotential || [])];
     if (revDirect.length && !fwdDirect.length) {
-      const tail = fwdDerived.length
-        ? `${escapeHtmlAttr(a)} → ${escapeHtmlAttr(b)} has only derived ones.`
-        : `${escapeHtmlAttr(a)} → ${escapeHtmlAttr(b)} has none in the table.`;
-      return `ArchiTrek reversed your order to <strong>${chain}</strong>. That direction has a direct relationship (${escapeHtmlAttr(relationshipNamesForCodes(revDirect))}). ${tail}`;
+      const yours = fwdDerived.length
+        ? "your direction has only derived relationships"
+        : "your direction has none in the table";
+      return `ArchiTrek reversed it because the direct relationship (${escapeHtmlAttr(
+        relationshipNamesForCodes(revDirect)
+      )}) runs this way; ${yours}.`;
     }
-    return `ArchiTrek reversed your order to <strong>${chain}</strong>, because that direction gives the strongest chain.`;
+    return "ArchiTrek reversed it because this direction gives the strongest chain.";
   }
-  return `ArchiTrek reordered your points into the strongest chain: <strong>${chain}</strong>.`;
+  return "ArchiTrek reordered your points into the strongest chain.";
 }
 
-function renderWaypointReorderNote() {
-  const box = document.getElementById("waypoint-reorder-note");
-  const text = document.getElementById("waypoint-reorder-text");
-  if (!box || !text) return;
-  const note = state.waypointReorderNote;
-  const current = (state.waypoints || []).map((wp) => wp?.element || "");
-  const stillValid =
-    note &&
-    state.selectionMode === "set" &&
-    Array.isArray(note.after) &&
-    note.after.join("|") === current.join("|");
-  if (!stillValid) {
-    if (note) state.waypointReorderNote = null;
-    box.hidden = true;
-    return;
-  }
-  text.innerHTML = waypointReorderExplanation(note);
-  box.hidden = false;
-}
+/**
+ * Route-summary block shown under the route title when Connect set changed the student's order.
+ * Called by the explanation renderer; returns "" when there is nothing to say.
+ */
+window.waypointReorderSummaryHtml = function () {
+  const note = currentWaypointReorderNote();
+  if (!note) return "";
+  const label = isTwoPointReversal(note) ? "Order reversed" : "Order changed";
+  const yourChain = (note.before || []).map(escapeHtmlAttr).join(" → ");
+  return `<div class="explain-reorder" role="note">
+    <span class="path-badge path-badge--reorder"><span aria-hidden="true">⇄</span> ${label}</span>
+    <p class="explain-reorder-text">You entered <strong>${yourChain}</strong>. ${waypointReorderReasonHtml(note)}
+      <button type="button" class="text-link-btn" onclick="keepMyWaypointOrder()">Keep my order</button></p>
+  </div>`;
+};
 
 function renderWaypointModeChip() {
   const chip = document.getElementById("waypoint-mode-chip");
@@ -8052,11 +8083,6 @@ function renderWaypointModeChip() {
 
 window.toggleSelectionModeFromChip = function () {
   window.setSelectionMode(state.selectionMode === "set" ? "ordered" : "set");
-};
-
-window.dismissWaypointReorderNote = function () {
-  state.waypointReorderNote = null;
-  renderWaypointReorderNote();
 };
 
 /** Put the waypoints back in the order the student chose, then switch to Ordered and search again. */
